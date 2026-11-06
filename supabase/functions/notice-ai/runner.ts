@@ -82,9 +82,9 @@ export interface TickReport {
 }
 
 const PAUSES: Record<string, string> = {
-  api_key: 'The Claude API refused the ANTHROPIC_API_KEY secret. Set a valid key in Supabase (Edge Functions, Secrets).',
+  api_key: 'The Claude API refused the key in use. Save a valid key under Reply Factory → AI → Claude API key (or set ANTHROPIC_API_KEY in Supabase).',
   api_permission: 'The Claude API refused requests for this API key\'s organisation.',
-  api_billing: 'The Claude API account has a billing problem.',
+  api_billing: 'The Claude API key\'s account has no API credit. Add credit at console.anthropic.com › Settings › Billing (a Claude subscription does not cover the API).',
   cli_auth: 'The Claude CLI gateway refused the CLAUDE_CLI_GATEWAY_SECRET. Set the same secret as the gateway (Edge Functions, Secrets).',
 };
 

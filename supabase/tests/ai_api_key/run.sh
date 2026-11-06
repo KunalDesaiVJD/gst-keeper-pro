@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Claude API key store (20261104100000_ai_api_key_vault.sql) on a local
 # PostgreSQL with a stand-in Vault: save, mask, read, remove, the password and
-# level checks, and that anon / authenticated can neither read nor call it.
+# level checks, the model choice (20261104120000), and that anon / authenticated can neither read nor call it.
 # Usage: PGHOST=/tmp/pgt PGPORT=55432 supabase/tests/ai_api_key/run.sh
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
@@ -10,4 +10,6 @@ psql -q -U postgres -d postgres -c "DROP DATABASE IF EXISTS $DB" -c "CREATE DATA
 psql -q -v ON_ERROR_STOP=1 -U postgres -d $DB -f supabase/tests/ai_api_key/setup.sql
 psql -q -v ON_ERROR_STOP=1 -U postgres -d $DB -f supabase/migrations/20261104100000_ai_api_key_vault.sql
 psql -q -v ON_ERROR_STOP=1 -U postgres -d $DB -f supabase/tests/ai_api_key/test.sql
+psql -q -v ON_ERROR_STOP=1 -U postgres -d $DB -f supabase/migrations/20261104120000_ai_api_model.sql
+psql -q -v ON_ERROR_STOP=1 -U postgres -d $DB -f supabase/tests/ai_api_key/model_test.sql
 echo "ai_api_key: all checks passed"

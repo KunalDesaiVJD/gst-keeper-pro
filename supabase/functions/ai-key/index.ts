@@ -5,20 +5,31 @@
 //   status  what may be shown: the masked key, who saved it and when, and which
 //           key the AI functions use now (the saved one, the ANTHROPIC_API_KEY
 //           secret, or none)
-//   save    { password, key }: the key, checked to start with sk-ant-, into Vault
-//   test    one tiny call to Claude with the key in use, answered OK or the error
+//   save    { password, key }: the key, checked to start with sk-ant-, then
+//           checked with Anthropic (the free Models API, no model is called; 10 s,
+//           asked once more if Anthropic could not be reached) and saved into
+//           Vault only when Anthropic accepts it: refused (400), no API credit
+//           (400) or Anthropic unreachable (503) each answer one plain sentence
+//   test    one tiny call to Claude with the key and model in use, answered OK or the error
 //   remove  { password }: the saved key overwritten in Vault and forgotten
+//   models  the models of the key's account the AI can use, from Anthropic's
+//           live list, newest first, with the one chosen
+//   set_model { model }: the model every AI call uses (checked against that live
+//           list; empty goes back to Sonnet 5.5); the effort stays medium
+//           (20261104120000_ai_api_model.sql)
 // Only a superadmin or a GST Manager: the app has no server-checked session
 // (custom sign-in, CLAUDE.md), so like doc-open this checks the actor id the
 // page sends against the database, and a save or a removal also needs their
 // own password, checked by the database function itself. The key goes to the
 // database once and never comes back: no answer, log line or error carries it.
 import { createClient } from '@supabase/supabase-js';
-import { callClaude, makeClaudeClient, scrub } from '../notice-ai/claude.ts';
-import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
+import { callClaude, checkClaudeKey, KEY_CHECK_WORDS, listClaudeModels, makeClaudeClient, NO_CREDIT, scrub } from '../notice-ai/claude.ts';
+import { AI_EFFORT, AI_MODEL, isClaudeModelId } from '../_shared/aiModel.ts';
 import { clearClaudeKeyCache, looksLikeClaudeKey, resolveClaudeKey } from '../_shared/claudeKey.ts';
 
-export const VERSION = 'ai-key 1.0.0';
+export const VERSION = 'ai-key 1.1.0';
+
+const SHAPE = 'That does not look like an Anthropic API key. It starts with sk-ant-. Copy it again from console.anthropic.com.';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +45,7 @@ const PLAIN = [
   'Only a GST Manager or the superadmin can manage the Claude API key.',
   'Your password is not correct.',
   'That is not a Claude API key: it must start with sk-ant-.',
+  'That is not a Claude model.',
 ];
 
 function plainError(message: string | undefined, fallback: string): string {
@@ -81,19 +93,38 @@ Deno.serve(async (req) => {
     if (error) throw new Error('read');
     return data as { key?: string | null } | null;
   };
+  const readKeyAndModel = async () => {
+    const r = await readSaved();
+    const { data: model } = await sb.rpc('ai_api_model_read');
+    return { ...(r ?? {}), model: (model as string | null) ?? null };
+  };
+  const modelStatus = async () => {
+    const { data, error } = await sb.rpc('ai_api_model_status', { p_actor_id: actorId });
+    // Before 20261104120000 is applied: nothing chosen.
+    return error ? {} : (data as Record<string, unknown>);
+  };
   const status = async () => {
     const { data, error } = await sb.rpc('ai_api_key_status', { p_actor_id: actorId });
     if (error) throw new Error(plainError(error.message, 'The key\'s details could not be read.'));
-    const k = await resolveClaudeKey(readSaved);
-    return { ...(data as Record<string, unknown>), active: k.source, env_set: !!(Deno.env.get('ANTHROPIC_API_KEY') ?? '').trim() };
+    const k = await resolveClaudeKey(readKeyAndModel);
+    return {
+      ...(data as Record<string, unknown>), ...(await modelStatus()),
+      active: k.source, model_in_use: k.model, default_model: AI_MODEL, effort: AI_EFFORT,
+      env_set: !!(Deno.env.get('ANTHROPIC_API_KEY') ?? '').trim(),
+    };
   };
+  // Never the key: the status, the error type and the start of Anthropic's message.
+  const log = (line: string) => console.log(JSON.stringify({ ai_key_check: line }));
 
   try {
     if (action === 'status') return answer(200, await status());
 
     if (action === 'save') {
       const key = str('key').trim();
-      if (!looksLikeClaudeKey(key)) return answer(400, { error: 'That is not a Claude API key: it must start with sk-ant-.' });
+      if (!looksLikeClaudeKey(key)) return answer(400, { error: SHAPE });
+      if (!str('password')) return answer(400, { error: 'Your password is not correct.' });
+      const check = await checkClaudeKey(key, { log });
+      if (check !== 'ok') return answer(check === 'unavailable' ? 503 : 400, { error: KEY_CHECK_WORDS[check], check });
       const { error } = await sb.rpc('ai_api_key_set', { p_actor_id: actorId, p_password: str('password'), p_key: key });
       if (error) return answer(400, { error: plainError(error.message, 'The key could not be saved. Try again.') });
       clearClaudeKeyCache();
@@ -109,21 +140,46 @@ Deno.serve(async (req) => {
 
     if (action === 'test') {
       clearClaudeKeyCache();
-      const k = await resolveClaudeKey(readSaved);
+      const k = await resolveClaudeKey(readKeyAndModel);
       if (!k.key) return answer(200, { ok: false, active: k.source, error: 'No Claude API key is set: save one here, or set ANTHROPIC_API_KEY in Supabase.' });
       const client = makeClaudeClient({ apiKey: k.key, maxRetries: 0, timeoutMs: TEST_TIMEOUT_MS });
       const signal = AbortSignal.timeout(TEST_TIMEOUT_MS);
       const out = await callClaude(client, {
-        model: AI_MODEL, effort: AI_EFFORT, budgets: [2048], signal, what: 'the test',
+        model: k.model, effort: AI_EFFORT, budgets: [2048], signal, what: 'the test',
         system: 'This is a connection test. Answer with ok set to true.',
         content: [{ type: 'text', text: 'Connection test.' }],
         schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false },
-      });
+      }, k.model);
       const result = out.ok
         ? { ok: true, active: k.source, model: out.model, ms: out.usage.duration_ms }
-        : { ok: false, active: k.source, error: out.reason === 'api_key' ? 'Claude refused this key: it is wrong, revoked or disabled.' : scrub(out.error).slice(0, 300) };
+        : { ok: false, active: k.source, error: out.reason === 'api_key' ? KEY_CHECK_WORDS.refused : scrub(out.error).slice(0, 300) };
       await sb.rpc('ai_api_key_log_test', { p_actor_id: actorId, p_outcome: result.ok ? 'ok' : String(result.error) });
       return answer(200, result);
+    }
+
+    if (action === 'models' || action === 'set_model') {
+      const k = await resolveClaudeKey(readKeyAndModel);
+      if (!k.key) return answer(400, { error: 'Save a Claude API key first: the models are those its account can use.' });
+      const wanted = str('model').trim();
+      if (action === 'set_model' && !wanted) {
+        const { error } = await sb.rpc('ai_api_model_set', { p_actor_id: actorId, p_model: null, p_model_name: null });
+        if (error) return answer(400, { error: plainError(error.message, 'The model could not be saved. Try again.') });
+        clearClaudeKeyCache();
+        return answer(200, await status());
+      }
+      if (action === 'set_model' && !isClaudeModelId(wanted)) return answer(400, { error: 'That is not a Claude model.' });
+      const live = await listClaudeModels(k.key, { log });
+      if (live.check !== 'ok') {
+        const why = live.check === 'unavailable' ? 'Anthropic could not be reached to list the models. Try again in a minute.' : live.check === 'no_credit' ? NO_CREDIT : KEY_CHECK_WORDS.refused;
+        return answer(live.check === 'unavailable' ? 503 : 400, { error: why, check: live.check });
+      }
+      if (action === 'models') return answer(200, { models: live.value, model_in_use: k.model, default_model: AI_MODEL, effort: AI_EFFORT });
+      const pick = live.value.find((m) => m.id === wanted);
+      if (!pick) return answer(400, { error: 'Anthropic does not offer that model to this key, or it cannot read PDFs and answer in the form the AI needs. Choose one from the list.' });
+      const { error } = await sb.rpc('ai_api_model_set', { p_actor_id: actorId, p_model: pick.id, p_model_name: pick.name });
+      if (error) return answer(400, { error: plainError(error.message, 'The model could not be saved. Try again.') });
+      clearClaudeKeyCache();
+      return answer(200, await status());
     }
 
     return answer(400, { error: 'Unknown action.' });
