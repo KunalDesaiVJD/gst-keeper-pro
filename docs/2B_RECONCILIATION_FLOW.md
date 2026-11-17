@@ -525,6 +525,26 @@ Matching on the name instead would have been both over- and under-inclusive,
 and would silently change which clients can bypass a filing gate every time
 somebody renames one.
 
+### The page itself follows the scheme (17 Nov 2026, `20261117100000`)
+
+The waiver stopped the difference blocking, but the page still showed a
+figure that could never close. Since Import 2B posts Not in 2B entries with a
+reversal month (`20261021170000`), the general formula counted them in the
+current total and in the books closing, although a No-ITC promoter's GSTR-3B
+reverses all of 4A at 4B(1) and carries no 4B(2), so the portal's suspended
+balance never takes them. For `Builder` + `NO_ITC` only (`isNoItcPromoter`):
+
+- **Current total** is ITC Summary's own (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 +
+  4(D) 1.2) (`noItcCurrentTotal`), nil while 4B(2) is locked to 0, never the
+  Not in 2B list's reversal and reclaim months.
+- **Closing balance as per books** may be typed by any staff on the page and
+  is kept by Save (`suspended_reco.books_*`; NULL = the Not in 2B list, as for
+  every client; "Use the list" clears it). A trigger
+  (`suspended_reco_books_guard`) refuses a typed figure for any other client.
+- `suspended_reco_difference` (DB), `computeSuspendedRecoDiff` and
+  `filingSuspendedCheck` read it the same way. The pull is still required;
+  ordinary clients are unchanged.
+
 ### There are TWO gates, not one
 
 The Suspended Reco difference is enforced in two independent places, and the

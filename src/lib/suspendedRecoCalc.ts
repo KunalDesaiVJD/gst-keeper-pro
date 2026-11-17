@@ -57,7 +57,53 @@ function readOrThrow<T>(res: { data: T; error: { message: string } | null }, wha
  * refuses Save, Upload, Not Applicable and Override, never saving zeros over
  * an uploaded opening or a Current Total without 4B(2)(i) and 5.4 (docs §13).
  */
+type Heads = { cgst: number; sgst: number; igst: number };
+
+/**
+ * A No-ITC promoter (Builder + builder_itc_type NO_ITC): its GSTR-3B reverses
+ * all of 4A at 4B(1) and carries no 4B(2), so Suspended Reco reads its current
+ * total from ITC Summary alone and lets the books closing be typed
+ * (20261117100000, docs/2B_RECONCILIATION_FLOW.md §8). The flags, never the name.
+ */
+export const isNoItcPromoter = (c: { regular_sub_type?: string | null; builder_itc_type?: string | null } | null | undefined): boolean =>
+  !!c && c.regular_sub_type === 'Builder' && c.builder_itc_type === 'NO_ITC';
+
+/**
+ * The No-ITC promoter's current total: ITC Summary's own
+ * (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2), never the Not in 2B list's
+ * reversal and reclaim months. Mirrors suspended_reco_difference (20261117100000).
+ */
+export function noItcCurrentTotal(itcData: unknown): Heads {
+  const itc = (itcData ?? {}) as { section4A?: any[]; section4B?: any[]; section4D?: any[] };
+  const h = (r: any): Heads => ({ cgst: Number(r?.cgst) || 0, sgst: Number(r?.sgst) || 0, igst: Number(r?.igst) || 0 });
+  const b = itc.section4B || [];
+  const r4i = h(b.find((r: any) => r.srNo === '(i)' || r.srNo === '4(B)(2)(i)'));
+  const r4ii = h(b.find((r: any) => r.srNo === '(ii)' || r.srNo === '4(B)(2)(ii)' || (r.particular && r.particular.includes('ITC Reversal for previous months'))));
+  const r54 = h((itc.section4A || []).find((r: any) => r.srNo === '5.4'));
+  const r55 = h((itc.section4A || []).find((r: any) => r.srNo === '5.5'));
+  const r4d12 = h((itc.section4D || []).find((r: any) => r.srNo === '1.2'));
+  const f = (k: keyof Heads) => r4i[k] + r4ii[k] - r54[k] - r55[k] - r4d12[k];
+  return { cgst: f('cgst'), sgst: f('sgst'), igst: f('igst') };
+}
+
+/** The books closing typed for a No-ITC promoter, or null when none is typed. */
+export function typedBooks(row: Record<string, unknown> | null | undefined): Heads | null {
+  if (!row || (row.books_cgst == null && row.books_sgst == null && row.books_igst == null)) return null;
+  return { cgst: Number(row.books_cgst) || 0, sgst: Number(row.books_sgst) || 0, igst: Number(row.books_igst) || 0 };
+}
+
+async function readNoItc(clientId: string): Promise<boolean> {
+  const c = readOrThrow(await supabase
+    .from('clients')
+    .select('regular_sub_type, builder_itc_type')
+    .eq('id', clientId)
+    .maybeSingle(), 'the client (clients)');
+  return isNoItcPromoter(c as never);
+}
+
 export interface SuspendedRecoInputs {
+  /** Builder + NO_ITC: current total from ITC Summary, books may be typed. */
+  noItc: boolean;
   /** The month's suspended_reco row (opening and its source), or null. */
   suspended: Record<string, unknown> | null;
   reversalBills: { input_igst: number | null; input_cgst: number | null; input_sgst: number | null; reversal_month: string | null }[];
@@ -96,7 +142,9 @@ export async function readSuspendedRecoInputs(clientId: string, periodMonth: str
     .select('input_cgst, input_sgst, input_igst, reversal_month, reclaim_month')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth), `the Not in 2B list (bills_not_in_2b) of ${periodMonth}`);
+  const noItc = await readNoItc(clientId);
   return {
+    noItc,
     suspended: (suspended as Record<string, unknown> | null) ?? null,
     reversalBills: (reversalBills || []) as SuspendedRecoInputs['reversalBills'],
     reclaimBills: (reclaimBills || []) as SuspendedRecoInputs['reclaimBills'],
@@ -113,10 +161,11 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
 
   const suspendedData = readOrThrow(await supabase
     .from('suspended_reco')
-    .select('opening_cgst, opening_sgst, opening_igst')
+    .select('opening_cgst, opening_sgst, opening_igst, books_cgst, books_sgst, books_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
     .maybeSingle(), `the Suspended Reco (suspended_reco) of ${periodMonth}`);
+  const noItc = await readNoItc(clientId);
   const openingCgst = Number((suspendedData as any)?.opening_cgst) || 0;
   const openingSgst = Number((suspendedData as any)?.opening_sgst) || 0;
   const openingIgst = Number((suspendedData as any)?.opening_igst) || 0;
@@ -195,9 +244,13 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     igst: Math.max(row4D12FromBills.igst, row4D12FromItc.igst),
   };
 
-  const portalCgst = row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
-  const portalSgst = row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
-  const portalIgst = row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
+  let portalCgst = row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst;
+  let portalSgst = row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst;
+  let portalIgst = row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst;
+  if (noItc) {
+    const p = itcData?.data ? noItcCurrentTotal(itcData.data) : { cgst: 0, sgst: 0, igst: 0 };
+    portalCgst = p.cgst; portalSgst = p.sgst; portalIgst = p.igst;
+  }
 
   const booksData = readOrThrow(await supabase
     .from('bills_not_in_2b')
@@ -218,6 +271,8 @@ export async function computeSuspendedRecoDiff(clientId: string, periodMonth: st
     }), { cgst: 0, sgst: 0, igst: 0 });
     booksCgst = totals.cgst; booksSgst = totals.sgst; booksIgst = totals.igst;
   }
+  const typed = noItc ? typedBooks(suspendedData as Record<string, unknown> | null) : null;
+  if (typed) { booksCgst = typed.cgst; booksSgst = typed.sgst; booksIgst = typed.igst; }
 
   const diffCgst = applyTolerance(normalizeZero(openingCgst + portalCgst - booksCgst));
   const diffSgst = applyTolerance(normalizeZero(openingSgst + portalSgst - booksSgst));
@@ -254,7 +309,7 @@ export interface FilingSuspendedCheck {
 export async function filingSuspendedCheck(clientId: string, periodMonth: string): Promise<FilingSuspendedCheck> {
   const { data: suspendedData } = await supabase
     .from('suspended_reco')
-    .select('opening_cgst, opening_sgst, opening_igst, portal_cgst, portal_sgst, portal_igst')
+    .select('opening_cgst, opening_sgst, opening_igst, portal_cgst, portal_sgst, portal_igst, books_cgst, books_sgst, books_igst')
     .eq('client_id', clientId)
     .eq('period_month', periodMonth)
     .maybeSingle();
@@ -269,7 +324,9 @@ export async function filingSuspendedCheck(clientId: string, periodMonth: string
   const n = (v: unknown) => Number(v) || 0;
   // Opening Balance + Current Total - Books
   const portalTotal = n(s?.opening_cgst) + n(s?.opening_sgst) + n(s?.opening_igst) + n(s?.portal_cgst) + n(s?.portal_sgst) + n(s?.portal_igst);
-  const booksTotal = (booksData || [])
+  // A No-ITC promoter's typed books closing, when one is typed.
+  const typed = typedBooks(s) && (await readNoItc(clientId).catch(() => false)) ? typedBooks(s) : null;
+  const booksTotal = typed ? typed.cgst + typed.sgst + typed.igst : (booksData || [])
     .filter((row) => {
       const reversalBlank = row.reversal_month === null || row.reversal_month === '';
       const reclaimBlank = row.reclaim_month === null || row.reclaim_month === '';

@@ -48,6 +48,11 @@ interface SuspendedSaveState {
   userId: string | null | undefined;
   opening: { cgst: number; sgst: number; igst: number };
   portal: { cgst: number; sgst: number; igst: number };
+  /**
+   * A No-ITC promoter only: the books closing typed on the page (null = the
+   * Not in 2B list). Left out for every other client (20261117100000).
+   */
+  books?: { cgst: number; sgst: number; igst: number } | null;
 }
 
 /**
@@ -65,6 +70,11 @@ export function suspendedSavePayload(s: SuspendedSaveState): Record<string, unkn
     portal_igst: s.portal.igst,
     updated_by: s.userId ?? null,
     updated_at: new Date().toISOString(),
+    ...(s.books !== undefined ? {
+      books_cgst: s.books?.cgst ?? null,
+      books_sgst: s.books?.sgst ?? null,
+      books_igst: s.books?.igst ?? null,
+    } : {}),
   };
   if (isPullOnlyPeriod(s.periodMonth)) return base;
   return { ...base, opening_cgst: s.opening.cgst, opening_sgst: s.opening.sgst, opening_igst: s.opening.igst };
