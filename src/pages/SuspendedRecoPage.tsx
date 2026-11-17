@@ -12,7 +12,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { fetchFiledFigures } from '@/lib/itcAutoLink';
-import { readSuspendedRecoInputs } from '@/lib/suspendedRecoCalc';
+import { noItcCurrentTotal, readSuspendedRecoInputs, typedBooks } from '@/lib/suspendedRecoCalc';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMonth } from '@/contexts/MonthContext';
@@ -96,9 +96,16 @@ const SuspendedRecoPage: React.FC = () => {
   const [portalIgst, setPortalIgst] = useState<number>(0);
 
   // Books values (auto-linked from 2B)
-  const [booksCgst, setBooksCgst] = useState<number>(0);
-  const [booksSgst, setBooksSgst] = useState<number>(0);
-  const [booksIgst, setBooksIgst] = useState<number>(0);
+  const [listBooksCgst, setBooksCgst] = useState<number>(0);
+  const [listBooksSgst, setBooksSgst] = useState<number>(0);
+  const [listBooksIgst, setBooksIgst] = useState<number>(0);
+  // A No-ITC promoter (Builder + NO_ITC): the current total follows ITC
+  // Summary and the books closing may be typed (20261117100000, docs §8).
+  const [noItc, setNoItc] = useState(false);
+  const [booksTyped, setBooksTyped] = useState<{ cgst: number; sgst: number; igst: number } | null>(null);
+  const booksCgst = noItc && booksTyped ? booksTyped.cgst : listBooksCgst;
+  const booksSgst = noItc && booksTyped ? booksTyped.sgst : listBooksSgst;
+  const booksIgst = noItc && booksTyped ? booksTyped.igst : listBooksIgst;
 
   const selectedClientData = clients.find(c => c.id === selectedClientId);
   const isStaff = isStaffRole();
@@ -169,6 +176,7 @@ const SuspendedRecoPage: React.FC = () => {
     // halfway leaves zeros, never another client's figures.
     setPortalCgst(0); setPortalSgst(0); setPortalIgst(0);
     setBooksCgst(0); setBooksSgst(0); setBooksIgst(0);
+    setNoItc(false); setBooksTyped(null);
     try {
       // Every read of the month fails closed with the read named (docs §13):
       // a failed read leaves loadError set, which refuses Save, Upload, Not
@@ -176,6 +184,8 @@ const SuspendedRecoPage: React.FC = () => {
       const inputs = await readSuspendedRecoInputs(selectedClientId, selectedMonth);
       // Fetch portal data from suspended_reco table (opening balance only)
       const suspendedData = inputs.suspended;
+      setNoItc(inputs.noItc);
+      setBooksTyped(inputs.noItc ? typedBooks(inputs.suspended) : null);
       
       if (suspendedData) {
         const sd = suspendedData as any;
@@ -354,9 +364,16 @@ const SuspendedRecoPage: React.FC = () => {
       };
 
       // Updated formula: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)
-      setPortalCgst(row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
-      setPortalSgst(row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
-      setPortalIgst(row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
+      if (inputs.noItc) {
+        // No-ITC promoter: ITC Summary's own rows (its 4B(2) is nil, all of
+        // 4A reversed at 4B(1)), never the Not in 2B list's months.
+        const p = itcData?.data ? noItcCurrentTotal(itcData.data) : { cgst: 0, sgst: 0, igst: 0 };
+        setPortalCgst(p.cgst); setPortalSgst(p.sgst); setPortalIgst(p.igst);
+      } else {
+        setPortalCgst(row4B2iUsed.cgst + row4B2ii.cgst - row54.cgst - row55.cgst - row4D12.cgst);
+        setPortalSgst(row4B2iUsed.sgst + row4B2ii.sgst - row54.sgst - row55.sgst - row4D12.sgst);
+        setPortalIgst(row4B2iUsed.igst + row4B2ii.igst - row54.igst - row55.igst - row4D12.igst);
+      }
 
       // Books data from bills_not_in_2b
       const booksData = inputs.booksData;
@@ -446,6 +463,7 @@ const SuspendedRecoPage: React.FC = () => {
           userId: user?.id,
           opening: { cgst: openingCgst, sgst: openingSgst, igst: openingIgst },
           portal: { cgst: portalCgst, sgst: portalSgst, igst: portalIgst },
+          ...(noItc ? { books: booksTyped } : {}),
         }) as never, {
           onConflict: 'client_id,period_month'
         });
@@ -651,6 +669,25 @@ const SuspendedRecoPage: React.FC = () => {
         className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
         min="0"
         aria-label="Opening balance amount"
+      />
+    );
+  };
+
+  // A No-ITC promoter's books closing, typed (any staff; Save keeps it).
+  const renderBooksCell = (head: 'cgst' | 'sgst' | 'igst') => {
+    const shown = { cgst: booksCgst, sgst: booksSgst, igst: booksIgst }[head];
+    return (
+      <Input
+        type="number"
+        step="0.01"
+        value={shown === 0 ? '' : shown}
+        onChange={(e) => {
+          const v = parseFloat(e.target.value) || 0;
+          const base = booksTyped ?? { cgst: listBooksCgst, sgst: listBooksSgst, igst: listBooksIgst };
+          setBooksTyped({ ...base, [head]: v });
+        }}
+        className={cn(WS_CELL_INPUT, 'text-right tabular-nums')}
+        aria-label={`Closing balance as per books, ${head.toUpperCase()}`}
       />
     );
   };
@@ -1045,7 +1082,11 @@ const SuspendedRecoPage: React.FC = () => {
                 <tr className={WS_TR}>
                   <td className={cn(WS_TD, 'font-medium')}>
                     Current total as per suspended reco
-                    <p className="mt-0.5 text-[10px] font-normal text-muted-foreground">(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)</p>
+                    <p className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                      {noItc
+                        ? 'No-ITC builder: (4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2) as on ITC Summary; 4B(2) is nil, all ITC is reversed at 4B(1)'
+                        : '(4B(2)(i) + 4B(2)(ii)) − (5.4 + 5.5 + 4(D) 1.2)'}
+                    </p>
                   </td>
                   <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(portalCgst)}</td>
                   <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(portalSgst)}</td>
@@ -1057,10 +1098,32 @@ const SuspendedRecoPage: React.FC = () => {
 
                 {/* As Per Books Row - Auto-linked */}
                 <tr className={WS_TR}>
-                  <td className={cn(WS_TD, 'font-medium')}>Closing balance as per books</td>
-                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksCgst)}</td>
-                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksSgst)}</td>
-                  <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksIgst)}</td>
+                  <td className={cn(WS_TD, 'font-medium')}>
+                    Closing balance as per books
+                    {noItc && (
+                      <p className="mt-0.5 text-[10px] font-normal text-muted-foreground">
+                        {booksTyped
+                          ? <>Typed. Not in 2B list: {formatNumber(listBooksCgst + listBooksSgst + listBooksIgst)}.{' '}
+                              {isStaff && (
+                                <button type="button" className="underline" onClick={() => setBooksTyped(null)}>Use the list</button>
+                              )}</>
+                          : 'From the Not in 2B list. No-ITC builder: type the books figure to replace it, then Save.'}
+                      </p>
+                    )}
+                  </td>
+                  {noItc && isStaff ? (
+                    <>
+                      <td className="border-b border-r p-0">{renderBooksCell('cgst')}</td>
+                      <td className="border-b border-r p-0">{renderBooksCell('sgst')}</td>
+                      <td className="border-b border-r p-0">{renderBooksCell('igst')}</td>
+                    </>
+                  ) : (
+                    <>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksCgst)}</td>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksSgst)}</td>
+                      <td className={cn(WS_TD_NUM, 'bg-accent/50')}>{formatNumber(booksIgst)}</td>
+                    </>
+                  )}
                   <td className={cn(WS_TD_NUM, 'bg-muted/30 font-medium')}>
                     {formatNumber(booksTotal)}
                   </td>
@@ -1084,6 +1147,7 @@ const SuspendedRecoPage: React.FC = () => {
             Difference = opening balance as per portal + current total − closing balance as per books.
             {useNewFlow && ' From the Jun-26 return period, a difference of ₹10 or less in a tax head reads as 0.'}
             {useNewFlow && ' From Jun-26 the opening comes only from the portal pull; the superadmin may allow a manual entry when a pull cannot be done.'}
+            {noItc && ' No-ITC builder: the current total is read from ITC Summary, the books closing may be typed, and a difference does not block the GSTR-3B push (the pull is still needed).'}
           </Note>
         </>
       )}

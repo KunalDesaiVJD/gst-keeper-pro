@@ -10423,6 +10423,9 @@ export type Database = {
       }
       suspended_reco: {
         Row: {
+          books_cgst: number | null
+          books_igst: number | null
+          books_sgst: number | null
           client_id: string
           id: string
           opening_allowance_id: string | null
@@ -10448,6 +10451,9 @@ export type Database = {
           updated_by: string | null
         }
         Insert: {
+          books_cgst?: number | null
+          books_igst?: number | null
+          books_sgst?: number | null
           client_id: string
           id?: string
           opening_allowance_id?: string | null
@@ -10473,6 +10479,9 @@ export type Database = {
           updated_by?: string | null
         }
         Update: {
+          books_cgst?: number | null
+          books_igst?: number | null
+          books_sgst?: number | null
           client_id?: string
           id?: string
           opening_allowance_id?: string | null
