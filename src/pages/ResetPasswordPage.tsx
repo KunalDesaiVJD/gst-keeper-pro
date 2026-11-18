@@ -17,8 +17,8 @@ import { clientPasswordProblem } from '@/lib/passwordRules';
 
 // Public page, reached from the e-mailed link (/reset-password#token=…). The
 // token, not a session, is what lets the client set a new password; it is
-// taken off the address bar at once, works once, for 60 minutes
-// (client_password_reset_check / _complete, migration 20261020140000).
+// taken off the address bar at once, works once, with no time limit
+// (client_password_reset_check / _complete, migrations 20261020140000, 20261118100000).
 
 type Stage = 'checking' | 'invalid' | 'form' | 'done' | 'error';
 
@@ -105,7 +105,7 @@ const ResetPasswordPage: React.FC = () => {
         <p className="text-sm text-muted-foreground">
           {stage === 'error'
             ? 'Please check your connection and open the link from the e-mail again.'
-            : 'A reset link works once, for 60 minutes, and a newer request replaces an older link. Ask for a new one below.'}
+            : 'This link has already been used, or another of your links was used, or the e-mail address on record changed. Ask for a new one below.'}
         </p>
         <div className="flex flex-col gap-2">
           <ClientForgotPasswordDialog>

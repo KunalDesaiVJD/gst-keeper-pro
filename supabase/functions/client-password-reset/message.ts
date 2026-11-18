@@ -52,7 +52,7 @@ export function resetEmail(row: ClaimedLink): { subject: string; html: string } 
     : 'We received a request to reset the password you use to sign in to the GST client portal of V. J. Desai &amp; Co. LLP.';
   const message = [
     opening,
-    'Use the button above to choose a new password. The link works once and expires in 60 minutes.',
+    'Use the button above to choose a new password. The link works once and does not expire; if you asked more than once, any of the links works until one is used.',
     `If the button does not work, copy this address into your browser:\n<a href="${link}" style="color:#0f2b46;word-break:break-all;">${link}</a>`,
     `Afterwards, sign in at <a href="${login}" style="color:#0f2b46;">${login}</a> with your GSTIN as the User ID and your new password.`,
     'If you did not ask for this, you can ignore this e-mail: your current password keeps working.',
@@ -65,7 +65,7 @@ export function resetEmail(row: ClaimedLink): { subject: string; html: string } 
       client_name: esc(row.client_name),
       gstin: esc(row.gstin),
       user_id: esc(row.gstin),
-      valid_for: '60 minutes, one use',
+      valid_for: 'one use, no time limit',
       cta_url: link,
       cta_label: 'Set a new password',
     },

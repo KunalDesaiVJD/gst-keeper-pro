@@ -52,8 +52,10 @@ The positions below were engineering judgement, not a firm sign-off.
   `staff_set_client_password`). The log names e-mail addresses only masked
   (`p•••@navratna.com`); requests for identifiers that are not clients are kept only in
   the private attempts table, as a sha256.
-- **The link:** once, 60 minutes from sending; a newer request (or a staff reset from the
-  reset dialog, but not Edit Client's GST-password sync: see Staff resets) voids it; until
+- **The link:** once, with no time limit (the firm, 18 Nov 2026, `20261118100000`:
+  `expires_at` is `infinity`); a newer request no longer voids it, so a client who asked
+  twice can use either e-mail. A staff reset from the reset dialog (but not Edit Client's
+  GST-password sync: see Staff resets) still voids it; until
   it is used the current password keeps working. Using it voids every other open link and
   resolves waiting staff requests.
 - **A link follows the address on record.** It is good only while every address it went

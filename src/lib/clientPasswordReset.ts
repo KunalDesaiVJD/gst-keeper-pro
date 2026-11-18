@@ -9,7 +9,7 @@ import { supabase } from '@/integrations/supabase/client';
 export const RESET_REQUESTED_MESSAGE =
   'If this GSTIN or User ID is registered with us, a link to set a new password is on its way to the e-mail address we hold for it. ' +
   'If we cannot e-mail one, our team will reset it and contact you. ' +
-  'The link works once, for 60 minutes. If nothing arrives, check your spam folder or write to gst@vjdesai.com.';
+  'The link works once and does not expire. If nothing arrives, check your spam folder or write to gst@vjdesai.com.';
 
 /** Wakes the mailer now (the database wakes it too); its answer says nothing. */
 function wakeMailer(): void {
