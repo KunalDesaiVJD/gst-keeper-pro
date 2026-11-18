@@ -62,6 +62,7 @@ export async function prepareBuEvent(params: {
 
   const [
     { data: bookings }, { data: receipts }, { data: invoices }, { data: openings }, { data: openingAdjustments },
+    { data: deeds },
   ] =
     await Promise.all([
       supabase.from('builder_bookings').select('*').in('unit_id', unitIds),
@@ -70,7 +71,13 @@ export async function prepareBuEvent(params: {
       supabase.from('builder_opening_balances').select('*').in('unit_id', unitIds),
       supabase.from('builder_opening_balance_adjustments')
         .select('unit_id, consideration_adjusted, period_month').in('unit_id', unitIds),
+      // The deed value, read here so every caller (BU event, the dastavej
+      // auto-post, the late-discovery interest) takes it the same way.
+      supabase.from('builder_units').select('id, dastavej_value').in('id', unitIds),
     ]);
+  const deedValue = new Map(((deeds || []) as { id: string; dastavej_value: number | null }[])
+    .filter((d) => (Number(d.dastavej_value) || 0) > 0)
+    .map((d) => [d.id, Number(d.dastavej_value)]));
 
   const invoiceIds = ((invoices || []) as { id: string }[]).map((i) => i.id);
   const { data: adjustments } = invoiceIds.length
@@ -170,7 +177,10 @@ export async function prepareBuEvent(params: {
       carpetAreaSqM: Number(u.carpet_area_sqm) || 0,
       rateCode: (cls?.rateCode || 'OTHER_RESIDENTIAL') as never,
       ratePct: cls?.ratePct || 0,
-      agreementValue: opening?.agreement_value || cls?.agreementValue || 0,
+      // The value taxed is the deed's when a deed value is recorded (the
+      // firm, 18 Nov 2026: "as per the Dastavej only"), else the agreement
+      // value (opening snapshot, then the classification engine).
+      agreementValue: deedValue.get(u.id) ?? (opening?.agreement_value || cls?.agreementValue || 0),
       dastavejDate: u.dastavej_date,
       bookingId: booking?.id ?? null,
       bookingDate: booking?.booking_date ?? (hasOpeningActivity ? opening!.as_at_date : null),
