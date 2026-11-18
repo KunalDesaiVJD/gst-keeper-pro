@@ -212,6 +212,7 @@ const BuilderReturnsPage: React.FC = () => {
   const [projectFilter, setProjectFilter] = useState<string>('ALL');
   // Block (A, B, C… from the unit number) filter over every table and the export.
   const [blockFilter, setBlockFilter] = useState<string>('ALL');
+  const [gstr1Tab, setGstr1Tab] = useState<'table7' | 'table11A' | 'table11B' | 'docs'>('table7');
   const [rows, setRows] = useState<PostingDbRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   /** BU_DIFFERENTIAL invoices' own milestone_label, keyed by invoice id — more
@@ -509,9 +510,10 @@ const BuilderReturnsPage: React.FC = () => {
 
       <Card>
         <CardContent className="px-3 py-2">
-          <div className={cn('grid grid-cols-1 items-end gap-2', embedded ? 'sm:max-w-xs' : 'sm:grid-cols-3 lg:max-w-4xl')}>
+          {/* One row: filters left, exports right (the house layout of every Builder step). */}
+          <div className="flex flex-wrap items-end gap-2">
             {!embedded && (
-              <label className="min-w-0 space-y-0.5">
+              <label className="w-full min-w-0 space-y-0.5 sm:w-72">
                 <span className={WS_FILTER_LABEL}>Builder client</span>
                 <SearchableSelect
                   options={clients.map((c) => ({ value: c.id, label: c.name, sublabel: c.gstin || undefined }))}
@@ -525,7 +527,7 @@ const BuilderReturnsPage: React.FC = () => {
               </label>
             )}
             {!embedded && (
-              <label className="min-w-0 space-y-0.5">
+              <label className="w-full min-w-0 space-y-0.5 sm:w-44">
                 <span className={WS_FILTER_LABEL}>Period</span>
                 <SearchableMonthSelect
                   options={monthOptions}
@@ -536,7 +538,7 @@ const BuilderReturnsPage: React.FC = () => {
                 />
               </label>
             )}
-            <label className="min-w-0 space-y-0.5">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-56">
               <span className={WS_FILTER_LABEL}>Project</span>
               <Select value={projectFilter} onValueChange={setProjectFilter}>
                 <SelectTrigger className={WS_CONTROL} aria-label="Project"><SelectValue /></SelectTrigger>
@@ -546,7 +548,7 @@ const BuilderReturnsPage: React.FC = () => {
                 </SelectContent>
               </Select>
             </label>
-            <label className="min-w-0 space-y-0.5">
+            <label className="w-full min-w-0 space-y-0.5 sm:w-40">
               <span className={WS_FILTER_LABEL}>Block</span>
               <Select value={blockFilter} onValueChange={setBlockFilter}>
                 <SelectTrigger className={WS_CONTROL} aria-label="Block"><SelectValue /></SelectTrigger>
@@ -558,17 +560,19 @@ const BuilderReturnsPage: React.FC = () => {
                 </SelectContent>
               </Select>
             </label>
-          </div>
           {selectedClientId && rows.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="ml-auto flex flex-wrap items-center gap-2">
               <Button variant="outline" size="sm" className={WS_BTN} disabled={isExporting} onClick={() => void handleExport('xlsx')}>
                 <FileSpreadsheet className="h-3.5 w-3.5" /> Export Excel (unit-wise)
               </Button>
               <Button variant="outline" size="sm" className={WS_BTN} disabled={isExporting} onClick={() => void handleExport('pdf')}>
                 <FileSpreadsheet className="h-3.5 w-3.5" /> Export PDF (unit-wise)
               </Button>
-              <span className="self-center text-xs text-muted-foreground">Click a rate line in any table to see its units.</span>
             </div>
+          )}
+          </div>
+          {selectedClientId && rows.length > 0 && (
+            <p className="mt-1.5 text-[11px] text-muted-foreground">Click a rate line in any table to see its units, block by block.</p>
           )}
         </CardContent>
       </Card>
@@ -608,7 +612,7 @@ const BuilderReturnsPage: React.FC = () => {
         >
           {/* What the return would carry. */}
           {preview && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
               {[
                 { label: 'Table 7 — B2CS', n: preview.counts.b2cs },
                 { label: 'Table 11A — advances', n: preview.counts.at },
@@ -807,40 +811,44 @@ const BuilderReturnsPage: React.FC = () => {
             </SectionCard>
           )}
 
-          {/* ── GSTR-1 legs ────────────────────────────────────────────── */}
+          {/* ── GSTR-1 legs and the documents, one card with a tab each ───── */}
           <SectionCard
-            title="GSTR-1 Table 7 — B2CS"
-            description={(
-              <>
-                Milestone and other invoices raised in the period. Buyers are unregistered and the property
-                is intra-state, so B2CS is the only outward invoice table in play.
-              </>
+            title="GSTR-1 tables"
+            description={gstr1Tab === 'table7'
+              ? 'Table 7 (B2CS, Table 10 for an amendment): milestone and BU / dastavej invoices raised in the period. Buyers are unregistered and the property is intra-state, so B2CS is the only outward invoice table in play.'
+              : gstr1Tab === 'table11A'
+                ? 'Table 11A: construction is a service, so Notification 66/2017 does not apply and every advance bears tax in the month of receipt.'
+                : gstr1Tab === 'table11B'
+                  ? 'Table 11B (11B(2) for an amendment): negative by design; these advances were taxed on receipt and are now covered by an invoice.'
+                  : 'Every posting behind the totals above.'}
+            actions={(
+              <div className="flex rounded-md border bg-muted/40 p-0.5 text-xs" role="tablist" aria-label="GSTR-1 table">
+                {([
+                  ['table7', `Table 7 (${summary.table7.reduce((n, b) => n + b.count, 0)})`],
+                  ['table11A', `Table 11A (${summary.table11A.reduce((n, b) => n + b.count, 0)})`],
+                  ['table11B', `Table 11B (${summary.table11B.reduce((n, b) => n + b.count, 0)})`],
+                  ['docs', `Documents (${shownRows.length})`],
+                ] as const).map(([k, label]) => (
+                  <button
+                    key={k} type="button" role="tab" aria-selected={gstr1Tab === k}
+                    onClick={() => setGstr1Tab(k)}
+                    className={cn('rounded px-2.5 py-1', gstr1Tab === k ? 'bg-background font-semibold shadow-sm' : 'text-muted-foreground')}
+                  >{label}</button>
+                ))}
+              </div>
             )}
           >
-            <BucketTable buckets={summary.table7} emptyText="No invoices raised in this period." postings={postingsOf('table7')} />
-          </SectionCard>
-
-          <SectionCard
-            title="GSTR-1 Table 11A — tax liability on advances received"
-            description={(
-              <>
-                Construction is a service, so Notification 66/2017 does not apply and every advance bears
-                tax in the month of receipt.
-              </>
+            {gstr1Tab === 'table7' && (
+              <BucketTable buckets={summary.table7} emptyText="No invoices raised in this period." postings={postingsOf('table7')} />
             )}
-          >
-            <BucketTable buckets={summary.table11A} emptyText="No advances received in this period." postings={postingsOf('table11A')} />
-          </SectionCard>
-
-          <SectionCard
-            title="GSTR-1 Table 11B — adjustment of advances"
-            description="Negative by design: these advances were taxed on receipt and are now covered by an invoice."
-          >
-            <BucketTable buckets={summary.table11B} emptyText="No advances adjusted in this period." postings={postingsOf('table11B')} />
-          </SectionCard>
-
-          {/* ── Document listing ───────────────────────────────────────── */}
-          <SectionCard title={`Documents (${shownRows.length})`} description="Every posting behind the totals above.">
+            {gstr1Tab === 'table11A' && (
+              <BucketTable buckets={summary.table11A} emptyText="No advances received in this period." postings={postingsOf('table11A')} />
+            )}
+            {gstr1Tab === 'table11B' && (
+              <BucketTable buckets={summary.table11B} emptyText="No advances adjusted in this period." postings={postingsOf('table11B')} />
+            )}
+            {gstr1Tab === 'docs' && (
+              <>
             {shownRows.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
                 Nothing posted for {prettyPeriodLabel(selectedMonth)}.
@@ -884,6 +892,8 @@ const BuilderReturnsPage: React.FC = () => {
                     ))}
                 </TableBody>
               </Table>
+            )}
+          </>
             )}
           </SectionCard>
 

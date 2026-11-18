@@ -291,6 +291,11 @@ const BuilderWorkspacePage: React.FC = () => {
   );
 
   const tabIdx = Math.max(0, TABS.findIndex((t) => t.key === tab));
+  // On a narrow screen the step bar scrolls: keep the open step in view.
+  useEffect(() => {
+    document.querySelector<HTMLElement>(`[data-builder-step="${tab}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [tab]);
   const activeProject = projects.find((p) => p.id === projectId);
   const activeClient = clients.find((c) => c.id === selectedClientId);
   const itcType = activeClient?.builder_itc_type ? ITC_TYPE[activeClient.builder_itc_type] : null;
@@ -423,28 +428,6 @@ const BuilderWorkspacePage: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* The project at a glance: the figures every step works from. The
-            Ledger shows its own, as of the chosen period, so not twice there. */}
-        {selectedClientId && projectId && tab !== 'ledger' && snapshot && snapshot.units > 0 && (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            <KpiTile
-              label="Units"
-              value={snapshot.units}
-              hint={`${snapshot.booked} booked · ${snapshot.units - snapshot.booked} unbooked`}
-            />
-            <KpiTile label="Agreement value" value={formatINR(snapshot.agreement)} />
-            <KpiTile label="Value taxed to date" value={formatINR(snapshot.valueTaxed)} />
-            <KpiTile label="Open advance" value={formatINR(snapshot.openAdvance)} hint="Taxed, not yet invoiced" />
-            <KpiTile label="Balance to tax" value={formatINR(snapshot.balanceToTax)} hint="Falls due at BU" />
-            <KpiTile
-              label="Closed / flags"
-              value={`${snapshot.closed} closed`}
-              hint={snapshot.overTaxed ? `${snapshot.overTaxed} taxed above agreement` : 'No unit taxed above agreement'}
-              tone={snapshot.overTaxed ? 'error' : 'neutral'}
-            />
-          </div>
-        )}
-
         {/* Setup is a panel, not a step — opened when something changes, which
             for most clients is once, at onboarding. */}
         {showSetup && selectedClientId && (
@@ -522,7 +505,7 @@ const BuilderWorkspacePage: React.FC = () => {
                         <li key={t.key} className="flex items-center gap-1">
                           {i > 0 && <span aria-hidden className={cn('h-px w-3 lg:w-6', done || on ? 'bg-primary/60' : 'bg-border')} />}
                           <button
-                            type="button" role="tab" aria-selected={on}
+                            type="button" role="tab" aria-selected={on} data-builder-step={t.key}
                             onClick={() => patch({ tab: t.key })}
                             className={cn(
                               'flex items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -567,6 +550,28 @@ const BuilderWorkspacePage: React.FC = () => {
                 </Button>
               </div>
             </div>
+
+            {/* The project at a glance: the figures every step works from. The
+                Ledger shows its own, as of the chosen period, so not twice there. */}
+            {selectedClientId && projectId && tab !== 'ledger' && snapshot && snapshot.units > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                <KpiTile
+                  label="Units"
+                  value={snapshot.units}
+                  hint={`${snapshot.booked} booked · ${snapshot.units - snapshot.booked} unbooked`}
+                />
+                <KpiTile label="Agreement value" value={formatINR(snapshot.agreement)} />
+                <KpiTile label="Value taxed to date" value={formatINR(snapshot.valueTaxed)} />
+                <KpiTile label="Open advance" value={formatINR(snapshot.openAdvance)} hint="Taxed, not yet invoiced" />
+                <KpiTile label="Balance to tax" value={formatINR(snapshot.balanceToTax)} hint="Falls due at BU" />
+                <KpiTile
+                  label="Closed / flags"
+                  value={`${snapshot.closed} closed`}
+                  hint={snapshot.overTaxed ? `${snapshot.overTaxed} taxed above agreement` : 'No unit taxed above agreement'}
+                  tone={snapshot.overTaxed ? 'error' : 'neutral'}
+                />
+              </div>
+            )}
 
             <div>
               {tab === 'ledger' && (projectId ? <BuilderBookingsPage /> : <BuilderProjectsPage />)}
