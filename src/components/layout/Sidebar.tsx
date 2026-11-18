@@ -161,12 +161,6 @@ const STAFF_NAV_ITEMS: NavItem[] = [
     roles: ['superadmin', 'gst_manager', 'employee'],
   },
   {
-    label: 'Dastavej Register',
-    path: '/builder-dastavej',
-    icon: <FileSignature className="h-5 w-5" />,
-    roles: ['superadmin', 'gst_manager', 'employee'],
-  },
-  {
     label: 'Builder Reports',
     path: '/builder-reports',
     icon: <FolderDown className="h-5 w-5" />,
@@ -233,7 +227,7 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'builder',
     label: 'Builder',
     icon: <Building className="h-5 w-5" />,
-    paths: ['/builder', '/builder-dastavej', '/builder-reports'],
+    paths: ['/builder', '/builder-reports'],
   },
 ];
 

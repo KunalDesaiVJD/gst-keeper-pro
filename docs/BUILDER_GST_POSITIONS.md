@@ -160,11 +160,20 @@ the Dastavej Liability tab marks them where the two differ. *Departs from the
 earlier practice of taxing the agreement value whatever the deed said; where the
 deed is below the agreement this taxes less, which the firm elected.*
 
-**BU Effect and Dastavej Liability are shown apart (18/11/2026).** BU Events has
-two tabs: BU Effect (BU permission / first occupation events) and Dastavej
-Liability (one unit's own deed, posted when the deed is saved, one row a unit:
-deed date and value, value taxed, taxed before and now, GST, return). The Dastavej
-register is in the sidebar under Builder.
+**BU Effect, Dastavej Liability and the Dastavej Register are three sections of
+BU Working (18/11/2026).** A unit falls where its taxability arose, the earlier
+of its dastavej and the BU date (`cut_off_source`), whichever event posted it:
+Dastavej Liability lists every unit with a DASTAVEJ cut-off (deed date and value,
+value taxed, taxed before and now, GST, excess advance, return); a BU event's
+card shows only its BU cut-off units and says how many it taxed at their deed.
+The register is the third section (no sidebar entry).
+
+**A deed covered by its advances still closes the unit (18/11/2026).** When the
+advances already taxed reach the deed value, the dastavej auto-post still raises
+the deed invoice (Table 7) and adjusts it from those advances (Table 11B), with
+no new tax; an advance beyond the deed stays open and Dastavej Liability shows it
+as an excess advance (to refund or credit). Only a unit already invoiced to the
+deed has nothing to post (SWENI F-603).
 
 **The firm's practice.** For every unit booked before its cut-off, the entire
 balance consideration becomes taxable in the BU month, received or not.

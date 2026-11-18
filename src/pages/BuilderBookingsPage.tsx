@@ -15,6 +15,7 @@ import {
 } from '@/components/workspace/theme';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
+import { unitBlock } from '@/lib/builderUnitBlocks';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { SearchableMonthSelect } from '@/components/ui/searchable-month-select';
@@ -265,6 +266,10 @@ const BuilderBookingsPage: React.FC = () => {
   // filter applied" and "user cleared every box" would otherwise collide.
   const [unitNoFilter, setUnitNoFilter] = useState<string[] | null>(null);
   const [unitNoSearch, setUnitNoSearch] = useState('');
+  // Ledger: a block (A, B, C… from the unit number) and a search over the
+  // unit number and member names, on both views (the firm, 18 Nov 2026).
+  const [ledgerBlock, setLedgerBlock] = useState<string>('ALL');
+  const [ledgerSearch, setLedgerSearch] = useState('');
   const allUnitNos = useMemo(
     () => Array.from(new Set(units.map((u) => u.unit_no))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })),
     [units],
@@ -1162,11 +1167,28 @@ const BuilderBookingsPage: React.FC = () => {
     });
   }, [units, byHeadroom, headroomOf]);
 
+  const ledgerBlocks = useMemo(
+    () => [...new Set(units.map((u) => unitBlock(u, new Map()) ?? '—'))]
+      .sort((a, b) => (a === '—' ? 1 : b === '—' ? -1 : a.localeCompare(b))),
+    [units],
+  );
+  /** The Ledger's block and search: unit number, or any member's name on any of its bookings. */
+  const ledgerMatches = useCallback((u: UnitRow): boolean => {
+    if (ledgerBlock !== 'ALL' && (unitBlock(u, new Map()) ?? '—') !== ledgerBlock) return false;
+    const q = ledgerSearch.trim().toLowerCase();
+    if (!q) return true;
+    if (u.unit_no.toLowerCase().includes(q)) return true;
+    return bookings.some((b) => b.unit_id === u.id
+      && (members[b.id] || []).some((m) => (m.name || '').toLowerCase().includes(q)));
+  }, [ledgerBlock, ledgerSearch, bookings, members]);
+
   const filteredUnits = useMemo(() => {
-    if (unitTypeFilter.length === 0 && bookingFilter.length === 0 && rateFilter.length === 0 && unitNoFilter === null) {
+    if (unitTypeFilter.length === 0 && bookingFilter.length === 0 && rateFilter.length === 0 && unitNoFilter === null
+      && ledgerBlock === 'ALL' && !ledgerSearch.trim()) {
       return sortedUnits;
     }
     return sortedUnits.filter((u) => {
+      if (!ledgerMatches(u)) return false;
       if (unitTypeFilter.length > 0 && !unitTypeFilter.includes(u.unit_type)) return false;
       if (unitNoFilter !== null && !unitNoFilter.includes(u.unit_no)) return false;
       if (bookingFilter.length > 0) {
@@ -1182,7 +1204,7 @@ const BuilderBookingsPage: React.FC = () => {
       return true;
     });
   }, [sortedUnits, unitTypeFilter, unitNoFilter, bookingFilter, rateFilter, activeBookingFor, members, hasOpeningActivity,
-    classifyFor]);
+    classifyFor, ledgerMatches, ledgerBlock, ledgerSearch]);
 
   /** Footer totals for the Units table — same figures each row computes,
    *  summed across whatever the current filters leave visible. */
@@ -1253,7 +1275,7 @@ const BuilderBookingsPage: React.FC = () => {
   const monthRegisterGroups = useMemo<RegisterGroup[]>(() => {
     if (viewMode !== 'month') return [];
     const groups: RegisterGroup[] = [];
-    units.forEach((u) => {
+    units.filter(ledgerMatches).forEach((u) => {
       // Prefer the active booking for display; a cancelled one still names
       // who was involved historically, but must never be the add-receipt
       // target, so that gate checks status again below rather than truthiness.
@@ -1339,7 +1361,7 @@ const BuilderBookingsPage: React.FC = () => {
       });
     });
     return groups.sort((x, y) => x.rows[0].date.localeCompare(y.rows[0].date));
-  }, [viewMode, units, bookings, members, receipts, invoices, adjustmentsForUnit,
+  }, [viewMode, ledgerMatches, units, bookings, members, receipts, invoices, adjustmentsForUnit,
     openingAdjustmentsForUnit, selectedMonth, unbookedLabel]);
 
   const registerTotals = useMemo(() => monthRegisterGroups.reduce((t, g) => ({
@@ -1571,6 +1593,40 @@ const BuilderBookingsPage: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent className="px-4 pb-3">
+          {units.length > 0 && (
+            <div className="mb-2 flex flex-wrap items-end gap-2">
+              <label className="space-y-0.5">
+                <span className="block text-[11px] font-medium text-muted-foreground">Block</span>
+                <Select value={ledgerBlock} onValueChange={setLedgerBlock}>
+                  <SelectTrigger className="h-8 w-36 text-xs" aria-label="Block"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All blocks</SelectItem>
+                    {ledgerBlocks.map((b) => (
+                      <SelectItem key={b} value={b}>{b === '—' ? 'No block' : `Block ${b}`}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="space-y-0.5">
+                <span className="block text-[11px] font-medium text-muted-foreground">Search</span>
+                <Input
+                  value={ledgerSearch}
+                  onChange={(e) => setLedgerSearch(e.target.value)}
+                  placeholder="Unit number or member name"
+                  className="h-8 w-64 text-xs"
+                  aria-label="Search by unit number or member name"
+                />
+              </label>
+              {(ledgerBlock !== 'ALL' || ledgerSearch.trim()) && (
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setLedgerBlock('ALL'); setLedgerSearch(''); }}>
+                  Clear
+                </Button>
+              )}
+              {viewMode === 'upto' && (
+                <span className="pb-1.5 text-xs text-muted-foreground">{filteredUnits.length} of {units.length} units</span>
+              )}
+            </div>
+          )}
           {viewMode === 'month' ? (
             monthRegisterGroups.length === 0 ? (
               <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">

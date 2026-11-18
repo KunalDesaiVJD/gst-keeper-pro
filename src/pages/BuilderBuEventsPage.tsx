@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { groupUnitsByBlock } from '@/lib/builderUnitBlocks';
+import BuilderDastavejPage from './BuilderDastavejPage';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -74,6 +75,7 @@ interface EventUnitRow {
   differential_taxable_value: number; differential_cgst: number; differential_sgst: number;
   interest_days: number; interest_amount: number; tie_out_diff: number;
   invoice_id: string | null; rate_pct: number;
+  invoiced_before?: number; open_advance_before?: number;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -146,7 +148,12 @@ const BuilderBuEventsPage: React.FC = () => {
   // BU Effect (BU permission / first occupation, many units) and Dastavej
   // Liability (one unit's own deed, posted when the deed is saved) are two
   // different things, shown on two tabs (the firm, 18 Nov 2026).
-  const [view, setView] = useState<'bu' | 'dastavej'>('bu');
+  const [view, setView] = useState<'bu' | 'dastavej' | 'register'>('bu');
+  /** An event every unit of which was taxed at its own dastavej (the deed came first). */
+  const isDeedOnly = (ev: { id: string }) => {
+    const r = eventUnits[ev.id] || [];
+    return r.length > 0 && r.every((x) => x.cut_off_source === 'DASTAVEJ');
+  };
 
   const canPost = canPostBuEvent();
 
@@ -594,15 +601,15 @@ const BuilderBuEventsPage: React.FC = () => {
       </Note>
 
       {(() => {
-        const isDeed = (ev: EventRow) => {
-          const r = eventUnits[ev.id] || [];
-          return r.length === 1 && r[0].cut_off_source === 'DASTAVEJ';
-        };
-        const buCount = events.filter((ev) => !isDeed(ev)).length;
-        const deedEvents = events.filter(isDeed);
+        // A unit falls where its taxability arose: the earlier of its
+        // dastavej and the BU date (cut_off_source), whichever event posted it.
+        const buCount = events.filter((ev) => !isDeedOnly(ev)).length;
         const unitOf = (id: string) => units.find((u) => u.id === id);
-        const deedRows = deedEvents.map((ev) => ({ ev, r: (eventUnits[ev.id] || [])[0] }))
-          .sort((a, b) => (a.ev.bu_date < b.ev.bu_date ? 1 : -1));
+        const deedRows = events.flatMap((ev) => (eventUnits[ev.id] || [])
+          .filter((r) => r.cut_off_source === 'DASTAVEJ').map((r) => ({ ev, r })))
+          .sort((a, b) => (a.r.cut_off_date < b.r.cut_off_date ? 1 : -1));
+        const excessOf = (r: EventUnitRow) => Math.max(0, Math.round((Number(r.open_advance_before || 0)
+          - (Number(r.agreement_value || 0) - Number(r.invoiced_before || 0))) * 100) / 100);
         const dTot = deedRows.reduce((a, { r }) => ({
           value: a.value + Number(r.agreement_value || 0),
           diff: a.diff + Number(r.differential_value || 0),
@@ -611,17 +618,20 @@ const BuilderBuEventsPage: React.FC = () => {
         return (
           <>
             <div className="inline-flex rounded-md border bg-muted/40 p-0.5 text-sm">
-              {([['bu', `BU Effect (${buCount})`], ['dastavej', `Dastavej Liability (${deedEvents.length})`]] as const).map(([k, label]) => (
+              {([['bu', `BU Effect (${buCount})`], ['dastavej', `Dastavej Liability (${deedRows.length})`], ['register', 'Dastavej Register']] as const).map(([k, label]) => (
                 <button
                   key={k} type="button" onClick={() => setView(k)}
                   className={cn('rounded px-3 py-1', view === k ? 'bg-background font-semibold shadow-sm' : 'text-muted-foreground')}
                 >{label}</button>
               ))}
             </div>
+            {view === 'register' && project && (
+              <BuilderDastavejPage focusProjectId={projectId ?? undefined} />
+            )}
             {view === 'dastavej' && (
               <SectionCard
                 title="Dastavej Liability"
-                description="Tax that became due when a unit's own dastavej (registered sale deed) was executed before the BU. Posted automatically when the deed is saved, on the deed value; the unit is then closed and left out of the BU event."
+                description="Units whose dastavej (registered sale deed) came before the BU date, so their tax arose at the deed. Worked on the deed value, which prevails over the agreement value. A deed saved before the BU is posted the moment it is saved and the unit is closed."
               >
                 {deedRows.length === 0 ? (
                   <p className="px-1 py-4 text-sm text-muted-foreground">No dastavej has been posted for this project.</p>
@@ -637,6 +647,7 @@ const BuilderBuEventsPage: React.FC = () => {
                         <TableHead className={B_TH_NUM}>Taxed now</TableHead>
                         <TableHead className={B_TH_NUM}>Effective rate</TableHead>
                         <TableHead className={B_TH_NUM}>GST now</TableHead>
+                        <TableHead className={B_TH_NUM}>Excess advance</TableHead>
                         <TableHead className={B_TH}>Return</TableHead>
                         <TableHead className={B_TH}>Status</TableHead>
                       </TableRow>
@@ -647,9 +658,9 @@ const BuilderBuEventsPage: React.FC = () => {
                         const deed = Number(u?.dastavej_value) || 0;
                         const taxedOn = Number(r.agreement_value || 0);
                         return (
-                          <TableRow key={ev.id} className="cursor-pointer" onClick={() => setOpenEvent(openEvent === ev.id ? null : ev.id)}>
+                          <TableRow key={`${ev.id}-${r.unit_id}`} className="cursor-pointer" onClick={() => setOpenEvent(openEvent === ev.id ? null : ev.id)}>
                             <TableCell className="font-medium">{u?.unit_no || ''}</TableCell>
-                            <TableCell>{ev.bu_date}</TableCell>
+                            <TableCell>{u?.dastavej_date || r.cut_off_date}</TableCell>
                             <TableCell className="text-right tabular-nums">{deed ? formatINR(deed) : '—'}</TableCell>
                             <TableCell className={cn('text-right tabular-nums', deed && Math.abs(deed - taxedOn) > 1 && 'text-warning-strong')}
                               title={deed && Math.abs(deed - taxedOn) > 1 ? 'Posted on a value other than the deed value (before 18 Nov 2026 the agreement value was used)' : undefined}
@@ -662,6 +673,9 @@ const BuilderBuEventsPage: React.FC = () => {
                                 : '—'}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">{formatINR(Number(r.differential_cgst || 0) + Number(r.differential_sgst || 0))}</TableCell>
+                            <TableCell className={cn('text-right tabular-nums', excessOf(r) > 0 && 'font-medium text-warning-strong')}
+                              title={excessOf(r) > 0 ? 'Advances already taxed beyond the deed value: refund to the buyer or a credit note' : undefined}
+                            >{excessOf(r) > 0 ? formatINR(excessOf(r)) : '—'}</TableCell>
                             <TableCell>{prettyPeriodLabel(ev.posting_period)}</TableCell>
                             <TableCell>{r.booked_at_cutoff ? ev.status : 'Schedule III'}</TableCell>
                           </TableRow>
@@ -674,7 +688,7 @@ const BuilderBuEventsPage: React.FC = () => {
                         <TableCell className="text-right tabular-nums">{formatINR(dTot.diff)}</TableCell>
                         <TableCell />
                         <TableCell className="text-right tabular-nums">{formatINR(dTot.tax)}</TableCell>
-                        <TableCell colSpan={2} />
+                        <TableCell colSpan={3} />
                       </TableRow>
                     </TableBody>
                   </Table>
@@ -687,9 +701,8 @@ const BuilderBuEventsPage: React.FC = () => {
       })()}
 
       {events.filter((ev) => {
-        const r = eventUnits[ev.id] || [];
-        const deed = r.length === 1 && r[0].cut_off_source === 'DASTAVEJ';
-        return view === 'bu' ? !deed : (deed && openEvent === ev.id);
+        if (view === 'register') return false;
+        return view === 'bu' ? !isDeedOnly(ev) : openEvent === ev.id;
       }).length === 0 && view === 'bu' ? (
         <Card>
           <CardContent className="px-4 py-8 text-center text-sm text-muted-foreground">
@@ -709,11 +722,12 @@ const BuilderBuEventsPage: React.FC = () => {
         </Card>
       ) : (
         events.filter((ev) => {
-          const r = eventUnits[ev.id] || [];
-          const deed = r.length === 1 && r[0].cut_off_source === 'DASTAVEJ';
-          return view === 'bu' ? !deed : (deed && openEvent === ev.id);
+          if (view === 'register') return false;
+          return view === 'bu' ? !isDeedOnly(ev) : openEvent === ev.id;
         }).map((ev) => {
-          const rows = eventUnits[ev.id] || [];
+          const allRows = eventUnits[ev.id] || [];
+          const rows = view === 'bu' && !isDeedOnly(ev) ? allRows.filter((r) => r.cut_off_source !== 'DASTAVEJ') : allRows;
+          const atDeed = allRows.length - rows.length;
           const taxable = rows.filter((r) => r.booked_at_cutoff);
           const unbooked = rows.filter((r) => !r.booked_at_cutoff);
           const tot = taxable.reduce((a, r) => ({
@@ -761,6 +775,11 @@ const BuilderBuEventsPage: React.FC = () => {
                   <Badge variant={ev.status === 'POSTED' ? 'success' : 'warning'} className="text-[10px] font-medium">
                     {ev.status}
                   </Badge>
+                  {atDeed > 0 && (
+                    <Badge variant="outline" className="text-[10px] font-medium" title="Their dastavej came before the BU date: shown under Dastavej Liability">
+                      {atDeed} unit{atDeed === 1 ? '' : 's'} taxed at dastavej
+                    </Badge>
+                  )}
                   {ev.status !== 'POSTED' && taxable.length > 0 && (
                     <Badge variant={cfOutstanding === 0 ? 'success' : 'warning'} className="text-[10px] font-medium">
                       Agreement value: {cfConfirmed}/{taxable.length} confirmed

@@ -788,7 +788,13 @@ export async function autoPostDastavejDifferential(params: {
 
   // The opening balance still unabsorbed at the BU month's opening.
   const openingContribution = wu.openingOpenAdvanceBefore;
-  if (wu.differentialValue <= 0 && openingContribution <= 0.005) {
+  // A deed with an invoice still to raise always closes the unit, even when
+  // its advances already cover the deed (no new tax): Table 7 carries the
+  // deed value and Table 11B adjusts it from the advances, and any advance
+  // beyond the deed is left open to refund or credit (the firm, 18 Nov 2026:
+  // the dastavej value prevails; SWENI F-603). Only a unit already invoiced
+  // to the deed has nothing to post.
+  if (wu.differentialValue <= 0 && openingContribution <= 0.005 && wu.invoiceValue <= 0.005) {
     // The normal case the Dastavej page already assumes: ordinary advances
     // already cover the agreement value by the time the deed is executed.
     // Nothing to post — dastavej stays pure reconciliation.
