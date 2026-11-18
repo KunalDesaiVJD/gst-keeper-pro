@@ -18,7 +18,7 @@ Deno.test('the link is the button and the plain-text fallback', () => {
   const { html } = resetEmail(row);
   assertEquals(html.split(row.link).length - 1, 3); // button href, text href, text
   assertStringIncludes(html, '>Set a new password</a>');
-  assertStringIncludes(html, 'expires in 60 minutes');
+  assertStringIncludes(html, 'does not expire');
   assertStringIncludes(html, 'https://gst.vjdesai.com/login');
   assertStringIncludes(html, 'your current password keeps working');
 });
@@ -34,7 +34,7 @@ Deno.test('details box: GSTIN as the User ID', () => {
   const { html } = resetEmail(row);
   assertStringIncludes(html, '>User ID</td>');
   assertStringIncludes(html, '>24AAACN0000A1ZK</td>');
-  assertStringIncludes(html, '60 minutes, one use');
+  assertStringIncludes(html, 'one use, no time limit');
 });
 
 Deno.test('a staff-sent link says so', () => {

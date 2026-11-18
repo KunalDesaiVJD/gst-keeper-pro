@@ -92,7 +92,7 @@ const ClientForgotPasswordDialog: React.FC<ClientForgotPasswordDialogProps> = ({
                 className="uppercase"
               />
               <p className="text-xs text-muted-foreground">
-                The same User ID you sign in with. The link works once, for 60 minutes; your current password keeps
+                The same User ID you sign in with. The link works once and does not expire; your current password keeps
                 working until you use it.
               </p>
             </div>
