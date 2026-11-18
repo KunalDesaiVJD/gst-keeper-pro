@@ -440,6 +440,22 @@ const BuilderReturnsPage: React.FC = () => {
     [allPostings, blockFilter],
   );
   const postingsOf = (key: ReturnTableKey) => shownPostings.filter(inTable(key));
+  // The return's amounts per GSTR-1 table, from every posting of the period
+  // (the whole return, not the block shown), for the Prepare cards.
+  const tableAmounts = useMemo(() => {
+    const z = () => ({ taxable: 0, tax: 0, n: 0 });
+    const t: Record<'t7' | 't10' | 't11a' | 't11b' | 't11b2', { taxable: number; tax: number; n: number }> = {
+      t7: z(), t10: z(), t11a: z(), t11b: z(), t11b2: z(),
+    };
+    allPostings.forEach((p) => {
+      const k = p.gstr1_table === 'Table 10' ? 't10'
+        : p.gstr1_table === 'Table 11B(2)' ? 't11b2'
+          : p.source_type === 'ADVANCE_11A' ? 't11a'
+            : p.source_type === 'INVOICE_B2CS' ? 't7' : 't11b';
+      t[k].taxable += p.taxable_value; t[k].tax += p.cgst + p.sgst; t[k].n += 1;
+    });
+    return t;
+  }, [allPostings]);
   const [isExporting, setIsExporting] = useState(false);
   const handleExport = async (format: 'xlsx' | 'pdf') => {
     if (!selectedClient) return;
@@ -614,13 +630,16 @@ const BuilderReturnsPage: React.FC = () => {
           {preview && (
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
               {[
-                { label: 'Table 7 — B2CS', n: preview.counts.b2cs },
-                { label: 'Table 11A — advances', n: preview.counts.at },
-                { label: 'Table 11B — adjusted', n: preview.counts.txpd },
-                { label: 'Table 10 — amendments', n: preview.counts.b2csa },
-                { label: 'Table 11B(2) — adjusted, amended', n: preview.counts.txpda },
+                { label: 'Table 7 — B2CS', a: tableAmounts.t7, n: preview.counts.b2cs },
+                { label: 'Table 11A — advances', a: tableAmounts.t11a, n: preview.counts.at },
+                { label: 'Table 11B — adjusted', a: tableAmounts.t11b, n: preview.counts.txpd },
+                { label: 'Table 10 — amendments', a: tableAmounts.t10, n: preview.counts.b2csa },
+                { label: 'Table 11B(2) — adjusted, amended', a: tableAmounts.t11b2, n: preview.counts.txpda },
               ].map((t) => (
-                <KpiTile key={t.label} label={t.label} value={t.n} hint={t.n === 1 ? 'rate line' : 'rate lines'} />
+                <KpiTile
+                  key={t.label} label={t.label} value={formatINR(t.a.tax)}
+                  hint={`Taxable ${formatINR(t.a.taxable)} · ${t.n} rate line${t.n === 1 ? '' : 's'}`}
+                />
               ))}
               <KpiTile label="Table 8 — Non-GST (land)" value={formatINR(preview.nonGstTotal)} hint="1/3rd deemed land value" />
               <KpiTile label="Tax in the return" value={formatINR(preview.totalTax)} hint="CGST + SGST" />

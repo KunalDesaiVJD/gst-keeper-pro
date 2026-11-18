@@ -1472,6 +1472,9 @@ const BuilderBookingsPage: React.FC = () => {
               >
                 <ArrowUpDown className="h-3.5 w-3.5" />
                 ₹45L headroom
+                {atRisk > 0 && (
+                  <Badge variant="warning" className="ml-1 h-4 px-1 text-[10px]" title="Units within ₹1 lakh of ₹45 lakh">{atRisk}</Badge>
+                )}
               </Button>
             )}
             
@@ -1528,7 +1531,7 @@ const BuilderBookingsPage: React.FC = () => {
       )}
 
       {viewMode === 'upto' && units.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
           <KpiTile
             label="Units in view"
             value={filteredUnits.length}
@@ -1538,26 +1541,15 @@ const BuilderBookingsPage: React.FC = () => {
           <KpiTile
             label={`Value taxed · up to ${prettyPeriodLabel(selectedMonth)}`}
             value={formatINR(unitTotals.closing)}
-            hint={`This period ${formatINR(unitTotals.received)}`}
+            hint={`Opening ${formatINR(unitTotals.opening)}`}
           />
-          <KpiTile label="Open advance" value={unitTotals.openAdvance > 0 ? formatINR(unitTotals.openAdvance) : '—'} />
-          <button
-            type="button"
-            onClick={() => setByHeadroom((v) => !v)}
-            title="Put the units closest to the ₹45 lakh limit first"
-            aria-pressed={byHeadroom}
-            className={cn(
-              'rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full',
-              byHeadroom && 'ring-2 ring-primary/60',
-            )}
-          >
-            <KpiTile
-              label="Within ₹1 lakh of ₹45L"
-              value={atRisk}
-              hint={byHeadroom ? 'Sorted by headroom' : 'Click to sort by headroom'}
-              tone={atRisk ? 'warn' : 'neutral'}
-            />
-          </button>
+          <KpiTile label={`Taxed in ${prettyPeriodLabel(selectedMonth)}`} value={formatINR(unitTotals.received)} hint="Advances and invoices of the period" />
+          <KpiTile label="Open advance" value={unitTotals.openAdvance > 0 ? formatINR(unitTotals.openAdvance) : '—'} hint="Taxed, not yet invoiced" />
+          <KpiTile
+            label="Balance to tax"
+            value={formatINR(Math.max(0, unitTotals.agreement - unitTotals.closing))}
+            hint="Agreement less value taxed"
+          />
         </div>
       )}
       {viewMode === 'month' && monthRegisterGroups.length > 0 && (
