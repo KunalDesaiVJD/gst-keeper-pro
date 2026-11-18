@@ -299,6 +299,16 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
               'Dastavej saved for the register — this unit is flagged closed before onboarding, so no '
               + 'automatic differential is computed for it.',
             );
+          } else if (result.action === 'REWORKED') {
+            toast.success(
+              `Dastavej saved — the unit's posting in ${result.postingPeriod} is now worked on the deed value `
+              + `(${formatINR(result.after)}, was ${formatINR(result.before)}).`,
+            );
+          } else if (result.action === 'FILED_KEPT') {
+            toast.warning(
+              `Dastavej saved — GSTR-1 for ${result.postingPeriod} is filed, so the posting is kept and the `
+              + 'register flags the difference.',
+            );
           } else if (result.action === 'ALREADY_TAXED') {
             toast.success('Dastavej saved — already fully taxed by advances, nothing further to post.');
           } else {

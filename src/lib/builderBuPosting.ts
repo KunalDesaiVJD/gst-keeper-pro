@@ -623,6 +623,10 @@ export async function recheckStaleScheduleIII(params: {
 
 export type DastavejAutoPostResult =
   | { action: 'ALREADY_DONE' }
+  /** A unit already posted (by a BU event, or its own deed): its posting redone on the deed value. */
+  | { action: 'REWORKED'; before: number; after: number; postingPeriod: string }
+  /** As REWORKED, but the posting's GSTR-1 is filed: left as it is, for the register to flag. */
+  | { action: 'FILED_KEPT'; postingPeriod: string }
   | { action: 'ALREADY_TAXED' }
   | { action: 'SCHEDULE_III' }
   | {
@@ -714,7 +718,11 @@ export async function autoPostDastavejDifferential(params: {
   // A re-save of the same (or an edited) date on a unit already closed
   // against an event never re-runs it here — unposting is a deliberate,
   // separate action on the BU Working page.
-  if (unit.bu_event_id) return { action: 'ALREADY_DONE' };
+  // A unit already closed (a BU event came first, or the deed was saved
+  // before): the dastavej value prevails, so its own posting is redone on
+  // the deed value while that month's GSTR-1 is not filed (the firm,
+  // 18 Nov 2026: no credit note for an unfiled month).
+  if (unit.bu_event_id) return reworkPostedUnitToDeed({ unitId: unit.id, userId: params.userId });
   // Resolved under the firm's earlier records before this project was
   // onboarded here — this software has no reliable pre-onboarding history to
   // compute a differential against. The date is still saved by the caller for
@@ -969,4 +977,119 @@ async function insertEventUnitRow(eventId: string, w: EventWorking['units'][numb
     tie_out_diff: w.tieOutDiff, subsumed_receipt_count: w.subsumedReceiptCount,
   });
   if (error) throw error;
+}
+
+
+/**
+ * Redo one unit's posting in its (posted) event on the current deed value,
+ * leaving every other unit of the event as it is. Only while the posting's
+ * GSTR-1 is not Filed; a filed month is kept (FILED_KEPT) and the Dastavej
+ * register flags the difference. The unit's invoice is deleted (its 11B
+ * adjustments cascade), its receipts the event subsumed are released, its
+ * working is prepared again as at the event's completion date and posted
+ * again under the same invoice number and date (the firm, 18 Nov 2026).
+ */
+export async function reworkPostedUnitToDeed(params: { unitId: string; userId: string | null }): Promise<DastavejAutoPostResult> {
+  const { data: unitRow, error: uErr } = await supabase
+    .from('builder_units').select('*').eq('id', params.unitId).single();
+  if (uErr || !unitRow) throw new Error(uErr?.message || 'Unit not found');
+  const unit = unitRow as unknown as {
+    id: string; project_id: string; unit_no: string; unit_type: 'Residential' | 'Commercial';
+    carpet_area_sqm: number; status: string; dastavej_date: string | null; dastavej_value: number | null;
+    bu_event_id: string | null;
+  };
+  if (!unit.bu_event_id) return { action: 'ALREADY_DONE' };
+  if (!((Number(unit.dastavej_value) || 0) > 0)) return { action: 'ALREADY_DONE' };
+
+  const { data: evRow, error: eErr } = await supabase
+    .from('builder_bu_events').select('id, project_id, bu_date, posting_period, posting_basis, status')
+    .eq('id', unit.bu_event_id).single();
+  if (eErr || !evRow) throw new Error(eErr?.message || 'Could not load the posted event');
+  const ev = evRow as { id: string; project_id: string; bu_date: string; posting_period: string; posting_basis: PostingBasis; status: string };
+  if (ev.status !== 'POSTED') return { action: 'ALREADY_DONE' };
+
+  const { data: euRow, error: euErr } = await supabase
+    .from('builder_bu_event_units').select('*').eq('bu_event_id', ev.id).eq('unit_id', unit.id).single();
+  if (euErr || !euRow) throw new Error(euErr?.message || 'Could not load the unit\'s working');
+  const eu = euRow as { id: string; invoice_id: string | null; agreement_value: number; rate_code: string; rate_pct: number };
+  const before = Number(eu.agreement_value) || 0;
+  if (Math.abs(before - Number(unit.dastavej_value)) <= 0.5) return { action: 'ALREADY_DONE' };
+
+  const { data: proj } = await supabase.from('builder_projects').select('client_id').eq('id', ev.project_id).single();
+  const clientId = (proj as { client_id: string } | null)?.client_id;
+  if (clientId) {
+    const { data: filed } = await supabase.from('filing_status').select('id')
+      .eq('client_id', clientId).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)'])
+      .eq('period_month', ev.posting_period).eq('status', 'Filed').limit(1);
+    if (filed && filed.length) return { action: 'FILED_KEPT', postingPeriod: ev.posting_period };
+  }
+
+  // The invoice being replaced: keep its number, date and series.
+  let invoiceDate: string | null = null;
+  let docSeries: string | null = null;
+  let amendsPeriod: string | null = null;
+  if (eu.invoice_id) {
+    const { data: inv } = await supabase.from('builder_invoices')
+      .select('invoice_date, doc_series, amends_period').eq('id', eu.invoice_id).maybeSingle();
+    const i = inv as { invoice_date: string; doc_series: string | null; amends_period: string | null } | null;
+    invoiceDate = i?.invoice_date ?? null;
+    docSeries = i?.doc_series ?? null;
+    amendsPeriod = i?.amends_period ?? null;
+    const { error: dErr } = await supabase.from('builder_invoices').delete().eq('id', eu.invoice_id);
+    if (dErr) throw dErr;
+  }
+  const { error: rErr } = await supabase.from('builder_receipts')
+    .update({ subsumed_by_bu_event_id: null }).eq('subsumed_by_bu_event_id', ev.id).eq('unit_id', unit.id);
+  if (rErr) throw rErr;
+  await supabase.from('builder_bu_event_units').update({ invoice_id: null }).eq('id', eu.id);
+
+  try {
+    const prepared = await prepareBuEvent({
+      buDate: ev.bu_date,
+      postingPeriod: ev.posting_period,
+      postingBasis: ev.posting_basis,
+      units: [{
+        id: unit.id, unit_no: unit.unit_no, unit_type: unit.unit_type,
+        carpet_area_sqm: unit.carpet_area_sqm, dastavej_date: unit.dastavej_date, status: unit.status,
+      }],
+      classification: { [unit.id]: { agreementValue: before, rateCode: eu.rate_code, ratePct: Number(eu.rate_pct) || 0 } },
+    });
+    const w = prepared.working.units[0];
+    const { error: wErr } = await supabase.from('builder_bu_event_units').update({
+      cut_off_date: w.cutOffDate,
+      cut_off_source: w.cutOffSource,
+      booked_at_cutoff: w.bookedAtCutOff,
+      agreement_value: w.agreementValue,
+      value_taxed_upto_opening: w.valueTaxedUptoOpening,
+      invoiced_before: w.invoicedBefore,
+      open_advance_before: w.openAdvanceBefore,
+      received_upto_cutoff: w.receivedUptoCutOff,
+      differential_value: w.differentialValue,
+      differential_taxable_value: w.differentialTaxableValue,
+      differential_cgst: w.differentialCgst,
+      differential_sgst: w.differentialSgst,
+      interest_days: w.interestDays,
+      interest_amount: w.interestAmount,
+      tie_out_diff: w.tieOutDiff,
+      subsumed_receipt_count: w.subsumedReceiptCount,
+    }).eq('id', eu.id);
+    if (wErr) throw wErr;
+    await postBuEventRows({
+      eventId: ev.id,
+      projectId: ev.project_id,
+      prepared,
+      postingPeriod: ev.posting_period,
+      postingDate: invoiceDate || dateWithinPeriod(ev.bu_date, ev.posting_period),
+      docSeries,
+      userId: params.userId,
+      amendsPeriod,
+      amendsDate: amendsPeriod ? invoiceDate : null,
+    });
+    return { action: 'REWORKED', before, after: w.agreementValue, postingPeriod: ev.posting_period };
+  } catch (e) {
+    throw new Error(
+      `Unit ${unit.unit_no}: its old posting was taken off but the new one failed (${(e as Error).message}). `
+      + 'Open BU Working and unpost / prepare the event again.',
+    );
+  }
 }
