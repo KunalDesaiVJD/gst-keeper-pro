@@ -23,7 +23,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from 'sonner';
 import {
   FileSpreadsheet, Loader2, Info, CheckCircle2, AlertTriangle, ShieldAlert, Send, ExternalLink, Wallet,
+  ChevronDown, ChevronRight,
 } from 'lucide-react';
+import {
+  NO_BLOCK, blockOf, blocksIn, inTable, rateKey, returnsUnitWiseReport, unitLines,
+  type ReturnTableKey, type UnitPosting,
+} from '@/utils/builderReturnsUnitWise';
+import { downloadReportXlsx } from '@/lib/reportExport/excel';
+import { downloadReportPdf } from '@/lib/reportExport/pdf';
 import { useNavigate } from 'react-router-dom';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
 import {
@@ -75,7 +82,16 @@ const SOURCE_LABEL: Record<PostingSource, string> = {
 };
 
 /** Rate-wise table shared by all four sections. */
-const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ buckets, emptyText }) => {
+const BucketTable: React.FC<{
+  buckets: RateBucket[]; emptyText: string;
+  /** The postings behind these buckets, for the unit-wise detail under each rate line. */
+  postings?: UnitPosting[];
+  blockLabel?: string;
+}> = ({ buckets, emptyText, postings, blockLabel = 'Block' }) => {
+  const [open, setOpen] = React.useState<Set<string>>(new Set());
+  const toggle = (k: string) => setOpen((prev) => {
+    const next = new Set(prev); if (next.has(k)) next.delete(k); else next.add(k); return next;
+  });
   if (!buckets.length) {
     return <p className="py-4 text-center text-sm text-muted-foreground">{emptyText}</p>;
   }
@@ -103,9 +119,17 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
         </TableRow>
       </TableHeader>
       <TableBody>
-        {buckets.map((b) => (
-          <TableRow key={`${b.rateCode}-${b.ratePct}`} className={B_TR}>
+        {buckets.map((b) => {
+          const k = `${b.rateCode}|${b.ratePct}`;
+          const isOpen = open.has(k);
+          const groups = isOpen && postings ? unitLines(postings.filter((p) => rateKey(p) === k)) : [];
+          return (
+          <React.Fragment key={k}>
+          <TableRow className={cn(B_TR, postings && 'cursor-pointer')} onClick={postings ? () => toggle(k) : undefined}>
             <TableCell className={cn(B_TD, 'font-medium')}>
+              {postings && (isOpen
+                ? <ChevronDown className="mr-1 inline h-3.5 w-3.5 text-muted-foreground" />
+                : <ChevronRight className="mr-1 inline h-3.5 w-3.5 text-muted-foreground" />)}
               <span className="tabular-nums">{b.ratePct}%</span>
               <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">eff. {b.effectiveRatePct}%</span>
             </TableCell>
@@ -117,7 +141,40 @@ const BucketTable: React.FC<{ buckets: RateBucket[]; emptyText: string }> = ({ b
             <TableCell className={B_TD_NUM}>{formatINR(b.sgst)}</TableCell>
             <TableCell className={cn(B_TD_NUM, 'font-medium')}>{formatINR(b.totalTax)}</TableCell>
           </TableRow>
-        ))}
+          {groups.map((g) => (
+            <React.Fragment key={`${k}-${g.block}`}>
+              {g.units.map((u) => (
+                <TableRow key={u.unitId} className="bg-muted/20 text-[12px] hover:bg-muted/30">
+                  <TableCell className={cn(B_TD, 'pl-8')}>
+                    <span className="font-medium">{u.unitNo}</span>
+                    <span className="ml-1.5 text-[11px] text-muted-foreground">{u.tables.join(', ')}</span>
+                  </TableCell>
+                  <TableCell className={B_TD_NUM}>{u.docs}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(u.consideration)}</TableCell>
+                  <TableCell className={cn(B_TD_NUM, 'text-muted-foreground')}>{formatINR(u.land)}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(u.taxable)}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(u.cgst)}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(u.sgst)}</TableCell>
+                  <TableCell className={B_TD_NUM}>{formatINR(u.cgst + u.sgst)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/40 text-[12px] font-semibold hover:bg-muted/40">
+                <TableCell className={cn(B_TD, 'pl-8')}>
+                  {g.block === NO_BLOCK ? `No ${blockLabel.toLowerCase()}` : `${blockLabel} ${g.block}`} subtotal
+                </TableCell>
+                <TableCell className={B_TD_NUM}>{g.total.docs}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(g.total.consideration)}</TableCell>
+                <TableCell className={cn(B_TD_NUM, 'text-muted-foreground')}>{formatINR(g.total.land)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(g.total.taxable)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(g.total.cgst)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(g.total.sgst)}</TableCell>
+                <TableCell className={B_TD_NUM}>{formatINR(g.total.cgst + g.total.sgst)}</TableCell>
+              </TableRow>
+            </React.Fragment>
+          ))}
+          </React.Fragment>
+          );
+        })}
         <TableRow className={cn(WS_TR_TOTAL, 'border-0 hover:bg-muted')}>
           <TableCell className={B_TD}>Total</TableCell>
           <TableCell className={B_TD} />
@@ -153,6 +210,8 @@ const BuilderReturnsPage: React.FC = () => {
   const [clients, setClients] = useState<{ id: string; name: string; gstin: string | null }[]>([]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectFilter, setProjectFilter] = useState<string>('ALL');
+  // Block (A, B, C… from the unit number) filter over every table and the export.
+  const [blockFilter, setBlockFilter] = useState<string>('ALL');
   const [rows, setRows] = useState<PostingDbRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   /** BU_DIFFERENTIAL invoices' own milestone_label, keyed by invoice id — more
@@ -363,8 +422,47 @@ const BuilderReturnsPage: React.FC = () => {
     [preview],
   );
 
+  const allPostings = useMemo<UnitPosting[]>(() => rows.map((r) => ({
+    source_type: r.source_type, gstr1_table: r.gstr1_table, unit_id: r.unit_id, unit_no: r.unit_no,
+    rate_code: r.rate_code, rate_pct: Number(r.rate_pct) || 0,
+    consideration: Number(r.consideration) || 0, taxable_value: Number(r.taxable_value) || 0,
+    cgst: Number(r.cgst) || 0, sgst: Number(r.sgst) || 0, land_deduction: Number(r.land_deduction) || 0,
+  })), [rows]);
+  const blockOptions = useMemo(() => blocksIn(allPostings), [allPostings]);
+  useEffect(() => { if (blockFilter !== 'ALL' && !blockOptions.includes(blockFilter)) setBlockFilter('ALL'); }, [blockOptions, blockFilter]);
+  const shownRows = useMemo(
+    () => (blockFilter === 'ALL' ? rows : rows.filter((r) => blockOf(r.unit_no) === blockFilter)),
+    [rows, blockFilter],
+  );
+  const shownPostings = useMemo(
+    () => (blockFilter === 'ALL' ? allPostings : allPostings.filter((p) => blockOf(p.unit_no) === blockFilter)),
+    [allPostings, blockFilter],
+  );
+  const postingsOf = (key: ReturnTableKey) => shownPostings.filter(inTable(key));
+  const [isExporting, setIsExporting] = useState(false);
+  const handleExport = async (format: 'xlsx' | 'pdf') => {
+    if (!selectedClient) return;
+    setIsExporting(true);
+    try {
+      const table = returnsUnitWiseReport({
+        clientName: selectedClient.name,
+        gstin: selectedClient.gstin,
+        periodLabel: prettyPeriodLabel(selectedMonth),
+        projectLabel: projectFilter === 'ALL' ? 'All projects' : (projects.find((p) => p.id === projectFilter)?.name || ''),
+        blockLabel: 'Block',
+        blockFilter: blockFilter === 'ALL' ? 'All' : blockFilter,
+        postings: shownPostings,
+      });
+      await (format === 'pdf' ? downloadReportPdf : downloadReportXlsx)(table);
+    } catch (e) {
+      toast.error(`Could not export: ${(e as Error).message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const summary = useMemo(
-    () => summarisePeriod(rows.map((r) => ({
+    () => summarisePeriod(shownRows.map((r) => ({
       source_type: r.source_type,
       gstr1_table: r.gstr1_table,
       rate_code: r.rate_code,
@@ -375,7 +473,7 @@ const BuilderReturnsPage: React.FC = () => {
       sgst: Number(r.sgst) || 0,
       land_deduction: Number(r.land_deduction) || 0,
     } as PostingRow))),
-    [rows],
+    [shownRows],
   );
 
   const monthOptions = useMemo(() => {
@@ -448,7 +546,30 @@ const BuilderReturnsPage: React.FC = () => {
                 </SelectContent>
               </Select>
             </label>
+            <label className="min-w-0 space-y-0.5">
+              <span className={WS_FILTER_LABEL}>Block</span>
+              <Select value={blockFilter} onValueChange={setBlockFilter}>
+                <SelectTrigger className={WS_CONTROL} aria-label="Block"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All blocks</SelectItem>
+                  {blockOptions.map((b) => (
+                    <SelectItem key={b} value={b}>{b === NO_BLOCK ? 'No block' : `Block ${b}`}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
           </div>
+          {selectedClientId && rows.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" className={WS_BTN} disabled={isExporting} onClick={() => void handleExport('xlsx')}>
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Export Excel (unit-wise)
+              </Button>
+              <Button variant="outline" size="sm" className={WS_BTN} disabled={isExporting} onClick={() => void handleExport('pdf')}>
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Export PDF (unit-wise)
+              </Button>
+              <span className="self-center text-xs text-muted-foreground">Click a rate line in any table to see its units.</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -612,7 +733,7 @@ const BuilderReturnsPage: React.FC = () => {
               </>
             )}
           >
-            <BucketTable buckets={summary.outward} emptyText="Nothing posted for this period." />
+            <BucketTable buckets={summary.outward} emptyText="Nothing posted for this period." postings={postingsOf('outward')} />
           </SectionCard>
 
           {/* ── ITC & cash working paper — firm policy ────────────────────── */}
@@ -696,7 +817,7 @@ const BuilderReturnsPage: React.FC = () => {
               </>
             )}
           >
-            <BucketTable buckets={summary.table7} emptyText="No invoices raised in this period." />
+            <BucketTable buckets={summary.table7} emptyText="No invoices raised in this period." postings={postingsOf('table7')} />
           </SectionCard>
 
           <SectionCard
@@ -708,19 +829,19 @@ const BuilderReturnsPage: React.FC = () => {
               </>
             )}
           >
-            <BucketTable buckets={summary.table11A} emptyText="No advances received in this period." />
+            <BucketTable buckets={summary.table11A} emptyText="No advances received in this period." postings={postingsOf('table11A')} />
           </SectionCard>
 
           <SectionCard
             title="GSTR-1 Table 11B — adjustment of advances"
             description="Negative by design: these advances were taxed on receipt and are now covered by an invoice."
           >
-            <BucketTable buckets={summary.table11B} emptyText="No advances adjusted in this period." />
+            <BucketTable buckets={summary.table11B} emptyText="No advances adjusted in this period." postings={postingsOf('table11B')} />
           </SectionCard>
 
           {/* ── Document listing ───────────────────────────────────────── */}
-          <SectionCard title={`Documents (${rows.length})`} description="Every posting behind the totals above.">
-            {rows.length === 0 ? (
+          <SectionCard title={`Documents (${shownRows.length})`} description="Every posting behind the totals above.">
+            {shownRows.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
                 Nothing posted for {prettyPeriodLabel(selectedMonth)}.
               </p>
@@ -741,7 +862,7 @@ const BuilderReturnsPage: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {[...rows]
+                  {[...shownRows]
                     .sort((a, b) => (a.doc_date || '').localeCompare(b.doc_date || ''))
                     .map((r) => (
                       <TableRow key={`${r.source_type}-${r.source_id}`} className={B_TR}>

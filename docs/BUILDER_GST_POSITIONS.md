@@ -149,6 +149,23 @@ interest on a late-reported deed, if the firm wants it, is the Late-discovery
 interest on the Dastavej page. A failed auto-post leaves no PREPARED event
 behind. *Elected position, not confirmed in a firm sign-off.*
 
+**The value taxed is the deed's when a deed value is recorded (the firm,
+18/11/2026: "as per the Dastavej only").** `prepareBuEvent` reads each unit's
+`dastavej_value`; when it is recorded (over ₹0) it replaces the agreement value
+as the value the differential is worked to, for a BU event, the dastavej
+auto-post and the late-discovery interest alike. A unit with no deed value keeps
+the agreement value (opening snapshot, then the classification engine). Units
+posted before this date were worked to the agreement value and are not re-run:
+the Dastavej Liability tab marks them where the two differ. *Departs from the
+earlier practice of taxing the agreement value whatever the deed said; where the
+deed is below the agreement this taxes less, which the firm elected.*
+
+**BU Effect and Dastavej Liability are shown apart (18/11/2026).** BU Events has
+two tabs: BU Effect (BU permission / first occupation events) and Dastavej
+Liability (one unit's own deed, posted when the deed is saved, one row a unit:
+deed date and value, value taxed, taxed before and now, GST, return). The Dastavej
+register is in the sidebar under Builder.
+
 **The firm's practice.** For every unit booked before its cut-off, the entire
 balance consideration becomes taxable in the BU month, received or not.
 Anchored in **s.31(5)(c) r/w s.13(2)(a)**: where payment is linked to the
