@@ -28,6 +28,7 @@ import {
   saveLateDiscoveryInterest,
 } from '@/lib/builderBuPosting';
 import type { LateDiscoveryInterest } from '@/utils/builderBuEvent';
+import { prettyPeriodLabel } from '@/utils/builderLedger';
 
 interface RecoRow {
   unit_id: string;
@@ -45,6 +46,19 @@ interface RecoRow {
   booked_at_cutoff: boolean | null;
   variance: number | null;
   cut_off_source: string | null;
+}
+
+/** The unit's posting, from the event that closed it. */
+interface PostedLeg {
+  eventId: string;
+  postingPeriod: string;
+  status: string;
+  cutOffSource: string;
+  valueTaxedOn: number;
+  taxedBefore: number;
+  taxedNow: number;
+  gstNow: number;
+  excessAdvance: number;
 }
 
 interface PendingUnit {
@@ -100,6 +114,16 @@ const resolveAction = (r: RecoRow): Action => {
   return { kind: 'CREDIT_NOTE', label: 'Deed below value taxed — credit note, check the window', tone: 'warn' };
 };
 
+/** The status in a word or two; the full sentence is the badge's tooltip. */
+const SHORT_LABEL: Record<Action['kind'], string> = {
+  NONE: 'Reconciled',
+  AUTO_TAXED: 'Taxed at the deed',
+  SCHEDULE_III: 'Schedule III',
+  SUPPLEMENTARY: 'Supplementary due',
+  CREDIT_NOTE: 'Excess over deed',
+  PENDING: 'Value missing',
+};
+
 const today = () => new Date().toISOString().slice(0, 10);
 
 const TONE_VARIANT: Record<Action['tone'], 'success' | 'info' | 'warning' | 'outline'> = {
@@ -113,9 +137,16 @@ interface Props {
   /** Jump straight into recording the deed for one unit, instead of the full register. */
   focusUnit?: { id: string; unit_no: string; dastavej_date: string | null; dastavej_value: number | null };
   focusProjectId?: string;
+  /**
+   * BU Working's Dastavej section (the firm, 18 Nov 2026): no header or
+   * client / project filter (the workspace sets them), amount cards, one
+   * table of every unit with a deed and its posting; a row opens its event.
+   */
+  section?: boolean;
+  onOpenEvent?: (eventId: string) => void;
 }
 
-const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => {
+const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, section = false, onOpenEvent }) => {
   const { canManageBuilderUnits, user } = useAuth();
   const { selectedClientId, setSelectedClientId } = useClient();
 
@@ -123,6 +154,7 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [projectFilter, setProjectFilter] = useState('ALL');
   const [rows, setRows] = useState<RecoRow[]>([]);
+  const [legs, setLegs] = useState<Record<string, PostedLeg>>({});
   const [pending, setPending] = useState<PendingUnit[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -168,7 +200,38 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
       if (projectFilter !== 'ALL') q = q.eq('project_id', projectFilter);
       const { data, error } = await q;
       if (error) throw error;
-      setRows((data || []) as unknown as RecoRow[]);
+      const recoRows = (data || []) as unknown as RecoRow[];
+      setRows(recoRows);
+
+      // Each unit's posting in the event that closed it.
+      const posted = recoRows.filter((r) => r.bu_event_id);
+      const lmap: Record<string, PostedLeg> = {};
+      if (posted.length) {
+        const { data: eus } = await supabase.from('builder_bu_event_units')
+          .select('unit_id, bu_event_id, cut_off_source, agreement_value, value_taxed_upto_opening, differential_value, differential_cgst, differential_sgst, open_advance_before, invoiced_before, event:builder_bu_events(posting_period, status)')
+          .in('unit_id', posted.map((r) => r.unit_id));
+        ((eus || []) as unknown as {
+          unit_id: string; bu_event_id: string; cut_off_source: string; agreement_value: number;
+          value_taxed_upto_opening: number; differential_value: number; differential_cgst: number; differential_sgst: number;
+          open_advance_before: number; invoiced_before: number; event: { posting_period: string; status: string } | null;
+        }[]).forEach((e) => {
+          const r = posted.find((x) => x.unit_id === e.unit_id);
+          if (!r || r.bu_event_id !== e.bu_event_id) return;
+          const n = (v: unknown) => Number(v) || 0;
+          lmap[e.unit_id] = {
+            eventId: e.bu_event_id,
+            postingPeriod: e.event?.posting_period || '',
+            status: e.event?.status || '',
+            cutOffSource: e.cut_off_source,
+            valueTaxedOn: n(e.agreement_value),
+            taxedBefore: n(e.value_taxed_upto_opening),
+            taxedNow: n(e.differential_value),
+            gstNow: n(e.differential_cgst) + n(e.differential_sgst),
+            excessAdvance: Math.max(0, Math.round((n(e.open_advance_before) - (n(e.agreement_value) - n(e.invoiced_before))) * 100) / 100),
+          };
+        });
+      }
+      setLegs(lmap);
 
       // Units with no deed recorded at all, so one can be captured from here.
       const projectIds = projectFilter === 'ALL' ? projects.map((p) => p.id) : [projectFilter];
@@ -365,18 +428,27 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
     });
     return acc;
   }, [rows]);
+  const amounts = useMemo(() => rows.reduce((a, r) => {
+    const l = legs[r.unit_id];
+    return {
+      deed: a.deed + (Number(r.dastavej_value) || 0),
+      taxed: a.taxed + (Number(r.value_taxed) || 0),
+      gst: a.gst + (l && l.cutOffSource === 'DASTAVEJ' ? l.gstNow : 0),
+      excess: a.excess + (l ? l.excessAdvance : 0),
+    };
+  }, { deed: 0, taxed: 0, gst: 0, excess: 0 }), [rows, legs]);
 
   return (
     <div className={WS_PAGE}>
-      <BuilderSectionHeader
+      {!section && <BuilderSectionHeader
         compact
         embedded
         title="Dastavej Reconciliation"
         subtitle="Registered deed value against the value actually offered to tax"
         icon={<FileSignature />}
-      />
+      />}
 
-      <Card>
+      {!section && <Card>
         <CardContent className="px-3 py-2">
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-[220px] max-w-xs flex-1 space-y-0.5">
@@ -403,16 +475,23 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
             </label>
           </div>
         </CardContent>
-      </Card>
+      </Card>}
 
-      <Note>
+      {section && (
+        <Note>
+          The deed value prevails over the agreement value. A deed saved before the BU is taxed the moment it is
+          saved; a deed on a unit already posted redoes that unit while its month is open. Units still without a
+          deed are recorded from the Ledger (its Dastavej column and row menu).
+        </Note>
+      )}
+      {!section && <Note>
         Registration usually creates no fresh GST — by the time the deed is executed the unit is normally
         already fully taxed through ordinary advances, and this page exists to catch variances. Where it
         isn't — the unit registered before advances caught up — saving the date taxes the shortfall
         automatically, right here, so nothing is left open until some future BU event. Where the deed is
         registered at a jantri value above the agreement value, GST still follows the actual transaction
         value u/s 15; the reconciliation just needs to be documented, because it is a standard audit query.
-      </Note>
+      </Note>}
 
       {isLoading && (
         <Card>
@@ -425,16 +504,24 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
       {!isLoading && selectedClientId && (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            <KpiTile label="Reconciled" value={summary.reconciled} tone={summary.reconciled ? 'ok' : 'neutral'} />
-            <KpiTile label="Taxed at registration" value={summary.autoTaxed} />
-            <KpiTile label="Supplementary due" value={summary.supplementary} tone={summary.supplementary ? 'warn' : 'neutral'} />
-            <KpiTile label="Credit note due" value={summary.creditNote} tone={summary.creditNote ? 'warn' : 'neutral'} />
-            <KpiTile label="Schedule III" value={summary.scheduleIII} />
-            <KpiTile label="Value not captured" value={summary.pending} tone={summary.pending ? 'warn' : 'neutral'} />
+            <KpiTile label="Units with a deed" value={rows.length} hint={`${summary.autoTaxed} taxed at the deed · ${summary.reconciled} reconciled`} />
+            <KpiTile label="Deed value" value={formatINR(amounts.deed)} />
+            <KpiTile label="Value taxed" value={formatINR(amounts.taxed)} hint="Ledger, to date" />
+            <KpiTile label="GST at the deed" value={formatINR(amounts.gst)} hint="Deeds before the BU" />
+            <KpiTile
+              label="Excess advance" value={formatINR(amounts.excess)}
+              hint="Taxed beyond the deed: refund or credit" tone={amounts.excess > 0 ? 'warn' : 'neutral'}
+            />
+            <KpiTile
+              label="Needs attention"
+              value={summary.supplementary + summary.creditNote + summary.pending}
+              hint={`${summary.supplementary} supplementary · ${summary.creditNote} credit · ${summary.pending} value missing · ${summary.scheduleIII} Sch. III`}
+              tone={summary.supplementary + summary.creditNote + summary.pending ? 'warn' : 'neutral'}
+            />
           </div>
 
           <SectionCard
-            title={`Registered units (${rows.length})`}
+            title={`Units with a dastavej (${rows.length})`}
             description={(
               <>
                 A unit unbooked at its BU cut-off falls under Schedule III — its later sale is not a supply,
@@ -451,51 +538,63 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
                 <table className={WS_TABLE}>
                   <thead>
                     <tr>
-                      <th className={WS_TH}>Project</th>
+                      {!section && <th className={WS_TH}>Project</th>}
                       <th className={WS_TH}>Unit</th>
                       <th className={WS_TH}>Dastavej date</th>
-                      <th className={WS_TH}>Cut-off date</th>
                       <th className={cn(WS_TH, 'text-right')}>Deed value</th>
                       <th className={cn(WS_TH, 'text-right')}>Value taxed</th>
+                      <th className={cn(WS_TH, 'text-right')}>Taxed before</th>
+                      <th className={cn(WS_TH, 'text-right')}>Taxed now</th>
+                      <th className={cn(WS_TH, 'text-right')}>GST now</th>
+                      <th className={cn(WS_TH, 'text-right')}>Excess advance</th>
                       <th className={cn(WS_TH, 'text-right')}>Variance</th>
-                      <th className={WS_TH}>Action</th>
+                      <th className={WS_TH}>Return</th>
+                      <th className={WS_TH}>Status</th>
                       <th className={cn(WS_TH, 'w-16')}><span className="sr-only">Edit</span></th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r) => {
                       const action = resolveAction(r);
+                      const l = legs[r.unit_id];
                       return (
-                        <tr key={r.unit_id} className={WS_TR}>
-                          <td className={cn(WS_TD, 'text-muted-foreground')}>{r.project_name}</td>
+                        <tr
+                          key={r.unit_id}
+                          className={cn(WS_TR, l && onOpenEvent && 'cursor-pointer')}
+                          onClick={l && onOpenEvent ? () => onOpenEvent(l.eventId) : undefined}
+                          title={l && onOpenEvent ? 'Open the posting below (unpost, invoice and 11B legs)' : undefined}
+                        >
+                          {!section && <td className={cn(WS_TD, 'text-muted-foreground')}>{r.project_name}</td>}
                           <td className={cn(WS_TD, 'font-medium')}>
                             {r.unit_no}
                             <span className="block text-[11px] font-normal text-muted-foreground">{r.unit_type}</span>
                           </td>
-                          <td className={cn(WS_TD, 'whitespace-nowrap')}>{r.dastavej_date || '—'}</td>
                           <td className={cn(WS_TD, 'whitespace-nowrap')}>
-                            {r.bu_date ? (
-                              <>
-                                {r.bu_date}
-                                <span className="block text-[11px] text-muted-foreground">
-                                  {r.cut_off_source === 'DASTAVEJ' ? 'via dastavej' : 'via BU'}
-                                </span>
-                              </>
-                            ) : '—'}
+                            {r.dastavej_date || '—'}
+                            {r.bu_date && r.cut_off_source !== 'DASTAVEJ' && (
+                              <span className="block text-[11px] text-muted-foreground">taxed at the BU of {r.bu_date}</span>
+                            )}
                           </td>
                           <td className={WS_TD_NUM}>
                             {r.dastavej_value === null ? '—' : formatINR(r.dastavej_value)}
                           </td>
                           <td className={WS_TD_NUM}>{formatINR(r.value_taxed)}</td>
+                          <td className={WS_TD_NUM}>{l ? formatINR(l.taxedBefore) : '—'}</td>
+                          <td className={WS_TD_NUM}>{l ? formatINR(l.taxedNow) : '—'}</td>
+                          <td className={WS_TD_NUM}>{l ? formatINR(l.gstNow) : '—'}</td>
+                          <td className={cn(WS_TD_NUM, l && l.excessAdvance > 0 && 'font-medium text-warning-strong')}>
+                            {l && l.excessAdvance > 0 ? formatINR(l.excessAdvance) : '—'}
+                          </td>
                           <td className={cn(WS_TD_NUM, 'font-medium')}>
                             {r.variance === null ? '—' : formatINR(r.variance)}
                           </td>
+                          <td className={cn(WS_TD, 'whitespace-nowrap')}>{l?.postingPeriod ? prettyPeriodLabel(l.postingPeriod) : '—'}</td>
                           <td className={WS_TD}>
-                            <Badge variant={TONE_VARIANT[action.tone]} className="text-[10px] font-medium">
-                              {action.label}
+                            <Badge variant={TONE_VARIANT[action.tone]} className="whitespace-nowrap text-[10px] font-medium" title={action.label}>
+                              {SHORT_LABEL[action.kind]}
                             </Badge>
                           </td>
-                          <td className={cn(WS_TD, 'py-0.5')}>
+                          <td className={cn(WS_TD, 'py-0.5')} onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center">
                               {canEdit && (
                                 <Button
@@ -524,7 +623,7 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId }) => 
             )}
           </SectionCard>
 
-          {pending.length > 0 && (
+          {!section && pending.length > 0 && (
             <SectionCard
               title={`Awaiting registration (${pending.length})`}
               description={(
