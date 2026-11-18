@@ -1634,7 +1634,7 @@ const BuilderBookingsPage: React.FC = () => {
                 <p>No receipts or invoices dated in {prettyPeriodLabel(selectedMonth)}.</p>
               </div>
             ) : (
-              <div className={WS_TABLE_WRAP}>
+              <div className={cn(WS_TABLE_WRAP, 'max-h-[calc(100vh-13rem)] min-h-[20rem]')}>
                 <table className={WS_TABLE}>
                   <thead>
                     <tr>
@@ -1799,7 +1799,7 @@ const BuilderBookingsPage: React.FC = () => {
               onImportUnits={() => setSurface({ type: 'masters' })}
             />
           ) : (
-            <div className={WS_TABLE_WRAP}>
+            <div className={cn(WS_TABLE_WRAP, 'max-h-[calc(100vh-13rem)] min-h-[20rem]')}>
               <table className={WS_TABLE}>
                 <thead>
                   <tr>

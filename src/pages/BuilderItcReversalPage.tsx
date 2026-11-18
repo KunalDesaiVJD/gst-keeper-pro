@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, ChevronRight, CloudDownload, Loader2, Plus, Save, Send, Undo2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, CloudDownload, Loader2, Plus, Save, Send, Undo2, RotateCcw,
+} from 'lucide-react';
 import { useExtensionBridge } from '@/components/gstr9/portal/useExtensionBridge';
 import { compareVersions } from '@/lib/extensionVersion';
 import { useBuilderEmbedded, useBuilderProjectId } from '@/contexts/BuilderWorkspaceContext';
@@ -307,6 +308,7 @@ const BuilderItcReversalPage: React.FC = () => {
         embedded={embedded}
         title="ITC reversal at completion"
         subtitle="Rules 42 and 43 · final determination at BU"
+        icon={<RotateCcw />}
         actions={working && (
           <Badge variant={STATUS_VARIANT[working.status]} className="text-[11px]">{working.status}</Badge>
         )}

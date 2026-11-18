@@ -77,6 +77,10 @@ const BuilderFsiPage: React.FC = () => {
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);
+  // Events whose every unit was taxed at its own dastavej (one unit each, the
+  // deed came first): listed compactly apart from the BU events, with their unit.
+  const [deedUnit, setDeedUnit] = useState<Record<string, string>>({});
+  const [showDeeds, setShowDeeds] = useState(false);
   const [workings, setWorkings] = useState<Record<string, WorkingRow>>({});
   const [consents, setConsents] = useState<Record<string, ConsentRow>>({});
   const [defaultTreatment, setDefaultTreatment] = useState<FsiTreatment>('PAY');
@@ -119,6 +123,22 @@ const BuilderFsiPage: React.FC = () => {
         .order('bu_date', { ascending: false });
       const eventRows = (evt || []) as unknown as EventRow[];
       setEvents(eventRows);
+      if (eventRows.length) {
+        const { data: eus } = await supabase.from('builder_bu_event_units')
+          .select('bu_event_id, cut_off_source, unit:builder_units(unit_no)').in('bu_event_id', eventRows.map((e) => e.id));
+        const byEv = new Map<string, { src: string; unitNo: string }[]>();
+        ((eus || []) as unknown as { bu_event_id: string; cut_off_source: string; unit: { unit_no: string } | null }[])
+          .forEach((r) => {
+            const l = byEv.get(r.bu_event_id) || [];
+            l.push({ src: r.cut_off_source, unitNo: r.unit?.unit_no || '' });
+            byEv.set(r.bu_event_id, l);
+          });
+        const dmap: Record<string, string> = {};
+        byEv.forEach((l, id) => {
+          if (l.length && l.every((x) => x.src === 'DASTAVEJ')) dmap[id] = l.map((x) => x.unitNo).join(', ');
+        });
+        setDeedUnit(dmap);
+      } else setDeedUnit({});
 
       if (eventRows.length) {
         const { data: wk } = await supabase
@@ -343,7 +363,39 @@ const BuilderFsiPage: React.FC = () => {
           </CardContent>
         </Card>
       ) : (
-        events.map((ev) => {
+        <>
+        {(() => {
+          const deedRows = events.filter((ev) => deedUnit[ev.id] !== undefined && !workings[ev.id]);
+          if (!deedRows.length) return null;
+          return (
+            <SectionCard
+              title={`Dastavej postings (${deedRows.length})`}
+              description="Units taxed at their own dastavej before the BU. Each is booked, so its unbooked share is nil; prepare a working only where the commercial leg applies."
+              actions={(
+                <Button variant="outline" size="sm" className={WS_BTN} onClick={() => setShowDeeds((v) => !v)}>
+                  {showDeeds ? 'Hide' : 'Show'}
+                </Button>
+              )}
+            >
+              {showDeeds && (
+                <div className="divide-y rounded-md border">
+                  {deedRows.map((ev) => (
+                    <div key={ev.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm">
+                      <span className="w-28 font-medium">{deedUnit[ev.id]}</span>
+                      <span className="text-muted-foreground">Dastavej {ev.bu_date} · posts to {prettyPeriodLabel(ev.posting_period)}</span>
+                      {canPost && (
+                        <Button variant="ghost" size="sm" className="ml-auto h-7 text-xs" onClick={() => openDialog(ev)}>
+                          Prepare working
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </SectionCard>
+          );
+        })()}
+        {events.filter((ev) => deedUnit[ev.id] === undefined || !!workings[ev.id]).map((ev) => {
           const w = workings[ev.id];
           const c = w ? consents[w.id] : undefined;
           const progress = consentProgress(c ? {
@@ -499,7 +551,8 @@ const BuilderFsiPage: React.FC = () => {
               )}
             </SectionCard>
           );
-        })
+        })}
+        </>
       )}
 
       {/* ── Prepare dialog ───────────────────────────────────────────────── */}
