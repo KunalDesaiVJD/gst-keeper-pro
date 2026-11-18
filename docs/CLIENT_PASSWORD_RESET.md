@@ -78,7 +78,9 @@ The positions below were engineering judgement, not a firm sign-off.
   - `client_password_reset_check` / `_complete` refuse one, whatever its state.
   The trigger takes the client's lock, so it and a request never cross; the claim,
   mark and page checks are the backstop.
-- **Rate limits.** Per client: one link a minute; three of its own an hour; five an hour
+- **Rate limits: removed (the firm, 18 Nov 2026, `20261118110000`).** None of the limits below
+  applies any more; a client or staff member can ask for a link as often as they like. As built:
+  **Rate limits.** Per client: one link a minute; three of its own an hour; five an hour
   in all, its own and staff links together. Per caller address (the gateway's
   `cf-connecting-ip` / `x-real-ip` / `x-forwarded-for`): ten requests an hour, whatever
   they were for; an IPv6 address counts as its /64 block, an IPv4-mapped one as the IPv4
