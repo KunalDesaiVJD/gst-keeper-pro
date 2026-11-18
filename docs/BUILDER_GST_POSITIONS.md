@@ -168,6 +168,17 @@ value taxed, taxed before and now, GST, excess advance, return); a BU event's
 card shows only its BU cut-off units and says how many it taxed at their deed.
 The register is the third section (no sidebar entry).
 
+**A deed recorded on a unit already posted is reworked, not credited (18/11/2026).**
+When a deed (or a changed deed value) is saved on a unit already closed by a posted
+event (a BU that came first, or its own earlier deed), and that posting's GSTR-1 is
+not Filed, `reworkPostedUnitToDeed` redoes that unit alone on the deed value: its
+invoice is deleted (11B adjustments cascade), its subsumed receipts released, its
+working prepared again as at the event's completion date and posted again with the
+same invoice number and date; the event's other units are untouched. A filed month
+is kept as it is and the register flags the difference ("no credit note while the
+month is open", the firm). The cut-off (and so the section) stays the earlier of
+the deed and the BU date.
+
 **A deed covered by its advances still closes the unit (18/11/2026).** When the
 advances already taxed reach the deed value, the dastavej auto-post still raises
 the deed invoice (Table 7) and adjusts it from those advances (Table 11B), with
