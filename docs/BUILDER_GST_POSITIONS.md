@@ -160,13 +160,17 @@ the Dastavej Liability tab marks them where the two differ. *Departs from the
 earlier practice of taxing the agreement value whatever the deed said; where the
 deed is below the agreement this taxes less, which the firm elected.*
 
-**BU Effect, Dastavej Liability and the Dastavej Register are three sections of
-BU Working (18/11/2026).** A unit falls where its taxability arose, the earlier
-of its dastavej and the BU date (`cut_off_source`), whichever event posted it:
-Dastavej Liability lists every unit with a DASTAVEJ cut-off (deed date and value,
-value taxed, taxed before and now, GST, excess advance, return); a BU event's
-card shows only its BU cut-off units and says how many it taxed at their deed.
-The register is the third section (no sidebar entry).
+**BU Working has two sections, BU Effect and Dastavej (18/11/2026).** A unit
+falls where its taxability arose, the earlier of its dastavej and the BU date
+(`cut_off_source`), whichever event posted it: a BU event's card shows only its
+BU cut-off units and says how many it taxed at their deed. Dastavej is the one
+place for deeds (the register merged into it, `BuilderDastavejPage section`):
+amount cards (deed value, value taxed, GST at the deed, excess advance, what needs
+attention) and one table of every unit with a deed, its posting (taxed before /
+now, GST, excess advance, return), its variance and status, edit and
+late-discovery interest; a row opens its event's working. Units still without a
+deed are recorded from the Ledger (its Dastavej column and row menu), so the
+register's "Awaiting registration" list is not repeated there.
 
 **A deed recorded on a unit already posted is reworked, not credited (18/11/2026).**
 When a deed (or a changed deed value) is saved on a unit already closed by a posted

@@ -61,7 +61,6 @@ const BuilderProjectDetailPage = lazy(() => import("@/pages/BuilderProjectDetail
 const BuilderBookingsPage = lazy(() => import("@/pages/BuilderBookingsPage"));
 const BuilderReturnsPage = lazy(() => import("@/pages/BuilderReturnsPage"));
 const BuilderBuEventsPage = lazy(() => import("@/pages/BuilderBuEventsPage"));
-const BuilderDastavejPage = lazy(() => import("@/pages/BuilderDastavejPage"));
 const BuilderAdjustmentsPage = lazy(() => import("@/pages/BuilderAdjustmentsPage"));
 const BuilderFsiPage = lazy(() => import("@/pages/BuilderFsiPage"));
 const BuilderReportsPage = lazy(() => import("@/pages/BuilderReportsPage"));
@@ -133,7 +132,7 @@ const App = () => (
                   <Route path="/builder-projects/:projectId/adjustments" element={<BuilderAdjustmentsPage />} />
                   <Route path="/builder-projects/:projectId/fsi" element={<BuilderFsiPage />} />
                   <Route path="/builder-returns" element={<BuilderReturnsPage />} />
-                  <Route path="/builder-dastavej" element={<BuilderDastavejPage />} />
+                  <Route path="/builder-dastavej" element={<Navigate to="/builder?tab=bu" replace />} />
                   <Route path="/builder-reports" element={<BuilderReportsPage />} />
                   <Route path="/reports" element={<ReportsPage />} />
                   <Route path="/notices-dashboard" element={<NoticesDashboardPage />} />
