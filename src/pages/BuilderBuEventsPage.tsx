@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { groupUnitsByBlock } from '@/lib/builderUnitBlocks';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -120,6 +121,8 @@ const BuilderBuEventsPage: React.FC = () => {
 
   const [project, setProject] = useState<ProjectRow | null>(null);
   const [units, setUnits] = useState<UnitRow[]>([]);
+  // Block (group) names, for picking a whole block at once.
+  const [groupNames, setGroupNames] = useState<Map<string, string>>(new Map());
   const [charges, setCharges] = useState<Record<string, ChargeRow[]>>({});
   const [settings, setSettings] = useState<ChargeInclusionSettings>(DEFAULT_CHARGE_INCLUSIONS);
   const [events, setEvents] = useState<EventRow[]>([]);
@@ -155,14 +158,16 @@ const BuilderBuEventsPage: React.FC = () => {
       setProject(p);
       setSettings(await fetchBuilderSettings(p.client_id) as ChargeInclusionSettings);
 
-      const [{ data: unt }, { data: evt }] = await Promise.all([
+      const [{ data: unt }, { data: evt }, { data: grp }] = await Promise.all([
         supabase.from('builder_units').select('*').eq('project_id', projectId)
           .order('sort_order').order('unit_no'),
         supabase.from('builder_bu_events').select('*').eq('project_id', projectId)
           .order('bu_date', { ascending: false }),
+        supabase.from('builder_project_groups').select('id, name').eq('project_id', projectId),
       ]);
       const unitRows = (unt || []) as unknown as UnitRow[];
       setUnits(unitRows);
+      setGroupNames(new Map(((grp || []) as { id: string; name: string }[]).map((g) => [g.id, g.name])));
       const eventRows = (evt || []) as unknown as EventRow[];
       setEvents(eventRows);
 
@@ -251,6 +256,16 @@ const BuilderBuEventsPage: React.FC = () => {
     () => units.filter((u) => !u.bu_event_id && u.onboarding_status === 'CLOSED_PRE_ONBOARDING').length,
     [units],
   );
+
+  // The units on offer, in their blocks ("A-0201" → block A), so a whole
+  // block can be ticked at once.
+  const unitBlocks = useMemo(() => groupUnitsByBlock(availableUnits, groupNames), [availableUnits, groupNames]);
+  const blockLabel = project?.grouping_label || 'Block';
+  const setUnitsChecked = (ids: string[], checked: boolean) => setSelectedUnits((prev) => {
+    const next = new Set(prev);
+    for (const id of ids) { if (checked) next.add(id); else next.delete(id); }
+    return next;
+  });
 
   const unitsInScope = useMemo(
     () => (form.scope === 'FULL' ? availableUnits : availableUnits.filter((u) => selectedUnits.has(u.id))),
@@ -1038,25 +1053,53 @@ const BuilderBuEventsPage: React.FC = () => {
 
           {form.scope === 'UNITS' && (
             <div>
-              <Label className="mb-2 block">Units in this event ({selectedUnits.size} selected)</Label>
-              <div className="max-h-48 overflow-y-auto rounded border p-2 space-y-1">
-                {availableUnits.map((u) => (
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <Label className="block">Units in this event ({selectedUnits.size} selected)</Label>
+                <div className="flex gap-2 text-xs">
+                  <button type="button" className="text-primary hover:underline" onClick={() => setUnitsChecked(availableUnits.map((u) => u.id), true)}>Select all</button>
+                  <button type="button" className="text-primary hover:underline" onClick={() => setSelectedUnits(new Set())}>Clear</button>
+                </div>
+              </div>
+              <div className="max-h-72 overflow-y-auto rounded border p-2 space-y-2">
+                {unitBlocks.map((g) => {
+                  const ids = g.units.map((u) => u.id);
+                  const picked = ids.filter((id) => selectedUnits.has(id)).length;
+                  const showHeader = g.block !== null || unitBlocks.length > 1;
+                  return (
+                    <div key={g.block ?? '__none'}>
+                      {showHeader && (
+                        <label className="flex items-center gap-2 rounded bg-muted/50 px-1 py-1 text-sm font-semibold cursor-pointer">
+                          <Checkbox
+                            checked={picked === 0 ? false : picked === ids.length ? true : 'indeterminate'}
+                            onCheckedChange={(c) => setUnitsChecked(ids, c === true)}
+                            aria-label={g.block ? `Select the whole ${blockLabel} ${g.block}` : 'Select the units with no ' + blockLabel.toLowerCase()}
+                          />
+                          {g.block ? `${blockLabel} ${g.block}` : `No ${blockLabel.toLowerCase()}`}
+                          <span className="font-normal text-muted-foreground">({picked} of {ids.length} selected)</span>
+                        </label>
+                      )}
+                      <div className={cn('space-y-1', showHeader && 'pl-5')}>
+                        {g.units.map((u) => (
                   <label key={u.id} className="flex items-center gap-2 text-sm py-1 cursor-pointer">
-                    <Checkbox
-                      checked={selectedUnits.has(u.id)}
-                      onCheckedChange={(c) => setSelectedUnits((prev) => {
-                        const next = new Set(prev);
-                        if (c) next.add(u.id); else next.delete(u.id);
-                        return next;
-                      })}
-                    />
-                    <span className="font-medium">{u.unit_no}</span>
-                    <span className="text-muted-foreground">
-                      {u.unit_type} · {formatSqM(u.carpet_area_sqm)}
-                      {u.dastavej_date ? ` · dastavej ${u.dastavej_date}` : ''}
-                    </span>
-                  </label>
-                ))}
+                      <Checkbox
+                        checked={selectedUnits.has(u.id)}
+                        onCheckedChange={(c) => setSelectedUnits((prev) => {
+                          const next = new Set(prev);
+                          if (c) next.add(u.id); else next.delete(u.id);
+                          return next;
+                        })}
+                      />
+                      <span className="font-medium">{u.unit_no}</span>
+                      <span className="text-muted-foreground">
+                        {u.unit_type} · {formatSqM(u.carpet_area_sqm)}
+                        {u.dastavej_date ? ` · dastavej ${u.dastavej_date}` : ''}
+                      </span>
+                    </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
