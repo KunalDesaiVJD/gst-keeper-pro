@@ -31,6 +31,7 @@ import {
 import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import { fetchFiledFigures } from '@/lib/itcAutoLink';
 import { fetchFsiCredit } from '@/lib/builderFsiCredit';
+import { fetchTable4Adjustments, type Table4Adjustments } from '@/lib/gstr3bTable4Adjustments';
 import { utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';
 import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
@@ -187,6 +188,8 @@ const GstReceivableRecoPage: React.FC = () => {
 
   // Source-availability flags (drive the small notes on the row labels)
   const [hasItcSummary, setHasItcSummary] = useState(false);
+  // M-1's GSTR-3B Adjustments in Table 4, counted in Net ITC (shown under it).
+  const [table4Adj, setTable4Adj] = useState<Table4Adjustments | null>(null);
   const [hasGstr1, setHasGstr1] = useState(false);
   // Net ITC Available (4C) is only taken from ITC Summary once M-1's
   // GSTR-3B is actually Filed — before that it's still a draft that can
@@ -446,10 +449,21 @@ const GstReceivableRecoPage: React.FC = () => {
           }),
           { cgst: 0, sgst: 0, igst: 0 }
         );
+        // M-1's GSTR-3B Adjustments in Table 4 (4A(5), 4B(1)), which GSTR-3B
+        // adds on top of ITC Summary: the Builder ITC reversal at completion
+        // is posted this way (gstr3bTable4Adjustments.ts). Skipping them left
+        // that reversal out of Net ITC, as computeGstReceivableRecoDiff and
+        // the DB now count it.
+        const adj4 = prevMonth
+          ? await fetchTable4Adjustments(selectedClientId, prevMonth).catch(() => null)
+          : null;
+        const a5 = adj4?.a5 || zero3;
+        const b1 = adj4?.b1 || zero3;
+        setTable4Adj(adj4 && adj4.count > 0 ? adj4 : null);
         const total4A = {
-          cgst: rows1To4.cgst + total5.cgst,
-          sgst: rows1To4.sgst + total5.sgst,
-          igst: rows1To4.igst + total5.igst,
+          cgst: rows1To4.cgst + total5.cgst + a5.cgst,
+          sgst: rows1To4.sgst + total5.sgst + a5.sgst,
+          igst: rows1To4.igst + total5.igst + a5.igst,
         };
         // Partial-ITC (Builder) clients: rows (1), (2), (i), (iii) are
         // display-only auto-computed at ITC Summary render time from client
@@ -502,11 +516,13 @@ const GstReceivableRecoPage: React.FC = () => {
             sgst: rIn(-row2.sgst * residentialRatio),
             igst: rIn(-row2.igst * residentialRatio),
           };
-          // (1) = i + ii + iii
+          // (1) = i + ii + iii, plus a 4B(1) adjustment (none for a No-ITC
+          // builder, whose 4B(1) is the whole of 4A in GSTR-3B)
+          const b1Add = isNoITC ? zero3 : b1;
           const row1 = {
-            cgst: rIn(i_row.cgst + ii.cgst + iii_row.cgst),
-            sgst: rIn(i_row.sgst + ii.sgst + iii_row.sgst),
-            igst: rIn(i_row.igst + ii.igst + iii_row.igst),
+            cgst: rIn(i_row.cgst + ii.cgst + iii_row.cgst) + b1Add.cgst,
+            sgst: rIn(i_row.sgst + ii.sgst + iii_row.sgst) + b1Add.sgst,
+            igst: rIn(i_row.igst + ii.igst + iii_row.igst) + b1Add.igst,
           };
           // Total 4B = (1) + (2)
           total4B = {
@@ -525,7 +541,7 @@ const GstReceivableRecoPage: React.FC = () => {
                 const vals = isRecoReversalRow ? liveReversal : { cgst: num(r?.cgst), sgst: num(r?.sgst), igst: num(r?.igst) };
                 return { cgst: acc.cgst + vals.cgst, sgst: acc.sgst + vals.sgst, igst: acc.igst + vals.igst };
               },
-              { cgst: 0, sgst: 0, igst: 0 }
+              { cgst: b1.cgst, sgst: b1.sgst, igst: b1.igst }
             );
         }
         // Net ITC Available (4C) = 4A − 4B, plus the FSI reverse charge's
@@ -534,10 +550,13 @@ const GstReceivableRecoPage: React.FC = () => {
         const fsiCredit = prevMonth
           ? await fetchFsiCredit(selectedClientId, prevMonth).catch(() => ({ igst: 0, cgst: 0, sgst: 0 }))
           : { igst: 0, cgst: 0, sgst: 0 };
-        setAvailedCgst(total4A.cgst - total4B.cgst + fsiCredit.cgst);
-        setAvailedSgst(total4A.sgst - total4B.sgst + fsiCredit.sgst);
-        setAvailedIgst(total4A.igst - total4B.igst);
+        // A head whose 4C is negative credits nothing: the portal adds it to
+        // that head's liability and the ledger's set-off debit pays it.
+        setAvailedCgst(Math.max(0, total4A.cgst - total4B.cgst + fsiCredit.cgst));
+        setAvailedSgst(Math.max(0, total4A.sgst - total4B.sgst + fsiCredit.sgst));
+        setAvailedIgst(Math.max(0, total4A.igst - total4B.igst));
       } else {
+        setTable4Adj(null);
         setHasItcSummary(!!itcData?.data);
         setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
       }
@@ -1224,6 +1243,13 @@ const GstReceivableRecoPage: React.FC = () => {
                       <div className="font-medium">Add: Net ITC available (4C)</div>
                       <p className={SUB}>{prevMonthLabel ? `From ${prevMonthLabel} ITC Summary (4A − 4B)` : '4A − 4B from previous month'}</p>
                       {!hasItcSummary && <p className={SUB}>{prevMonthLabel ? `ITC Summary not saved for ${prevMonthLabel} — showing 0` : 'ITC Summary not saved — showing 0'}</p>}
+                      {hasItcSummary && prevReturnFiled && table4Adj && (
+                        <p className={SUB}>
+                          {`Includes ${prevMonthLabel || 'the month'}'s GSTR-3B adjustments: 4B(1) reversal ₹${formatNumber(table4Adj.b1.igst + table4Adj.b1.cgst + table4Adj.b1.sgst)}`}
+                          {table4Adj.a5.igst || table4Adj.a5.cgst || table4Adj.a5.sgst ? `, 4A(5) ITC ₹${formatNumber(table4Adj.a5.igst + table4Adj.a5.cgst + table4Adj.a5.sgst)}` : ''}
+                          {' '}(a negative head credits nothing)
+                        </p>
+                      )}
                       {hasItcSummary && !prevReturnFiled && <p className={SUB}>{prevMonthLabel ? `${prevMonthLabel}'s GSTR-3B not yet Filed — showing 0 until it's final` : "GSTR-3B not yet Filed — showing 0 until it's final"}</p>}
                     </td>
                     <td className={NUM}>{formatNumber(availedIgst)}</td>
