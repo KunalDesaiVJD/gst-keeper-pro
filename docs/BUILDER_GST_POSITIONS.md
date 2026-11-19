@@ -183,6 +183,18 @@ is kept as it is and the register flags the difference ("no credit note while th
 month is open", the firm). The cut-off (and so the section) stays the earlier of
 the deed and the BU date.
 
+**A receipt recorded late for a closed unit is never taxed twice (19/11/2026).**
+GST is paid on each receipt as an advance in its own month and on the balance only
+at the dastavej or BU, so a unit's value taxed ends at the deed (or agreement)
+value. A receipt saved for a unit already closed by a posted event: dated in that
+posting's month or before, it is an advance of its own month and the unit's posting
+is redone (`redoClosedUnitsForReceipts` → `reworkPostedUnitToDeed` with `force`),
+so the invoice adjusts it in Table 11B (or subsumes it in the BU month); dated after,
+it is a plain collection (`gst_already_discharged`, also on Record receipts in bulk).
+A posting in a filed GSTR-1 is kept and flagged. The Dastavej section's Redo
+button does the same for one unit by hand (SWENI F-703: an August receipt of
+2,00,000 recorded on 19/11/2026, after its October deed was posted).
+
 **A deed covered by its advances still closes the unit (18/11/2026).** When the
 advances already taxed reach the deed value, the dastavej auto-post still raises
 the deed invoice (Table 7) and adjusts it from those advances (Table 11B), with
