@@ -517,14 +517,24 @@ export async function fetchProjects(clientId: string) {
   return (data || []) as { id: string; name: string; rera_number: string | null }[];
 }
 
+/**
+ * The project's posted BU events, without the events every unit of which was
+ * taxed at its own dastavej (one unit's deed posting, the deed before the BU):
+ * those are shown in BU Working → Dastavej and in each unit's papers, not as
+ * BU dates (the firm, 19 Nov 2026). `deedPostings` counts them.
+ */
 export async function fetchPostedBuEvents(projectId: string) {
   const { data } = await supabase.from('builder_bu_events')
-    .select('id, bu_date, bu_ref_no, posting_period')
+    .select('id, bu_date, bu_ref_no, posting_period, units:builder_bu_event_units(cut_off_source)')
     .eq('project_id', projectId).eq('status', 'POSTED')
     .order('bu_date', { ascending: false });
-  return (data || []) as {
+  const rows = (data || []) as unknown as {
     id: string; bu_date: string; bu_ref_no: string | null; posting_period: string;
+    units: { cut_off_source: string }[] | null;
   }[];
+  const deedOnly = (r: typeof rows[number]) => !!r.units?.length && r.units.every((u) => u.cut_off_source === 'DASTAVEJ');
+  const events = rows.filter((r) => !deedOnly(r)).map(({ units: _u, ...r }) => r);
+  return Object.assign(events, { deedPostings: rows.filter(deedOnly).length });
 }
 
 export async function fetchProjectUnits(projectId: string) {
