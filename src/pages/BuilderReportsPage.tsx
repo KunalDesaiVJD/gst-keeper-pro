@@ -98,6 +98,7 @@ const BuilderReportsPage: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [events, setEvents] = useState<BuEvent[]>([]);
+  const [deedPostings, setDeedPostings] = useState(0);
   const [units, setUnits] = useState<Unit[]>([]);
 
   const [tab, setTab] = useState<ReportKind>('MONTHLY_RETURN');
@@ -139,6 +140,7 @@ const BuilderReportsPage: React.FC = () => {
         const itcOnly = w.filter((x) => !seen.has(x.bu_event_id))
           .map((x) => ({ id: x.bu_event_id, label: `Completion ${x.completion_date} · ITC working only` }));
         setEvents([...posted, ...itcOnly]);
+        setDeedPostings(e.deedPostings);
         setUnits(u);
       });
   }, [projectId]);
@@ -367,8 +369,15 @@ const BuilderReportsPage: React.FC = () => {
               )}
 
               {tab === 'COMPLETION' && (
+                <>
                 <EventPicker label="BU event" value={eventId} onChange={setEventId} options={events}
                   empty={projectId ? 'No posted BU events in this project.' : ''} />
+                {deedPostings > 0 && (
+                  <p className="self-end pb-1.5 text-[11px] text-muted-foreground">
+                    {deedPostings} unit{deedPostings === 1 ? '' : 's'} taxed at their own dastavej: see BU Working → Dastavej and each unit's papers.
+                  </p>
+                )}
+                </>
               )}
 
               {tab === 'UNITS' && (
