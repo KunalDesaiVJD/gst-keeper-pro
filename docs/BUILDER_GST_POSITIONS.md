@@ -172,6 +172,22 @@ late-discovery interest; a row opens its event's working. Units still without a
 deed are recorded from the Ledger (its Dastavej column and row menu), so the
 register's "Awaiting registration" list is not repeated there.
 
+**When the BU is earlier than the dastavej, the balance is taxed at the BU
+(19/11/2026).** The cut-off is the earlier date, so a unit whose deed came after
+its BU is the BU's: its balance (worked on the deed value, which prevails) is the
+BU event's differential, not a deed posting. Net tax is the same either way; this
+is how it is reported. A deed posted before the BU was recorded is moved into the
+BU when the BU event is prepared, or when BU Working opens on a prepared event
+(`moveLaterDeedsIntoBu`): units of the event's blocks (every unit for a full
+event) closed by their own deed posting dated after the BU, in a month whose
+GSTR-1 is not Filed, have that posting unposted and removed and are worked in the
+BU as at its date. A deed saved later on a unit already in a prepared BU dated on
+or before it works that unit's line there again (`IN_BU`) instead of posting.
+Their agreement value is the registered deed's, so it is accepted for them in
+place of the client's confirmation (`builder_bu_agreement_override`, with the
+deed as the reason) when the acting person may. Until the BU is posted they are
+in no return; the Dastavej section shows them "In BU (prepared)".
+
 **A deed recorded on a unit already posted is reworked, not credited (18/11/2026).**
 When a deed (or a changed deed value) is saved on a unit already closed by a posted
 event (a BU that came first, or its own earlier deed), and that posting's GSTR-1 is

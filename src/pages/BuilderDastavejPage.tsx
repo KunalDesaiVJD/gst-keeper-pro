@@ -155,6 +155,8 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
   const [projectFilter, setProjectFilter] = useState('ALL');
   const [rows, setRows] = useState<RecoRow[]>([]);
   const [legs, setLegs] = useState<Record<string, PostedLeg>>({});
+  // Units waiting in a prepared BU event (the BU came before the deed): the BU's date.
+  const [inPreparedBu, setInPreparedBu] = useState<Record<string, string>>({});
   const [pending, setPending] = useState<PendingUnit[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -232,6 +234,15 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
         });
       }
       setLegs(lmap);
+      const open = recoRows.filter((r) => !r.bu_event_id).map((r) => r.unit_id);
+      const pmap: Record<string, string> = {};
+      if (open.length) {
+        const { data: pe } = await supabase.from('builder_bu_event_units')
+          .select('unit_id, event:builder_bu_events!inner(bu_date, status)').in('unit_id', open).eq('event.status', 'PREPARED');
+        ((pe || []) as unknown as { unit_id: string; event: { bu_date: string } | null }[])
+          .forEach((x) => { if (x.event) pmap[x.unit_id] = x.event.bu_date; });
+      }
+      setInPreparedBu(pmap);
 
       // Units with no deed recorded at all, so one can be captured from here.
       const projectIds = projectFilter === 'ALL' ? projects.map((p) => p.id) : [projectFilter];
@@ -377,6 +388,11 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
             toast.info(
               'Dastavej saved for the register — this unit is flagged closed before onboarding, so no '
               + 'automatic differential is computed for it.',
+            );
+          } else if (result.action === 'IN_BU') {
+            toast.success(
+              `Dastavej saved — the BU of ${result.buDate} came first, so this unit is taxed in that BU event `
+              + '(its line there is now worked on the deed value); it is reported when the BU is posted.',
             );
           } else if (result.action === 'REWORKED') {
             toast.success(
@@ -606,9 +622,16 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
                           </td>
                           <td className={cn(WS_TD, 'whitespace-nowrap')}>{l?.postingPeriod ? prettyPeriodLabel(l.postingPeriod) : '—'}</td>
                           <td className={WS_TD}>
-                            <Badge variant={TONE_VARIANT[action.tone]} className="whitespace-nowrap text-[10px] font-medium" title={action.label}>
-                              {SHORT_LABEL[action.kind]}
-                            </Badge>
+                            {inPreparedBu[r.unit_id] ? (
+                              <Badge variant="outline" className="whitespace-nowrap text-[10px] font-medium"
+                                title={`The BU of ${inPreparedBu[r.unit_id]} came before the deed: taxed in that BU event, reported when it is posted`}>
+                                In BU (prepared)
+                              </Badge>
+                            ) : (
+                              <Badge variant={TONE_VARIANT[action.tone]} className="whitespace-nowrap text-[10px] font-medium" title={action.label}>
+                                {SHORT_LABEL[action.kind]}
+                              </Badge>
+                            )}
                           </td>
                           <td className={cn(WS_TD, 'py-0.5')} onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center">

@@ -1,6 +1,8 @@
 import { supabase } from '@/integrations/supabase/client';
 import { classifyUnit, computeTax, DEFAULT_CHARGE_INCLUSIONS, testRrep, type BuilderRateCode } from '@/utils/builderRates';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
+import { overrideAgreementValue } from '@/lib/builderAgreementConfirmData';
+import { unitBlock } from '@/lib/builderUnitBlocks';
 import {
   buildEventWorking, computeLateDiscoveryInterest, isPeriodBefore, periodOfDate,
   type EventWorking, type LateDiscoveryInterest, type LateTranche, type PostingBasis, type WorkingUnitInput,
@@ -623,6 +625,8 @@ export async function recheckStaleScheduleIII(params: {
 
 export type DastavejAutoPostResult =
   | { action: 'ALREADY_DONE' }
+  /** The unit is in a prepared BU event dated on or before the deed: its line there is worked again; taxed when the BU posts. */
+  | { action: 'IN_BU'; buDate: string }
   /** A unit already posted (by a BU event, or its own deed): its posting redone on the deed value. */
   | { action: 'REWORKED'; before: number; after: number; postingPeriod: string }
   /** As REWORKED, but the posting's GSTR-1 is filed: left as it is, for the register to flag. */
@@ -723,6 +727,22 @@ export async function autoPostDastavejDifferential(params: {
   // the deed value while that month's GSTR-1 is not filed (the firm,
   // 18 Nov 2026: no credit note for an unfiled month).
   if (unit.bu_event_id) return reworkPostedUnitToDeed({ unitId: unit.id, userId: params.userId });
+
+  // In a prepared BU event dated on or before the deed: the BU came first, so
+  // the balance is taxed at the BU (the firm, 19 Nov 2026); the unit's line in
+  // that event is worked again on the deed value instead of a deed posting.
+  {
+    const { data: inPrepared } = await supabase.from('builder_bu_event_units')
+      .select('bu_event_id, event:builder_bu_events!inner(id, bu_date, status)')
+      .eq('unit_id', unit.id).eq('event.status', 'PREPARED');
+    const ev = ((inPrepared || []) as unknown as { event: { id: string; bu_date: string } | null }[])
+      .map((r) => r.event).filter((e): e is { id: string; bu_date: string } => !!e && e.bu_date <= params.dastavejDate)
+      .sort((a, b) => a.bu_date.localeCompare(b.bu_date))[0];
+    if (ev) {
+      await refreshPreparedUnits({ buEventId: ev.id, unitIds: [unit.id], userId: params.userId });
+      return { action: 'IN_BU', buDate: ev.bu_date };
+    }
+  }
   // Resolved under the firm's earlier records before this project was
   // onboarded here — this software has no reliable pre-onboarding history to
   // compute a differential against. The date is still saved by the caller for
@@ -1244,4 +1264,121 @@ export async function syncClosedUnitPostings(params: {
   } finally {
     syncing.delete(params.projectId);
   }
+}
+
+
+/** Work again, as at the event, the lines of some units in a PREPARED event (and accept a deed's value). */
+async function refreshPreparedUnits(params: { buEventId: string; unitIds: string[]; userId: string | null }): Promise<void> {
+  const { data: evRow, error } = await supabase.from('builder_bu_events')
+    .select('id, project_id, bu_date, posting_period, posting_basis, status').eq('id', params.buEventId).single();
+  if (error || !evRow) throw new Error(error?.message || 'Could not load the BU event');
+  const ev = evRow as { id: string; project_id: string; bu_date: string; posting_period: string; posting_basis: PostingBasis; status: string };
+  if (ev.status !== 'PREPARED' || !params.unitIds.length) return;
+  const { data: us } = await supabase.from('builder_units')
+    .select('id, unit_no, unit_type, carpet_area_sqm, dastavej_date, dastavej_value, status').in('id', params.unitIds);
+  const units = (us || []) as (UnitRowLike & { dastavej_value: number | null })[];
+  const { data: prior } = await supabase.from('builder_bu_event_units')
+    .select('unit_id, agreement_value, rate_code, rate_pct').eq('bu_event_id', ev.id).in('unit_id', params.unitIds);
+  const priorBy = new Map(((prior || []) as { unit_id: string; agreement_value: number; rate_code: string; rate_pct: number }[]).map((r) => [r.unit_id, r]));
+  // A unit new to the event takes the rate its own deed posting used.
+  const missing = units.filter((u) => !priorBy.has(u.id)).map((u) => u.id);
+  const rateBy = new Map<string, { rate_code: string; rate_pct: number; agreement_value: number }>();
+  if (missing.length) {
+    const { data: r } = await supabase.from('builder_bu_event_units')
+      .select('unit_id, rate_code, rate_pct, agreement_value, created_at').in('unit_id', missing).order('created_at', { ascending: false });
+    ((r || []) as { unit_id: string; rate_code: string; rate_pct: number; agreement_value: number }[])
+      .forEach((x) => { if (!rateBy.has(x.unit_id)) rateBy.set(x.unit_id, x); });
+  }
+  const classification = Object.fromEntries(units.map((u) => {
+    const p = priorBy.get(u.id) || rateBy.get(u.id);
+    return [u.id, { agreementValue: Number(p?.agreement_value) || 0, rateCode: p?.rate_code || 'OTHER_RESIDENTIAL', ratePct: Number(p?.rate_pct) || 0 }];
+  }));
+  const prepared = await prepareBuEvent({
+    buDate: ev.bu_date, postingPeriod: ev.posting_period, postingBasis: ev.posting_basis, units, classification,
+  });
+  for (const w of prepared.working.units) {
+    const row = {
+      bu_event_id: ev.id, unit_id: w.unitId,
+      cut_off_date: w.cutOffDate, cut_off_source: w.cutOffSource, booked_at_cutoff: w.bookedAtCutOff,
+      booking_id: w.bookingId, unit_type: w.unitType, carpet_area_sqm: w.carpetAreaSqM,
+      rate_code: w.rateCode, rate_pct: w.ratePct, agreement_value: w.agreementValue,
+      value_taxed_upto_opening: w.valueTaxedUptoOpening, invoiced_before: w.invoicedBefore,
+      open_advance_before: w.openAdvanceBefore, received_upto_cutoff: w.receivedUptoCutOff,
+      differential_value: w.differentialValue, differential_taxable_value: w.differentialTaxableValue,
+      differential_cgst: w.differentialCgst, differential_sgst: w.differentialSgst,
+      interest_days: w.interestDays, interest_amount: w.interestAmount, tie_out_diff: w.tieOutDiff,
+      subsumed_receipt_count: w.subsumedReceiptCount,
+    };
+    const { error: e } = priorBy.has(w.unitId)
+      ? await supabase.from('builder_bu_event_units').update(row).eq('bu_event_id', ev.id).eq('unit_id', w.unitId)
+      : await supabase.from('builder_bu_event_units').insert(row);
+    if (e) throw e;
+    // The value is the registered deed's: accept it in place of the client's
+    // confirmation when the acting person may (else it waits like any unit).
+    const u = units.find((x) => x.id === w.unitId);
+    if (w.bookedAtCutOff && params.userId && u && (Number(u.dastavej_value) || 0) > 0) {
+      await overrideAgreementValue({
+        buEventId: ev.id, unitId: w.unitId, actorId: params.userId,
+        reason: `Value from the registered dastavej of ${u.dastavej_date} (deed value prevails)`,
+      }).catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * A prepared BU event takes in its block's units whose own dastavej came
+ * after the BU date (the firm, 19 Nov 2026: when the BU is earlier than the
+ * dastavej the balance is taxed at the BU). Each such unit's single-unit deed
+ * posting, in a month whose GSTR-1 is not Filed, is unposted and removed, and
+ * the unit is worked in the BU event as at its date, on the deed value. The
+ * event's blocks are those of its units (every unit for a full-project
+ * event). Net tax is the same; it is reported as the BU's differential.
+ * Returns the unit numbers moved.
+ */
+export async function moveLaterDeedsIntoBu(params: { buEventId: string; userId: string | null }): Promise<string[]> {
+  const { data: evRow } = await supabase.from('builder_bu_events')
+    .select('id, project_id, bu_date, scope, status').eq('id', params.buEventId).single();
+  const ev = evRow as { id: string; project_id: string; bu_date: string; scope: string; status: string } | null;
+  if (!ev || ev.status !== 'PREPARED') return [];
+  const { data: proj } = await supabase.from('builder_projects').select('client_id').eq('id', ev.project_id).single();
+  const clientId = (proj as { client_id: string } | null)?.client_id;
+
+  const { data: own } = await supabase.from('builder_bu_event_units')
+    .select('unit:builder_units(unit_no)').eq('bu_event_id', ev.id);
+  const blocks = new Set(((own || []) as unknown as { unit: { unit_no: string } | null }[])
+    .map((r) => (r.unit ? unitBlock({ unit_no: r.unit.unit_no }, new Map()) : null)));
+
+  // Units closed by their own deed posting dated after this BU.
+  const { data: closed } = await supabase.from('builder_units')
+    .select('id, unit_no, dastavej_date, bu_event_id').eq('project_id', ev.project_id)
+    .not('bu_event_id', 'is', null).gt('dastavej_date', ev.bu_date);
+  const cands = ((closed || []) as { id: string; unit_no: string; dastavej_date: string; bu_event_id: string }[])
+    .filter((u) => ev.scope === 'FULL' || blocks.has(unitBlock({ unit_no: u.unit_no }, new Map())));
+  if (!cands.length) return [];
+  const { data: deedEvs } = await supabase.from('builder_bu_events')
+    .select('id, posting_period, status, units:builder_bu_event_units(unit_id, cut_off_source)')
+    .in('id', cands.map((u) => u.bu_event_id));
+  const deedOnly = new Map(((deedEvs || []) as unknown as {
+    id: string; posting_period: string; status: string; units: { unit_id: string; cut_off_source: string }[];
+  }[]).filter((e) => e.units.length === 1 && e.units[0].cut_off_source === 'DASTAVEJ').map((e) => [e.id, e]));
+  const periods = [...new Set([...deedOnly.values()].map((e) => e.posting_period))];
+  const filedSet = new Set<string>();
+  if (clientId && periods.length) {
+    const { data: filed } = await supabase.from('filing_status').select('period_month')
+      .eq('client_id', clientId).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)']).in('period_month', periods).eq('status', 'Filed');
+    ((filed || []) as { period_month: string }[]).forEach((f) => filedSet.add(f.period_month));
+  }
+  const moving = cands.filter((u) => {
+    const d = deedOnly.get(u.bu_event_id);
+    return d && !filedSet.has(d.posting_period);
+  });
+  for (const u of moving) {
+    const d = deedOnly.get(u.bu_event_id)!;
+    if (d.status === 'POSTED') await unpostBuEvent(d.id);
+    // The unit's rate is read from this event before it goes (refreshPreparedUnits).
+    await refreshPreparedUnits({ buEventId: ev.id, unitIds: [u.id], userId: params.userId });
+    const { error } = await supabase.from('builder_bu_events').delete().eq('id', d.id);
+    if (error) throw error;
+  }
+  return moving.map((u) => u.unit_no);
 }

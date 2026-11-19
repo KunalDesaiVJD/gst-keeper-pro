@@ -36,7 +36,7 @@ import {
 } from '@/utils/builderBuEvent';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
+import { moveLaterDeedsIntoBu, postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
 import {
   fetchAgreementConfirmations, fetchClearedDisputes, fetchConfirmRequests, isAgreementCleared,
   isBuAgreementConfirmationBlocked, overrideAgreementValue,
@@ -219,6 +219,31 @@ const BuilderBuEventsPage: React.FC = () => {
 
   useEffect(() => { void load(); }, [load]);
 
+  // A prepared BU event takes in its blocks' units whose dastavej came after
+  // the BU (posted at the deed before the BU was recorded): taxed at the BU.
+  const movedFor = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (!projectId || !canPost || movedFor.current === projectId) return;
+    const prepared = events.filter((e) => e.status === 'PREPARED');
+    if (!prepared.length) return;
+    movedFor.current = projectId;
+    void (async () => {
+      const moved: string[] = [];
+      for (const ev of prepared) {
+        try {
+          moved.push(...await moveLaterDeedsIntoBu({ buEventId: ev.id, userId: user?.id ?? null }));
+        } catch (e) {
+          toast.error(`Could not bring the units with a later dastavej into the BU of ${ev.bu_date}: ${(e as Error).message}`);
+        }
+      }
+      if (moved.length) {
+        toast.info(`${moved.length} unit${moved.length === 1 ? '' : 's'} with a dastavej after the BU moved into it, taxed at the BU: ${moved.join(', ')}.`);
+        await load();
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, canPost, events]);
+
   const rrep = useMemo(() => {
     if (!project) return testRrep(0, 0);
     if (project.carpet_area_source === 'MANUAL') {
@@ -368,7 +393,12 @@ const BuilderBuEventsPage: React.FC = () => {
       );
       if (uErr) throw uErr;
 
-      toast.success('BU event prepared — review the working, then post it');
+      // Units of these blocks whose own dastavej came after this BU are taxed
+      // here, not at their deed (the BU came first).
+      const moved = await moveLaterDeedsIntoBu({ buEventId: data.id, userId: user?.id ?? null })
+        .catch((e) => { toast.error(`Could not bring in the units with a later dastavej: ${(e as Error).message}`); return []; });
+      toast.success('BU event prepared — review the working, then post it'
+        + (moved.length ? `. ${moved.length} unit${moved.length === 1 ? '' : 's'} with a dastavej after the BU (${moved.join(', ')}) moved into it.` : ''));
       setDialog(false);
       setOpenEvent(data.id);
       await load();
