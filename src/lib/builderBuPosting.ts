@@ -1157,3 +1157,91 @@ export const periodAfter = (a: string, b: string): boolean => {
   const k = (p: string) => { const [m, y] = p.split('/').map(Number); return (y || 0) * 100 + (m || 0); };
   return k(a) > k(b);
 };
+
+
+const syncing = new Set<string>();
+
+/**
+ * Keep every closed unit's posting in step with its ledger, automatically (the
+ * firm, 19 Nov 2026: no Redo button). For each posted event of the project
+ * whose GSTR-1 month is not Filed, its units are worked again as at the event;
+ * a unit whose base moved since posting (a receipt added, edited, deleted or
+ * bounced for an earlier month, an opening balance changed, a deed value
+ * changed) or that has a receipt in the BU month not yet subsumed is redone
+ * (`reworkPostedUnitToDeed`, force). Nothing is written for a unit that still
+ * agrees; a deed value alone is left to the deed's own save. Runs from the
+ * Ledger and BU Working when they load, and after a receipt is deleted or
+ * bounced; one run per
+ * project at a time. Returns the unit numbers redone.
+ */
+export async function syncClosedUnitPostings(params: {
+  projectId: string; userId: string | null;
+  /** Only report which units would be redone; write nothing. */
+  dryRun?: boolean;
+}): Promise<string[]> {
+  if (syncing.has(params.projectId)) return [];
+  syncing.add(params.projectId);
+  try {
+    const { data: proj } = await supabase.from('builder_projects').select('client_id').eq('id', params.projectId).single();
+    const clientId = (proj as { client_id: string } | null)?.client_id;
+    if (!clientId) return [];
+    const { data: evs } = await supabase.from('builder_bu_events')
+      .select('id, bu_date, posting_period, posting_basis').eq('project_id', params.projectId).eq('status', 'POSTED');
+    const events = (evs || []) as { id: string; bu_date: string; posting_period: string; posting_basis: PostingBasis }[];
+    if (!events.length) return [];
+    const periods = [...new Set(events.map((e) => e.posting_period))];
+    const { data: filed } = await supabase.from('filing_status').select('period_month')
+      .eq('client_id', clientId).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)']).in('period_month', periods).eq('status', 'Filed');
+    const filedSet = new Set(((filed || []) as { period_month: string }[]).map((f) => f.period_month));
+    const open = events.filter((e) => !filedSet.has(e.posting_period));
+    if (!open.length) return [];
+
+    const { data: eus } = await supabase.from('builder_bu_event_units')
+      .select('bu_event_id, unit_id, booked_at_cutoff, agreement_value, value_taxed_upto_opening, open_advance_before, rate_code, rate_pct')
+      .in('bu_event_id', open.map((e) => e.id));
+    const rows = (eus || []) as {
+      bu_event_id: string; unit_id: string; booked_at_cutoff: boolean; agreement_value: number;
+      value_taxed_upto_opening: number; open_advance_before: number; rate_code: string; rate_pct: number;
+    }[];
+    if (!rows.length) return [];
+    const { data: us } = await supabase.from('builder_units')
+      .select('id, unit_no, unit_type, carpet_area_sqm, dastavej_date, status, bu_event_id').in('id', rows.map((r) => r.unit_id));
+    const units = (us || []) as (UnitRowLike & { bu_event_id: string | null })[];
+
+    const stale: { id: string; no: string }[] = [];
+    for (const ev of open) {
+      const evRows = rows.filter((r) => r.bu_event_id === ev.id);
+      const evUnits = units.filter((u) => u.bu_event_id === ev.id && evRows.some((r) => r.unit_id === u.id));
+      if (!evUnits.length) continue;
+      const prepared = await prepareBuEvent({
+        buDate: ev.bu_date, postingPeriod: ev.posting_period, postingBasis: ev.posting_basis, units: evUnits,
+        classification: Object.fromEntries(evRows.map((r) => [r.unit_id, {
+          agreementValue: Number(r.agreement_value) || 0, rateCode: r.rate_code, ratePct: Number(r.rate_pct) || 0,
+        }])),
+      });
+      const off = (a: number, b: number) => Math.abs((Number(a) || 0) - (Number(b) || 0)) > 0.5;
+      for (const w of prepared.working.units) {
+        const r = evRows.find((x) => x.unit_id === w.unitId);
+        if (!r) continue;
+        const unsubsumed = w.bookedAtCutOff && (prepared.receiptsInBuMonth[w.unitId] || []).length > 0;
+        // The base only: a deed value differing from the posted value is the
+        // deed save's to rework (autoPostDastavejDifferential), not this
+        // sweep's, so a unit the firm chose to leave is never redone on load.
+        if (w.bookedAtCutOff !== r.booked_at_cutoff
+          || off(w.valueTaxedUptoOpening, r.value_taxed_upto_opening) || off(w.openAdvanceBefore, r.open_advance_before)
+          || unsubsumed) {
+          stale.push({ id: w.unitId, no: w.unitNo });
+        }
+      }
+    }
+    if (params.dryRun) return stale.map((u) => u.no);
+    const done: string[] = [];
+    for (const u of stale) {
+      const res = await reworkPostedUnitToDeed({ unitId: u.id, userId: params.userId, force: true });
+      if (res.action === 'REWORKED') done.push(u.no);
+    }
+    return done;
+  } finally {
+    syncing.delete(params.projectId);
+  }
+}
