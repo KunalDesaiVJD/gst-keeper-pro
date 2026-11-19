@@ -191,9 +191,16 @@ posting's month or before, it is an advance of its own month and the unit's post
 is redone (`redoClosedUnitsForReceipts` → `reworkPostedUnitToDeed` with `force`),
 so the invoice adjusts it in Table 11B (or subsumes it in the BU month); dated after,
 it is a plain collection (`gst_already_discharged`, also on Record receipts in bulk).
-A posting in a filed GSTR-1 is kept and flagged. The Dastavej section's Redo
-button does the same for one unit by hand (SWENI F-703: an August receipt of
-2,00,000 recorded on 19/11/2026, after its October deed was posted).
+A posting in a filed GSTR-1 is kept and flagged. There is no Redo button (the
+firm, 19/11/2026: automatic): `syncClosedUnitPostings` runs when the Ledger or
+BU Working → Dastavej opens and after a receipt is deleted or bounced; it works
+each closed unit of an unfiled posting again and redoes only one whose base moved
+(value taxed before, open advance, booked at cut-off) or that holds an unsubsumed
+receipt in the BU month. A deed value differing from the posted value is left to
+the deed's own save, so a unit the firm chose to leave is not redone (SHREE
+MARUTI INFRA). SWENI F-703 (an August receipt of 2,00,000 recorded on
+19/11/2026, after its October deed was posted) and F-603 (its August receipt
+edited the same day) are the cases that led here.
 
 **A deed covered by its advances still closes the unit (18/11/2026).** When the
 advances already taxed reach the deed value, the dastavej auto-post still raises

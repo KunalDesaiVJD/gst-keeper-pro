@@ -21,10 +21,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { FileSignature, Loader2, Pencil, CheckCircle2, Percent, RefreshCw } from 'lucide-react';
+import { FileSignature, Loader2, Pencil, CheckCircle2, Percent } from 'lucide-react';
 import { formatINR, type BuilderRateCode } from '@/utils/builderRates';
 import {
-  autoPostDastavejDifferential, clearDastavejDate, reworkPostedUnitToDeed, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
+  autoPostDastavejDifferential, clearDastavejDate, syncClosedUnitPostings, markLateDiscoveryInterestPaid, previewLateDiscoveryInterest,
   saveLateDiscoveryInterest,
 } from '@/lib/builderBuPosting';
 import type { LateDiscoveryInterest } from '@/utils/builderBuEvent';
@@ -253,6 +253,22 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
 
   useEffect(() => { void load(); }, [load]);
 
+  // A closed unit whose receipts changed after its posting is redone by
+  // itself (no Redo button), then the register reloads.
+  useEffect(() => {
+    if (!section || !focusProjectId || !canEdit) return;
+    void syncClosedUnitPostings({ projectId: focusProjectId, userId: user?.id ?? null })
+      .then((done) => {
+        if (done.length) {
+          toast.info(`Posting brought up to date for ${done.join(', ')} (a receipt changed after it was posted).`);
+          void load();
+        }
+      })
+      .catch((e) => toast.error(`Could not bring a posting up to date: ${(e as Error).message}`));
+  // Once per project opened, not on every reload.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [section, focusProjectId]);
+
   // Scope the project select once its options are in, rather than racing the
   // client-change effect above that resets it to "All projects".
   useEffect(() => {
@@ -267,25 +283,6 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
     handledFocusRef.current = focusUnit.id;
     openEdit(focusUnit.id, focusUnit.unit_no, focusUnit.dastavej_date, focusUnit.dastavej_value);
   }, [focusUnit]);
-
-  // Redo one closed unit's posting on what its ledger holds now (a receipt
-  // recorded late for an earlier month): the invoice then adjusts it.
-  const [redoing, setRedoing] = useState<string | null>(null);
-  const handleRedo = async (unitId: string, unitNo: string) => {
-    if (!window.confirm(`Redo ${unitNo}'s posting on its current receipts? Its invoice and Table 11B are worked again; a filed month is left as it is.`)) return;
-    setRedoing(unitId);
-    try {
-      const res = await reworkPostedUnitToDeed({ unitId, userId: user?.id ?? null, force: true });
-      if (res.action === 'REWORKED') toast.success(`${unitNo}: posting redone in ${res.postingPeriod}.`);
-      else if (res.action === 'FILED_KEPT') toast.warning(`${unitNo}: GSTR-1 for ${res.postingPeriod} is filed, so the posting is kept.`);
-      else toast.info(`${unitNo}: nothing to redo.`);
-      await load();
-    } catch (e) {
-      toast.error(`Could not redo: ${(e as Error).message}`);
-    } finally {
-      setRedoing(null);
-    }
-  };
 
   const openEdit = (unitId: string, unitNo: string, date: string | null, value: number | null) => {
     setEditUnit({ id: unitId, unit_no: unitNo });
@@ -621,15 +618,6 @@ const BuilderDastavejPage: React.FC<Props> = ({ focusUnit, focusProjectId, secti
                                   onClick={() => openEdit(r.unit_id, r.unit_no, r.dastavej_date, r.dastavej_value)}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                              {canEdit && l && l.status === 'POSTED' && (
-                                <Button
-                                  variant="ghost" size="icon" className="h-7 w-7" title="Redo posting on the current receipts"
-                                  disabled={redoing !== null}
-                                  onClick={() => void handleRedo(r.unit_id, r.unit_no)}
-                                >
-                                  {redoing === r.unit_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                                 </Button>
                               )}
                               {canEdit && r.dastavej_date && (

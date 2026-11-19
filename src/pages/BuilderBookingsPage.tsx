@@ -57,7 +57,7 @@ import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAd
 import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { clearDastavejDate, recheckStaleScheduleIII, redoClosedUnitsForReceipts } from '@/lib/builderBuPosting';
+import { clearDastavejDate, recheckStaleScheduleIII, redoClosedUnitsForReceipts, syncClosedUnitPostings } from '@/lib/builderBuPosting';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -407,6 +407,21 @@ const BuilderBookingsPage: React.FC = () => {
   }, [projectId, navigate]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Closed units whose receipts changed after posting (added, edited, deleted,
+  // bounced) are redone by themselves when the project opens (no Redo button).
+  useEffect(() => {
+    if (!projectId || !canEdit) return;
+    void syncClosedUnitPostings({ projectId, userId: user?.id ?? null })
+      .then((done) => {
+        if (done.length) {
+          toast.info(`Posting brought up to date for ${done.join(', ')} (a receipt changed after it was posted).`);
+          void load();
+        }
+      })
+      .catch((e) => toast.error(`Could not bring a posting up to date: ${(e as Error).message}`));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   /**
    * The client-wide "Record receipts" / "Opening balances" dialogs (client
@@ -1404,7 +1419,19 @@ const BuilderBookingsPage: React.FC = () => {
     if (error) { toast.error(error.message); return; }
     toast.success(`${ids.length} receipt${ids.length === 1 ? '' : 's'} deleted`);
     setSelected(new Set());
+    await syncAfterReceiptChange();
     await load();
+  };
+
+  /** A receipt deleted or bounced on a closed unit: its posting is redone by itself. */
+  const syncAfterReceiptChange = async () => {
+    if (!projectId) return;
+    try {
+      const done = await syncClosedUnitPostings({ projectId, userId: user?.id ?? null });
+      if (done.length) toast.info(`Posting brought up to date for ${done.join(', ')}.`);
+    } catch (e) {
+      toast.error(`Could not bring a posting up to date: ${(e as Error).message}`);
+    }
   };
 
   const setChequeStatus = async (r: ReceiptRow, status: ChequeStatus) => {
@@ -1418,6 +1445,7 @@ const BuilderBookingsPage: React.FC = () => {
         + 'the reversal has to be offset against the following month instead.',
       );
     }
+    await syncAfterReceiptChange();
     await load();
   };
 
