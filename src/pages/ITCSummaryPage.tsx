@@ -34,6 +34,7 @@ import {
 } from '@/utils/builderPartialItc';
 import { fetchImport2BCreditNotes, fetchImport2BEligibleTotal, fetchImport2BHeld, import2BHeldMessage } from '@/lib/postImport2B';
 import { fetchFsiCredit } from '@/lib/builderFsiCredit';
+import { fetchTable4Adjustments, type Table4Adjustments } from '@/lib/gstr3bTable4Adjustments';
 
 // Auto-linked / auto-calculated rows: figures come from elsewhere, not typed.
 const LOCKED_ROW = 'bg-muted/30';
@@ -220,6 +221,10 @@ const ITCSummaryPage: React.FC = () => {
   // Inside rcmTotals: the FSI reverse charge's commercial-leg credit, wholly
   // commercial, so outside the Partial-ITC apportionment (builderFsiCredit.ts).
   const [fsiCredit, setFsiCredit] = useState<ReversalTotals>({ igst: 0, cgst: 0, sgst: 0 });
+  // The month's GSTR-3B Adjustments in Table 4 (4A(5), 4B(1)), e.g. the
+  // Builder ITC reversal at completion: GSTR-3B adds them on top of this
+  // summary, so they are shown here, never saved into its rows.
+  const [table4Adj, setTable4Adj] = useState<{ key: string; adj: Table4Adjustments } | null>(null);
   const [negativeValueError, setNegativeValueError] = useState<string | null>(null);
   // Row 5.2's cell as typed, while it has focus (see renderEditableCell).
   const [cellDraft, setCellDraft] = useState<{ key: string; text: string } | null>(null);
@@ -664,6 +669,16 @@ const ITCSummaryPage: React.FC = () => {
     fetchGSTUpdateReminder();
     fetchImport2BEligible();
   }, [fetchITCSummary, fetchRecoData, fetchRCMTotals, fetchGSTUpdateReminder, fetchImport2BEligible]);
+
+  useEffect(() => {
+    if (!selectedClient || !selectedMonth) { setTable4Adj(null); return; }
+    const key = `${selectedClient}|${selectedMonth}`;
+    let live = true;
+    fetchTable4Adjustments(selectedClient, selectedMonth)
+      .then((adj) => { if (live) setTable4Adj(adj.count > 0 ? { key, adj } : null); })
+      .catch((e) => { console.error('Error fetching GSTR-3B adjustments:', e); if (live) setTable4Adj(null); });
+    return () => { live = false; };
+  }, [selectedClient, selectedMonth]);
 
   // Update auto-linked rows when reversal/reclaim/RCM data changes OR when data is loaded
   useEffect(() => {
@@ -1841,6 +1856,32 @@ const ITCSummaryPage: React.FC = () => {
                   </div>
                 </div>
               )}
+
+              {/* GSTR-3B Adjustments in Table 4 (e.g. the Builder ITC
+                  reversal at completion, posted to 4B(1)): GSTR-3B and the
+                  next month's GST Receivable Reco count them on top of this
+                  summary. Typing them into 4B(1) here would count them twice. */}
+              {table4Adj && table4Adj.key === `${selectedClient}|${selectedMonth}` && (() => {
+                const { a5, b1 } = table4Adj.adj;
+                const has = (h: ReversalTotals) => !!(h.igst || h.cgst || h.sgst);
+                const fmt = (n: number) => n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const heads = (h: ReversalTotals) => `IGST ₹${fmt(h.igst)}, CGST ₹${fmt(h.cgst)}, SGST ₹${fmt(h.sgst)}`;
+                const inReturn = {
+                  igst: net4C.igst + (isNoItcClient ? 0 : a5.igst - b1.igst),
+                  cgst: net4C.cgst + (isNoItcClient ? 0 : a5.cgst - b1.cgst),
+                  sgst: net4C.sgst + (isNoItcClient ? 0 : a5.sgst - b1.sgst),
+                };
+                return (
+                  <Note tone="info">
+                    GSTR-3B adds this month's GSTR-3B Adjustments on top of this summary
+                    {has(b1) && <>: 4(B)(1) reversal {heads(b1)}</>}
+                    {has(a5) && <>{has(b1) ? '; ' : ': '}4(A)(5) ITC {heads(a5)}</>}.
+                    {!isNoItcClient && (!isReversalClient || !has(a5)) && <> Net ITC 4(C) in the return: {heads(inReturn)}.</>}
+                    {' '}The next month's GST Receivable Reco counts them too (a negative head credits nothing).
+                    Do not type them into 4(B)(1) here; change them under GSTR-3B Adjustments.
+                  </Note>
+                );
+              })()}
 
               {/* No-ITC builder: 4(B)(1) is locked to mirror the whole of
                   4(A), and 4(B)(2) is locked to 0 — there is no carpet-area

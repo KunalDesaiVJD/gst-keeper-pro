@@ -5,6 +5,7 @@ import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import type { RecoDiffResult } from './suspendedRecoCalc';
 import { fetchFiledFigures } from './itcAutoLink';
 import { fetchFsiCredit } from './builderFsiCredit';
+import { fetchTable4Adjustments } from './gstr3bTable4Adjustments';
 
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
@@ -190,7 +191,17 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       }),
       { cgst: 0, sgst: 0, igst: 0 },
     );
-    const total4A = { cgst: rows1To4.cgst + total5.cgst, sgst: rows1To4.sgst + total5.sgst, igst: rows1To4.igst + total5.igst };
+    // M-1's GSTR-3B Adjustments in Table 4 (4A(5), 4B(1)), which GSTR-3B adds
+    // on top of ITC Summary: the Builder ITC reversal at completion is posted
+    // this way (gstr3bTable4Adjustments.ts), as the database does.
+    const adj4 = prevMonth ? await fetchTable4Adjustments(clientId, prevMonth) : null;
+    const a5 = adj4?.a5 || zero3;
+    const b1 = adj4?.b1 || zero3;
+    const total4A = {
+      cgst: rows1To4.cgst + total5.cgst + a5.cgst,
+      sgst: rows1To4.sgst + total5.sgst + a5.sgst,
+      igst: rows1To4.igst + total5.igst + a5.igst,
+    };
 
     const clientRow = readOrThrow(await supabase
       .from('clients')
@@ -218,7 +229,14 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
       const rIn = (x: number) => Math.round(x * 100) / 100;
       const iRow = { cgst: rIn(total4A.cgst * residentialRatio), sgst: rIn(total4A.sgst * residentialRatio), igst: rIn(total4A.igst * residentialRatio) };
       const iiiRow = { cgst: rIn(-row2.cgst * residentialRatio), sgst: rIn(-row2.sgst * residentialRatio), igst: rIn(-row2.igst * residentialRatio) };
-      const row1 = { cgst: rIn(iRow.cgst + ii.cgst + iiiRow.cgst), sgst: rIn(iRow.sgst + ii.sgst + iiiRow.sgst), igst: rIn(iRow.igst + ii.igst + iiiRow.igst) };
+      // A No-ITC builder's 4B(1) is the whole of 4A in GSTR-3B, so a 4B(1)
+      // adjustment changes nothing there.
+      const b1Add = isNoITC ? zero3 : b1;
+      const row1 = {
+        cgst: rIn(iRow.cgst + ii.cgst + iiiRow.cgst) + b1Add.cgst,
+        sgst: rIn(iRow.sgst + ii.sgst + iiiRow.sgst) + b1Add.sgst,
+        igst: rIn(iRow.igst + ii.igst + iiiRow.igst) + b1Add.igst,
+      };
       total4B = { cgst: row1.cgst + row2.cgst, sgst: row1.sgst + row2.sgst, igst: row1.igst + row2.igst };
     } else {
       total4B = rowsB
@@ -229,15 +247,19 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
             const vals = isRecoReversalRow ? liveReversal : { cgst: num(row?.cgst), sgst: num(row?.sgst), igst: num(row?.igst) };
             return { cgst: acc.cgst + vals.cgst, sgst: acc.sgst + vals.sgst, igst: acc.igst + vals.igst };
           },
-          { cgst: 0, sgst: 0, igst: 0 },
+          { cgst: b1.cgst, sgst: b1.sgst, igst: b1.igst },
         );
     }
     // The FSI reverse charge's commercial-leg credit, claimed in M-1's 4A(3)
     // and never carpet-apportioned (builderFsiCredit.ts), as the database does.
     const fsiCredit = prevMonth ? await fetchFsiCredit(clientId, prevMonth) : { igst: 0, cgst: 0, sgst: 0 };
-    availedCgst = total4A.cgst - total4B.cgst + fsiCredit.cgst;
-    availedSgst = total4A.sgst - total4B.sgst + fsiCredit.sgst;
-    availedIgst = total4A.igst - total4B.igst;
+    // A head whose Net ITC (4C) is negative credits nothing to the ledger: the
+    // portal adds the negative to that head's liability (Table 6.1), and its
+    // payment is in the ledger's set-off debit (utilised), so it is 0 here,
+    // not taken off twice. As the database does.
+    availedCgst = Math.max(0, total4A.cgst - total4B.cgst + fsiCredit.cgst);
+    availedSgst = Math.max(0, total4A.sgst - total4B.sgst + fsiCredit.sgst);
+    availedIgst = Math.max(0, total4A.igst - total4B.igst);
   }
 
   if (!utilizedFromCsv) {
