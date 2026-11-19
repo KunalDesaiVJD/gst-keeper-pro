@@ -989,7 +989,15 @@ async function insertEventUnitRow(eventId: string, w: EventWorking['units'][numb
  * working is prepared again as at the event's completion date and posted
  * again under the same invoice number and date (the firm, 18 Nov 2026).
  */
-export async function reworkPostedUnitToDeed(params: { unitId: string; userId: string | null }): Promise<DastavejAutoPostResult> {
+export async function reworkPostedUnitToDeed(params: {
+  unitId: string; userId: string | null;
+  /**
+   * Redo the posting even when the value is unchanged: a receipt recorded
+   * late for a month before the posting (already taxed there as an advance)
+   * changes what the invoice must adjust in Table 11B (SWENI F-703).
+   */
+  force?: boolean;
+}): Promise<DastavejAutoPostResult> {
   const { data: unitRow, error: uErr } = await supabase
     .from('builder_units').select('*').eq('id', params.unitId).single();
   if (uErr || !unitRow) throw new Error(uErr?.message || 'Unit not found');
@@ -999,7 +1007,7 @@ export async function reworkPostedUnitToDeed(params: { unitId: string; userId: s
     bu_event_id: string | null;
   };
   if (!unit.bu_event_id) return { action: 'ALREADY_DONE' };
-  if (!((Number(unit.dastavej_value) || 0) > 0)) return { action: 'ALREADY_DONE' };
+  if (!params.force && !((Number(unit.dastavej_value) || 0) > 0)) return { action: 'ALREADY_DONE' };
 
   const { data: evRow, error: eErr } = await supabase
     .from('builder_bu_events').select('id, project_id, bu_date, posting_period, posting_basis, status')
@@ -1013,7 +1021,7 @@ export async function reworkPostedUnitToDeed(params: { unitId: string; userId: s
   if (euErr || !euRow) throw new Error(euErr?.message || 'Could not load the unit\'s working');
   const eu = euRow as { id: string; invoice_id: string | null; agreement_value: number; rate_code: string; rate_pct: number };
   const before = Number(eu.agreement_value) || 0;
-  if (Math.abs(before - Number(unit.dastavej_value)) <= 0.5) return { action: 'ALREADY_DONE' };
+  if (!params.force && Math.abs(before - Number(unit.dastavej_value)) <= 0.5) return { action: 'ALREADY_DONE' };
 
   const { data: proj } = await supabase.from('builder_projects').select('client_id').eq('id', ev.project_id).single();
   const clientId = (proj as { client_id: string } | null)?.client_id;
@@ -1093,3 +1101,59 @@ export async function reworkPostedUnitToDeed(params: { unitId: string; userId: s
     );
   }
 }
+
+
+/**
+ * After receipts are saved: any unit among them already closed by a posted
+ * event, whose new receipt falls in or before that posting's month and bears
+ * its own tax, has its posting redone, so the closing invoice adjusts that
+ * receipt in Table 11B (or subsumes it in the BU month) instead of the value
+ * being taxed twice (the firm, 19 Nov 2026: GST is paid on the receipts and on
+ * the balance only at the dastavej or BU, never twice). A filed month is kept
+ * as it is (FILED_KEPT). Returns what was done per unit.
+ */
+export async function redoClosedUnitsForReceipts(params: {
+  receipts: { unitId: string; periodMonth: string; gstAlreadyDischarged?: boolean }[];
+  userId: string | null;
+}): Promise<{ unitId: string; result: DastavejAutoPostResult }[]> {
+  const ids = [...new Set(params.receipts.filter((r) => !r.gstAlreadyDischarged).map((r) => r.unitId))];
+  if (!ids.length) return [];
+  const { data: us } = await supabase.from('builder_units').select('id, bu_event_id').in('id', ids);
+  const closed = ((us || []) as { id: string; bu_event_id: string | null }[]).filter((u) => u.bu_event_id);
+  if (!closed.length) return [];
+  const { data: evs } = await supabase.from('builder_bu_events').select('id, posting_period, status')
+    .in('id', closed.map((u) => u.bu_event_id as string));
+  const evById = new Map(((evs || []) as { id: string; posting_period: string; status: string }[]).map((e) => [e.id, e]));
+  const key = (p: string) => { const [m, y] = p.split('/').map(Number); return (y || 0) * 100 + (m || 0); };
+  const out: { unitId: string; result: DastavejAutoPostResult }[] = [];
+  for (const u of closed) {
+    const ev = evById.get(u.bu_event_id as string);
+    if (!ev || ev.status !== 'POSTED') continue;
+    const touches = params.receipts.some((r) => r.unitId === u.id && !r.gstAlreadyDischarged
+      && key(r.periodMonth) <= key(ev.posting_period));
+    if (!touches) continue;
+    out.push({ unitId: u.id, result: await reworkPostedUnitToDeed({ unitId: u.id, userId: params.userId, force: true }) });
+  }
+  return out;
+}
+
+
+/** For units closed by a posted event: the month that posting went to (unit id → MM/YYYY). */
+export async function closedUnitPostingPeriods(unitIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!unitIds.length) return out;
+  const { data: us } = await supabase.from('builder_units').select('id, bu_event_id').in('id', unitIds);
+  const closed = ((us || []) as { id: string; bu_event_id: string | null }[]).filter((u) => u.bu_event_id);
+  if (!closed.length) return out;
+  const { data: evs } = await supabase.from('builder_bu_events').select('id, posting_period, status')
+    .in('id', closed.map((u) => u.bu_event_id as string)).eq('status', 'POSTED');
+  const evById = new Map(((evs || []) as { id: string; posting_period: string }[]).map((e) => [e.id, e.posting_period]));
+  closed.forEach((u) => { const p = evById.get(u.bu_event_id as string); if (p) out.set(u.id, p); });
+  return out;
+}
+
+/** 'MM/YYYY' a later month than 'MM/YYYY' b. */
+export const periodAfter = (a: string, b: string): boolean => {
+  const k = (p: string) => { const [m, y] = p.split('/').map(Number); return (y || 0) * 100 + (m || 0); };
+  return k(a) > k(b);
+};

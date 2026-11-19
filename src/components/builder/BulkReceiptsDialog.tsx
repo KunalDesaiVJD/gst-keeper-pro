@@ -43,7 +43,9 @@ import { toast } from 'sonner';
 import { Loader2, Wallet, Users } from 'lucide-react';
 import { formatINR, computeTds194IA, isTds194IAApplicable, type BuilderRateCode } from '@/utils/builderRates';
 import { deriveReceipt, prettyPeriodLabel } from '@/utils/builderLedger';
-import { recheckStaleScheduleIII } from '@/lib/builderBuPosting';
+import {
+  closedUnitPostingPeriods, periodAfter, recheckStaleScheduleIII, redoClosedUnitsForReceipts,
+} from '@/lib/builderBuPosting';
 
 // Must match the builder_receipts_instrument_type_check DB constraint exactly,
 // or every save fails — 'NEFT'/'RTGS'/'IMPS' are NOT valid values there.
@@ -290,6 +292,15 @@ const BulkReceiptsDialog: React.FC<Props> = ({
         autoBooked += 1;
       }
 
+      // A unit already closed at its dastavej / BU: a receipt for a month after
+      // that posting is a plain collection (no fresh advance); one for that
+      // month or before is an advance of its month, and the posting is redone
+      // after the save so its invoice adjusts it (never taxed twice).
+      const closedAt = await closedUnitPostingPeriods(active.map((r) => r.u.unitId));
+      const discharged = (unitId: string) => {
+        const p = closedAt.get(unitId);
+        return !!p && periodAfter(period, p);
+      };
       const { data, error } = await supabase.from('builder_receipts').insert(
         active.map((r) => ({
           booking_id: bookingIdByUnit[r.u.unitId],
@@ -309,7 +320,7 @@ const BulkReceiptsDialog: React.FC<Props> = ({
           instrument_type: common.instrument_type,
           instrument_ref: unitRefFor(r.u).trim() || null,
           cheque_status: 'Cleared',
-          gst_already_discharged: false,
+          gst_already_discharged: discharged(r.u.unitId),
           period_month: period,
           doc_series: docSeriesPrefix ?? null,
           doc_no: null,
@@ -320,6 +331,14 @@ const BulkReceiptsDialog: React.FC<Props> = ({
       if (!data || !data.length) {
         throw new Error('Write was rejected by the database (no rows returned).');
       }
+      const redone = await redoClosedUnitsForReceipts({
+        receipts: active.map((r) => ({ unitId: r.u.unitId, periodMonth: period, gstAlreadyDischarged: discharged(r.u.unitId) })),
+        userId: user?.id ?? null,
+      }).catch((e) => { toast.error(`Receipts saved, but a closed unit's posting could not be redone: ${(e as Error).message}`); return []; });
+      const reworked = redone.filter((x) => x.result.action === 'REWORKED').length;
+      const kept = redone.filter((x) => x.result.action === 'FILED_KEPT').length;
+      if (reworked) toast.info(`${reworked} closed unit${reworked === 1 ? '' : 's'}: posting redone so the new receipt is adjusted, not taxed twice.`);
+      if (kept) toast.warning(`${kept} closed unit${kept === 1 ? '' : 's'}: the posting's GSTR-1 is filed, so it was kept; check its Dastavej / BU working.`);
       toast.success(
         `${data.length} receipt${data.length === 1 ? '' : 's'} recorded for ${prettyPeriodLabel(period)}`
         + (autoBooked ? `; ${autoBooked} unit${autoBooked === 1 ? '' : 's'} auto-booked` : '') + '.',

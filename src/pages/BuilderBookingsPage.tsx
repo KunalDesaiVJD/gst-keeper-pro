@@ -57,7 +57,7 @@ import { computeDelayInterest, type DelayInterestBasis } from '@/utils/builderAd
 import { autoReclassifyProject } from '@/lib/builderAdjustmentsData';
 import { periodKey } from '@/utils/builderBuEvent';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { clearDastavejDate, recheckStaleScheduleIII } from '@/lib/builderBuPosting';
+import { clearDastavejDate, recheckStaleScheduleIII, redoClosedUnitsForReceipts } from '@/lib/builderBuPosting';
 
 interface ProjectRow {
   id: string; client_id: string; name: string; is_metro: boolean;
@@ -943,6 +943,18 @@ const BuilderBookingsPage: React.FC = () => {
         : await supabase.from('builder_receipts').insert(payload);
       if (error) throw error;
       toast.success(editingReceipt ? 'Receipt updated' : 'Receipt recorded');
+      // A closed unit's receipt for its posting's month or before: redo that
+      // posting so it adjusts the receipt (never taxed twice).
+      try {
+        const redone = await redoClosedUnitsForReceipts({
+          receipts: [{ unitId: payload.unit_id as string, periodMonth: payload.period_month as string, gstAlreadyDischarged: !!payload.gst_already_discharged }],
+          userId: user?.id ?? null,
+        });
+        if (redone.some((x) => x.result.action === 'REWORKED')) toast.info('The unit\'s dastavej / BU posting was redone to adjust this receipt.');
+        if (redone.some((x) => x.result.action === 'FILED_KEPT')) toast.warning('The unit\'s posting is in a filed GSTR-1, so it was kept; check its working.');
+      } catch (e) {
+        toast.error(`Receipt saved, but the unit's posting could not be redone: ${(e as Error).message}`);
+      }
       setEditingReceipt(null);
       setReceiptDialog(false);
       await load();
