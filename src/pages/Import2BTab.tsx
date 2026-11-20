@@ -646,7 +646,10 @@ const Import2BTab: React.FC = () => {
   // it read the month.
   const writeLocked = readOnly || isImporting;
   const docsLocked = writeLocked;
-  const booksReadOnly = !isStaff || (isPrior && !canPriorBooks);
+  // The client's own login works the books register too (20261120110000):
+  // add, edit, pair and delete its rows, in an open month.
+  const booksReadOnly = !(isStaff || isOwnClient) || (isPrior && !canPriorBooks);
+  const mayDeleteBookRows = canDelete2BRows() || isOwnClient;
   const booksWriteLocked = booksReadOnly || isImporting;
   const confirm = useConfirm();
 
@@ -670,9 +673,17 @@ const Import2BTab: React.FC = () => {
   }, []);
 
   const fetchClients = useCallback(async () => {
-    const { data } = await supabase.from('clients').select('id, name, gstin').order('name');
+    let q = supabase.from('clients').select('id, name, gstin').order('name');
+    // A client's login sees and works only its own GSTIN, chosen for it (as
+    // ITC Summary, 2B Reconciliation and Suspended Reco do); before this every
+    // client was listed (20 Nov 2026).
+    const own = user?.role === 'client' ? user.id : null;
+    if (own) q = q.eq('id', own);
+    const { data } = await q;
     setClients(data || []);
-  }, []);
+    if (own && data?.length && selectedClient !== own) setSelectedClient(own);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.role]);
 
   // The selection as of the latest render, and a counter of loads: a load
   // asked for by work that began under another client or month (an import
@@ -2462,7 +2473,7 @@ const Import2BTab: React.FC = () => {
   // named first.
   const deleteBookRow = async (id: string) => {
     if (booksReadOnly) return;
-    if (!canDelete2BRows()) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
+    if (!mayDeleteBookRows) { toast.error('Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'); return; }
     if (await importRunning()) { toast.error(IMPORT_RUNNING_MSG); return; }
     if (isPrior) { await deletePriorBookRow(id); return; }
     const row = books.find((r) => r.id === id);
@@ -2576,8 +2587,8 @@ const Import2BTab: React.FC = () => {
   // filed 2B and is named).
   const currentLabel = useMemo(() => periodMonthLabel(selectedMonth), [selectedMonth]);
   const stepLine = useMemo(() => outOfStepLine(outOfStep, isPrior), [outOfStep, isPrior]);
-  const canCatchUp = !!stepLine?.actionable && isStaff && !isImporting
-    && (isPrior ? canPriorBooks : canWork2BImport());
+  const canCatchUp = !!stepLine?.actionable && (isStaff || isOwnClient) && !isImporting
+    && (isPrior ? canPriorBooks : (canWork2BImport() || isOwnClient));
 
   const bringUpToDate = async () => {
     if (!selectedClient || !selectedMonth || !user?.id || !canCatchUp) return;
@@ -3086,14 +3097,14 @@ const Import2BTab: React.FC = () => {
       {selectedClient && selectedMonth && !isLoading && ledgerShown && stepLine && (
         <Note tone="warn">
           <span>{stepLine.text}</span>
-          {stepLine.actionable && isStaff && (
+          {stepLine.actionable && (isStaff || isOwnClient) && (
             <Button
               size="sm"
               variant="outline"
               className={cn(WS_BTN, 'ml-2 align-middle')}
               onClick={bringUpToDate}
               disabled={!canCatchUp || isCatchingUp}
-              title={isPrior && !canPriorBooks ? PRIOR_MONTH_MSG : !isPrior && !canWork2BImport()
+              title={isPrior && !canPriorBooks ? PRIOR_MONTH_MSG : !isPrior && !(canWork2BImport() || isOwnClient)
                 ? 'Needs the Import 2B & post permission — ask a GST Manager to add it to your position'
                 : 'Shows what it changes first'}
             >
@@ -3550,8 +3561,8 @@ const Import2BTab: React.FC = () => {
                             <td className="border-b border-r px-1 text-center">
                               <Button
                                 variant="ghost"
-                                disabled={!canDelete2BRows() || isImporting}
-                                title={canDelete2BRows() ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
+                                disabled={!mayDeleteBookRows || isImporting}
+                                title={mayDeleteBookRows ? undefined : 'Needs the Delete 2B rows permission — ask a GST Manager to add it to your position'}
                                 size="icon"
                                 className="h-7 w-7 text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive-strong focus-visible:opacity-100 group-hover:opacity-100"
                                 onClick={() => deleteBookRow(b.id)}
