@@ -290,6 +290,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(updatedUser));
             setIsLoading(false);
             return;
+          } else if (parsedUser.role === 'client') {
+            // A client has no user_roles row (authenticate_client signs it in
+            // by its clients row), so the check above never finds one and a
+            // reload or a new tab used to drop the session and sign the client
+            // out (20 Nov 2026). Its clients row is what stands for it.
+            const { data: clientRow } = await supabase
+              .from('clients').select('id').eq('id', parsedUser.id).maybeSingle();
+            if (clientRow) {
+              const clientUser = { ...parsedUser, role: 'client' as const, permissions: { ...DEFAULT_PERMISSIONS } };
+              setUser(clientUser);
+              localStorage.setItem(FALLBACK_AUTH_KEY, JSON.stringify(clientUser));
+              setIsLoading(false);
+              return;
+            }
+            localStorage.removeItem(FALLBACK_AUTH_KEY);
           } else {
             localStorage.removeItem(FALLBACK_AUTH_KEY);
           }

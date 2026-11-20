@@ -577,19 +577,23 @@ doesn't block Push" was corrected at the same time — it had been untrue since
 the `disabled=` binding was added, and it sends anyone debugging a stuck Push
 button to the wrong place.
 
-## §8A. A client sets its own Import 2B actions (firm decision, 20 Nov 2026)
+## §8A. A client works its own Import 2B (firm decision, 20 Nov 2026)
 
-"Edit like staff, own GSTIN only, only Import 2B." A client's own login
-(role `client`, its id the client id) may set the 2B documents' Action and save
-it on its own GSTIN in an open month, exactly as a holder of Import 2B & post:
-the save posts to the ledger and ITC Summary the same way, and Change History
-names the client. The page unlocks the Action column, bulk action, Save and
-Pending items for it (`isOwnClient` in `Import2BTab.tsx`); the database accepts
-the client as the actor for its own rows in `twob__autopost_touch`,
-`twob_import2b_reclaim` and `twob_import2b_unreclaim` (20261120100000). Still
-staff-only: importing or pulling 2B, deleting 2B rows, Clear Data, Restore, the
-books register, catch-up and every prior (filed) month. ITC Summary and GSTR-1
-stay view-only for clients.
+"Edit like staff, own GSTIN only, only Import 2B." A client's own login (role
+`client`, its id the client id) works Import 2B on its own GSTIN in an open month
+as a holder of Import 2B & post: the documents' Action (bulk too), Save, Reclaim
+and back, Pending items, the books register (add, edit, pair, delete its rows) and
+"Bring the reconciliation up to date". Its saves post to the ledger and ITC
+Summary the same way, and Change History names the client. The page
+(`isOwnClient` in `Import2BTab.tsx`) lists and selects only the client's own GSTIN;
+the database accepts the client as the actor for its own rows in
+`twob__autopost_touch`, `twob_import2b_reclaim`, `twob_import2b_unreclaim`
+(20261120100000), `twob_import2b_save_book`, `twob__autopost_gone` and
+`twob_import2b_catch_up` (20261120110000). Still staff-only: importing or pulling
+2B, deleting the month's 2B rows, Clear Data, Restore and every prior (filed)
+month. ITC Summary and GSTR-1 stay view-only for clients; GSTR-1 now lists only the
+client's own GSTIN too. A client's session survives a reload (AuthContext restores
+it from its clients row; it has no user_roles row).
 
 ## §9. The superadmin edits every working sheet (firm decision, 13 Oct 2026)
 

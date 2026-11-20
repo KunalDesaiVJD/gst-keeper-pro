@@ -559,10 +559,17 @@ const GSTR1DataPage: React.FC = () => {
   }, [selectedMonth]);
 
   const fetchClients = useCallback(async () => {
-    const { data } = await supabase
+    let q = supabase
       .from('clients').select('id, name, gstin, regular_sub_type, registration_type, gstr1_import_mode, einvoice_applicable').order('name');
+    // A client's login sees only its own GSTIN, chosen for it (as ITC Summary,
+    // 2B Reconciliation and Suspended Reco do).
+    const own = user?.role === 'client' ? user.id : null;
+    if (own) q = q.eq('id', own);
+    const { data } = await q;
     setClients((data || []) as Client[]);
-  }, []);
+    if (own && data?.length && selectedClient !== own) setSelectedClient(own);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, user?.role]);
 
   /**
    * Promoters do not upload a GSTR-1. Their outward side is computed in the
