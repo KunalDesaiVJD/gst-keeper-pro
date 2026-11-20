@@ -1279,7 +1279,11 @@ export async function syncClosedUnitPostings(params: {
 
 
 /** Work again, as at the event, the lines of some units in a PREPARED event (and accept a deed's value). */
-async function refreshPreparedUnits(params: { buEventId: string; unitIds: string[]; userId: string | null }): Promise<void> {
+async function refreshPreparedUnits(params: {
+  buEventId: string; unitIds: string[]; userId: string | null;
+  /** The rate (and value) a unit carried in the event it leaves, when that event is already gone. */
+  rates?: Record<string, { rate_code: string; rate_pct: number; agreement_value: number }>;
+}): Promise<void> {
   const { data: evRow, error } = await supabase.from('builder_bu_events')
     .select('id, project_id, bu_date, posting_period, posting_basis, status').eq('id', params.buEventId).single();
   if (error || !evRow) throw new Error(error?.message || 'Could not load the BU event');
@@ -1301,7 +1305,7 @@ async function refreshPreparedUnits(params: { buEventId: string; unitIds: string
       .forEach((x) => { if (!rateBy.has(x.unit_id)) rateBy.set(x.unit_id, x); });
   }
   const classification = Object.fromEntries(units.map((u) => {
-    const p = priorBy.get(u.id) || rateBy.get(u.id);
+    const p = priorBy.get(u.id) || params.rates?.[u.id] || rateBy.get(u.id);
     return [u.id, { agreementValue: Number(p?.agreement_value) || 0, rateCode: p?.rate_code || 'OTHER_RESIDENTIAL', ratePct: Number(p?.rate_pct) || 0 }];
   }));
   const prepared = await prepareBuEvent({
@@ -1379,41 +1383,50 @@ export async function moveLaterDeedsIntoBu(params: { buEventId: string; userId: 
   const clientId = (proj as { client_id: string } | null)?.client_id;
 
   const { data: own } = await supabase.from('builder_bu_event_units')
-    .select('unit:builder_units(unit_no)').eq('bu_event_id', ev.id);
-  const blocks = new Set(((own || []) as unknown as { unit: { unit_no: string } | null }[])
-    .map((r) => (r.unit ? unitBlock({ unit_no: r.unit.unit_no }, new Map()) : null)));
+    .select('cut_off_source, unit:builder_units(unit_no)').eq('bu_event_id', ev.id);
+  const ownRows = (own || []) as unknown as { cut_off_source: string; unit: { unit_no: string } | null }[];
+  // A deed's own event (one unit, cut off at its dastavej) is not a BU and
+  // takes in nothing (20 Nov 2026: run on every prepared event, a 13 Oct deed
+  // event pulled at the 29 Oct ones).
+  if (!ownRows.length || ownRows.every((r) => r.cut_off_source === 'DASTAVEJ')) return [];
+  const blocks = new Set(ownRows.map((r) => (r.unit ? unitBlock({ unit_no: r.unit.unit_no }, new Map()) : null)));
 
-  // Units closed by their own deed posting dated after this BU.
-  const { data: closed } = await supabase.from('builder_units')
-    .select('id, unit_no, dastavej_date, bu_event_id').eq('project_id', ev.project_id)
-    .not('bu_event_id', 'is', null).gt('dastavej_date', ev.bu_date);
-  const cands = ((closed || []) as { id: string; unit_no: string; dastavej_date: string; bu_event_id: string }[])
-    .filter((u) => ev.scope === 'FULL' || blocks.has(unitBlock({ unit_no: u.unit_no }, new Map())));
-  if (!cands.length) return [];
-  const { data: deedEvs } = await supabase.from('builder_bu_events')
-    .select('id, posting_period, status, units:builder_bu_event_units(unit_id, cut_off_source)')
-    .in('id', cands.map((u) => u.bu_event_id));
-  const deedOnly = new Map(((deedEvs || []) as unknown as {
-    id: string; posting_period: string; status: string; units: { unit_id: string; cut_off_source: string }[];
-  }[]).filter((e) => e.units.length === 1 && e.units[0].cut_off_source === 'DASTAVEJ').map((e) => [e.id, e]));
-  const periods = [...new Set([...deedOnly.values()].map((e) => e.posting_period))];
+  // The project's deed-only events dated after this BU, posted or not (a
+  // unit whose deed event was unposted no longer names it, so the events
+  // themselves are read, not builder_units.bu_event_id).
+  const { data: evs } = await supabase.from('builder_bu_events')
+    .select('id, posting_period, status, units:builder_bu_event_units(unit_id, cut_off_source, cut_off_date, rate_code, rate_pct, agreement_value, unit:builder_units(unit_no))')
+    .eq('project_id', ev.project_id).neq('id', ev.id);
+  type DeedEv = {
+    id: string; posting_period: string; status: string;
+    units: { unit_id: string; cut_off_source: string; cut_off_date: string; rate_code: string; rate_pct: number;
+      agreement_value: number; unit: { unit_no: string } | null }[];
+  };
+  const deedEvs = ((evs || []) as unknown as DeedEv[]).filter((e) => e.units.length === 1
+    && e.units[0].cut_off_source === 'DASTAVEJ'
+    && e.units[0].cut_off_date > ev.bu_date
+    && (ev.scope === 'FULL' || blocks.has(unitBlock({ unit_no: e.units[0].unit?.unit_no || '' }, new Map()))));
+  if (!deedEvs.length) return [];
+  const periods = [...new Set(deedEvs.map((e) => e.posting_period))];
   const filedSet = new Set<string>();
   if (clientId && periods.length) {
     const { data: filed } = await supabase.from('filing_status').select('period_month')
       .eq('client_id', clientId).in('return_type', ['GSTR-1', 'GSTR-1 (IFF)']).in('period_month', periods).eq('status', 'Filed');
     ((filed || []) as { period_month: string }[]).forEach((f) => filedSet.add(f.period_month));
   }
-  const moving = cands.filter((u) => {
-    const d = deedOnly.get(u.bu_event_id);
-    return d && !filedSet.has(d.posting_period);
-  });
-  for (const u of moving) {
-    const d = deedOnly.get(u.bu_event_id)!;
+  const moved: string[] = [];
+  for (const d of deedEvs.filter((e) => !filedSet.has(e.posting_period))) {
+    const line = d.units[0];
     if (d.status === 'POSTED') await unpostBuEvent(d.id);
-    // The unit's rate is read from this event before it goes (refreshPreparedUnits).
-    await refreshPreparedUnits({ buEventId: ev.id, unitIds: [u.id], userId: params.userId });
+    // A unit is in one event only (UNIQUE unit_id): the deed event goes
+    // first, then the unit is worked in the BU at the rate it carried there.
     const { error } = await supabase.from('builder_bu_events').delete().eq('id', d.id);
     if (error) throw error;
+    await refreshPreparedUnits({
+      buEventId: ev.id, unitIds: [line.unit_id], userId: params.userId,
+      rates: { [line.unit_id]: { rate_code: line.rate_code, rate_pct: Number(line.rate_pct) || 0, agreement_value: Number(line.agreement_value) || 0 } },
+    });
+    moved.push(line.unit?.unit_no || '');
   }
-  return moving.map((u) => u.unit_no);
+  return moved;
 }
