@@ -3350,12 +3350,12 @@
   // reverting the programmatic date set, the portal kept its default period, and we
   // happily parsed that period's opening balance. Now we verify the dates stuck AND
   // that the grid reloaded for them — otherwise we refuse to save anything.
-  async function loadLedgerPeriod(period) {
+  async function loadLedgerPeriod(period, toOverride) {
     const [mm, yyyy] = String(period).split('/').map((n) => parseInt(n, 10));
     const lastDay = new Date(yyyy, mm, 0).getDate();
     const p2 = (n) => String(n).padStart(2, '0');
     const from = '01/' + p2(mm) + '/' + yyyy;
-    const to = p2(lastDay) + '/' + p2(mm) + '/' + yyyy;
+    const to = toOverride || (p2(lastDay) + '/' + p2(mm) + '/' + yyyy);
 
     const [fEl, tEl] = findDateInputs();
     if (!fEl || !tEl) return { ok: false, from, to, why: 'date fields not found' };
@@ -3495,7 +3495,13 @@
         }
         if (run.length < 6 || run.length % 2 !== 0) continue; // need equal amount + balance blocks
         const amt = run.slice(0, run.length / 2); // [IGST, CGST, SGST, Cess, (Total)]
-        out.push({ isDebit, text, igst: amt[0] || 0, cgst: amt[1] || 0, sgst: amt[2] || 0 });
+        // 0.18.6: the row's own date and Tax Period ("Sep-26"), so a return's
+        // set-off is found by the period it pays, not by the day it was filed.
+        const cells = tds.map((td) => (td.textContent || '').trim());
+        const date = cells.find((c) => /^\d{2}\/\d{2}\/\d{4}$/.test(c)) || null;
+        const taxPeriod = cells.find((c) => /^[A-Za-z]{3}-\d{2}$/.test(c)) || null;
+        const ref = cells.find((c) => /^[A-Z]{2}\d{6,}[A-Z0-9]*$/.test(c)) || null;
+        out.push({ isDebit, text, igst: amt[0] || 0, cgst: amt[1] || 0, sgst: amt[2] || 0, date, taxPeriod, ref });
       }
       return out;
     }
@@ -3508,20 +3514,63 @@
   // with ledger rows read and no return set-off Debit among them, `utilised`
   // is 0 (the portal's figure: nothing was set off from the credit ledger);
   // it is null only when no ledger row was read at all.
-  function classifyLedgerRows(rows) {
+  function classifyLedgerRows(rows, period) {
+    // 0.18.6: with the reco's month known, ITC utilised is the set-off debit
+    // of the PREVIOUS month's return, found by its Tax Period whatever its date
+    // (a return filed late, or in the same month, posts its set-off in another
+    // month: Sunrise Rental's Aug-26 set-off dated 30/10, Sep-26's 04/11), and
+    // DRC-03 / other debits are the ones dated in the reco's own month. A row
+    // without a Tax Period or date falls back to the old rule (in the range).
+    const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let prevLabel = null, inMonth = () => true;
+    if (period) {
+      const [mm, yyyy] = String(period).split('/').map((n) => parseInt(n, 10));
+      const pm = mm === 1 ? 12 : mm - 1, py = mm === 1 ? yyyy - 1 : yyyy;
+      prevLabel = (M[pm - 1] + '-' + String(py).slice(-2)).toLowerCase();
+      const tail = '/' + String(mm).padStart(2, '0') + '/' + yyyy;
+      inMonth = (r) => !r.date || r.date.endsWith(tail);
+    }
     let utilised = { igst: 0, cgst: 0, sgst: 0 }, sawReturnDebit = false;
     const drc = { igst: 0, cgst: 0, sgst: 0 };
     for (const r of rows) {
       if (!r.isDebit) continue;
       if (/other than reverse charge/i.test(r.text)) {
+        const forPrev = prevLabel && r.taxPeriod ? r.taxPeriod.toLowerCase() === prevLabel : inMonth(r);
+        if (!forPrev) continue;
         sawReturnDebit = true;
         utilised.igst += r.igst; utilised.cgst += r.cgst; utilised.sgst += r.sgst;
       } else if (!/reverse charge/i.test(r.text)) {
+        if (!inMonth(r)) continue;
         drc.igst += r.igst; drc.cgst += r.cgst; drc.sgst += r.sgst;
       }
     }
     if (!sawReturnDebit && !(rows && rows.length)) utilised = null;
     return { utilised, drc };
+  }
+
+  // 0.18.6: every page of the ledger grid, not only the first (the portal
+  // pages it; a month with more entries lost the rest). Next pages are opened
+  // by the pager's numbered links; each row is kept once.
+  async function readAllLedgerRows() {
+    const seen = new Set();
+    const all = [];
+    const keyOf = (r) => [r.date, r.ref, r.taxPeriod, r.text.replace(/\s+/g, ' ').trim(), r.igst, r.cgst, r.sgst].join('|');
+    const take = (rows) => { for (const r of rows) { const k = keyOf(r); if (!seen.has(k)) { seen.add(k); all.push(r); } } };
+    const pagerLink = (n) => $$('ul.pagination a, .pagination a').find((a) => (a.textContent || '').trim() === String(n));
+    take(readLedgerRows());
+    for (let page = 2; page <= 40; page++) {
+      const link = pagerLink(page);
+      if (!link) break;
+      const before = JSON.stringify(readLedgerRows().slice(0, 2));
+      link.click();
+      const t0 = Date.now();
+      while (Date.now() - t0 < 10000 && JSON.stringify(readLedgerRows().slice(0, 2)) === before) await sleep(250);
+      if (JSON.stringify(readLedgerRows().slice(0, 2)) === before) break; // the page did not turn
+      take(readLedgerRows());
+    }
+    const first = pagerLink(1);
+    if (first) { first.click(); await sleep(400); }
+    return all;
   }
 
   // 0.16.0: whether the ledger page says the range has nothing in it ("No
@@ -3542,7 +3591,21 @@
       location.href = 'https://return.gst.gov.in/returns/auth/ledger/revreclaimdetledger';
       return;
     }
-    const per = await loadLedgerPeriod(job.period);
+    // 0.18.6: from the month's first day to today (at most a year on), so the
+    // previous month's return set-off is in range however late it was filed;
+    // the opening is still the first day's. If the portal will not take the
+    // longer range, the month alone, as before.
+    let per;
+    {
+      const [mm0, yy0] = String(job.period).split('/').map((n) => parseInt(n, 10));
+      const monthEnd = new Date(yy0, mm0, 0);
+      const cap = new Date(yy0, mm0 - 1 + 12, 0);
+      const now = new Date();
+      const end = now > monthEnd ? (now < cap ? now : cap) : null;
+      const p2 = (n) => String(n).padStart(2, '0');
+      per = end ? await loadLedgerPeriod(job.period, p2(end.getDate()) + '/' + p2(end.getMonth() + 1) + '/' + end.getFullYear()) : { ok: false };
+      if (!per.ok) per = await loadLedgerPeriod(job.period);
+    }
     if (!per.ok) {
       banner('Credit ledger: could not load ' + per.from + ' – ' + per.to + ' (' + per.why + '). Skipped so a wrong period is not saved.', '#dc2626');
       await sleep(2000);
@@ -3561,14 +3624,17 @@
     const bal = await readLedgerBalance('opening');
     // Also scrape the Debit rows to capture ITC utilised + DRC-03 (the month's
     // return set-off posts in the following month, so it's already in this range).
-    const ledgerRows = readLedgerRows();
-    const { utilised, drc } = classifyLedgerRows(ledgerRows);
+    const ledgerRows = await readAllLedgerRows();
+    const { utilised, drc } = classifyLedgerRows(ledgerRows, job.period);
+    // The Credit Ledger report keeps the month's own rows.
+    const monthTail = '/' + String(job.period).split('/')[0].padStart(2, '0') + '/' + String(job.period).split('/')[1];
+    const monthRows = ledgerRows.filter((r) => !r.date || r.date.endsWith(monthTail));
     // Persist every row (not just the utilised/DRC-03 totals above) for the
     // "Credit Ledger" full-detail report. Best-effort — a failure here must
     // not block the GST Receivable Reco write below, which the rest of this
     // handler already depends on.
     try {
-      await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, ledgerRows.map((r) => ({
+      await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, monthRows.map((r) => ({
         client_id: cur.clientId, period_month: job.period,
         is_debit: r.isDebit, description: r.text, igst: r.igst, cgst: r.cgst, sgst: r.sgst,
       })));
@@ -3579,7 +3645,7 @@
       'page is showing  : ' + (shownPeriod() || '(none)'),
       'OPENING row cells: ' + (bal && bal.raw ? JSON.stringify(bal.raw) : '(NO Opening Balance data row found)'),
       'parsed opening   : IGST=' + (bal ? bal.igst : '?') + '  CGST=' + (bal ? bal.cgst : '?') + '  SGST=' + (bal ? bal.sgst : '?') + '  Cess=' + (bal ? bal.cess : '?'),
-      'ledger rows read : ' + ledgerRows.length,
+      'ledger rows read : ' + ledgerRows.length + ' (all pages; ' + monthRows.length + ' dated in the month)',
       'ITC utilised     : ' + (utilised ? ('IGST=' + utilised.igst + '  CGST=' + utilised.cgst + '  SGST=' + utilised.sgst) : '(no ledger rows read: ITC utilised not saved)'),
       'DRC-03 / other   : IGST=' + drc.igst + '  CGST=' + drc.cgst + '  SGST=' + drc.sgst,
       '-> GST Receivable Reco gets Opening + ITC utilised + DRC-03 above.',
@@ -3828,7 +3894,7 @@
       await advance(job);
       return;
     }
-    const ledgerRows = readLedgerRows();
+    const ledgerRows = await readAllLedgerRows(); // 0.18.6: every page
     try {
       await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, ledgerRows.map((r) => ({
         client_id: cur.clientId, period_month: job.period,

@@ -37,7 +37,7 @@ import ManualSourceAllowanceControl from '@/components/manualSource/ManualSource
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import { fetchManualSourceAllowances, liveAllowance, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
 import {
-  booksUnsaved, extensionCanPull, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, openingSourceText, pulledLabel,
+  booksUnsaved, extensionCanPull, extensionCanPullReceivable, needsReceivableExtensionMessage, fetchRecoLog, fmtDateTime, needsExtensionMessage, openingManualState, openingSourceText, pulledLabel,
   receivableSavePayload, recordManualOpening, recordOverride, recoLogActionLabel, recoScope, UNSAVED_BOOKS_MESSAGE,
   type OpeningSource, type RecoLogEntry,
 } from '@/lib/recoSources';
@@ -941,7 +941,7 @@ const GstReceivableRecoPage: React.FC = () => {
     if (!selectedClientId || !selectedMonth) { toast.error('Select a client and month first'); return; }
     if (!extReady) { toast.error('Install/enable the GST Keeper browser extension to pull from the portal.'); return; }
     // 0.16.0 saves the pull through reco_record_pull, stamped with who asked.
-    if (!extensionCanPull(extVersion)) { toast.error(needsExtensionMessage(extVersion)); return; }
+    if (!extensionCanPullReceivable(extVersion)) { toast.error(needsReceivableExtensionMessage(extVersion)); return; }
     pulledRef.current = true;
     window.postMessage({ __gstkPullLedgers: { clientId: selectedClientId, period_month: selectedMonth, actorId: user?.id ?? null } }, '*');
   };
