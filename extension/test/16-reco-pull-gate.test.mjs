@@ -276,6 +276,7 @@ ok(eq(c3.utilised, { igst: 10, cgst: 200, sgst: 200 }) && eq(c3.drc, { igst: 0, 
       loadLedgerPeriod: async () => ({ ok: true, from: '01/09/2026', to: '30/09/2026' }),
       readLedgerBalance: async () => ({ igst: 0, cgst: 5, sgst: 5, cess: 0, raw: [] }),
       readLedgerRows: () => [],
+      readAllLedgerRows: async () => [],
       classifyLedgerRows: () => ({ utilised: null, drc: { igst: 0, cgst: 0, sgst: 0 } }),
       ledgerSaysNoRecords: () => false, shownPeriod: () => '01/09/2026 - 30/09/2026', debugPanel: () => {}, banner: () => {},
       sleep: async () => {}, inr: (n) => String(n), setJob: async () => {}, chainOrStop: async () => {}, proceedToLiabilityLedger: async () => {},
@@ -300,6 +301,46 @@ ok(eq(c3.utilised, { igst: 10, cgst: 200, sgst: 200 }) && eq(c3.drc, { igst: 0, 
     const none = await run(fn, null);
     ok(none.saved.length === 1 && none.stopped.length === 0, `${fn}: no GSTIN in the header (cannot be checked): saved, as before`);
   }
+}
+
+// ── 0.18.6: the set-off is found by its Tax Period, not its date ────────────
+// SUNRISE RENTAL SERVICES, credit ledger 01/09/2026 – 20/11/2026: the Aug-26
+// return was filed on 30/10 and the Sep-26 return on 04/11. The October reco
+// takes Sep-26's set-off (7,394 + 7,394), never Aug-26's (dated in October).
+{
+  // readLedgerRows, run on a stand-in for the portal's grid.
+  const sigR = '\n  function readLedgerRows(';
+  const r0 = content.indexOf(sigR);
+  const srcR = content.slice(r0 + 1, content.indexOf('\n  }\n', r0) + 4);
+  const td = (t) => ({ textContent: t });
+  const tr = (cells) => ({
+    textContent: cells.join(' '), children: cells.map(td), closest: () => null,
+    querySelectorAll: (q) => (q === 'th' ? [] : cells.map(td)),
+  });
+  const rows = [
+    tr(['1', '-', '-', '-', 'Opening Balance', '-', '-', '-', '-', '-', '-']),
+    tr(['2', '30/10/2026', 'AC2408261329312', 'Aug-26', 'ITC accrued through - Inputs', 'Credit', '1.00', '4,982.00', '4,982.00', '0.00', '9,965.00', '1.00', '4,982.00', '4,982.00', '0.00', '9,965.00']),
+    tr(['3', '30/10/2026', 'DI2410260851503', 'Aug-26', 'Other than reverse charge', 'Debit', '1.00', '4,982.00', '4,982.00', '0.00', '9,965.00', '0.00', '0.00', '0.00', '0.00', '0.00']),
+    tr(['4', '04/11/2026', 'AC240926910869H', 'Sep-26', 'ITC accrued through - Inputs', 'Credit', '0.00', '7,394.00', '7,394.00', '0.00', '14,788.00', '0.00', '7,394.00', '7,394.00', '0.00', '14,788.00']),
+    tr(['5', '04/11/2026', 'DI2411260007820', 'Sep-26', 'Other than reverse charge', 'Debit', '0.00', '7,394.00', '7,394.00', '0.00', '14,788.00', '0.00', '0.00', '0.00', '0.00', '0.00']),
+    tr(['6', '15/10/2026', 'DC2410260000001', '-', 'DRC-03 payment', 'Debit', '0.00', '10.00', '10.00', '0.00', '20.00', '0.00', '0.00', '0.00', '0.00', '0.00']),
+  ];
+  const table = { querySelectorAll: () => rows };
+  const cxR = vm.createContext({ $$: () => [table] });
+  vm.runInContext(srcR + '\nthis.readLedgerRows = readLedgerRows;', cxR);
+  const read = cxR.readLedgerRows();
+  ok(read.length === 5 && read[1].date === '30/10/2026' && read[1].taxPeriod === 'Aug-26' && read[1].ref === 'DI2410260851503'
+    && read[3].taxPeriod === 'Sep-26' && read[3].cgst === 7394, 'each ledger row carries its date, Tax Period and reference');
+  const oct = cx.classifyLedgerRows(read, '10/2026');
+  ok(eq(oct.utilised, { igst: 0, cgst: 7394, sgst: 7394 }), "the October reco's ITC utilised is Sep-26's set-off (dated 04/11), not Aug-26's (dated 30/10)");
+  ok(eq(oct.drc, { igst: 0, cgst: 10, sgst: 10 }), 'DRC-03 counts the debits dated in October only');
+  const sep = cx.classifyLedgerRows(read, '09/2026');
+  ok(eq(sep.utilised, { igst: 1, cgst: 4982, sgst: 4982 }), "the September reco's is Aug-26's set-off, wherever it is dated");
+  ok(eq(cx.classifyLedgerRows(read, '01/2027').utilised, { igst: 0, cgst: 0, sgst: 0 }), 'no set-off for the previous month yet: 0');
+  ok(eq(cx.classifyLedgerRows([setoff], '10/2026').utilised, { igst: 10, cgst: 200, sgst: 200 }),
+    'a row without a Tax Period falls back to the range, as before');
+  ok(/const ledgerRows = await readAllLedgerRows\(\);\n    const \{ utilised, drc \} = classifyLedgerRows\(ledgerRows, job\.period\);/.test(content),
+    'the pull reads every page and classifies by the reco month');
 }
 
 console.log(fail ? `\n${fail} check(s) FAILED` : '\nall checks passed');

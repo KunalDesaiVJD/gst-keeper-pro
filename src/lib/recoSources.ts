@@ -39,6 +39,18 @@ export const isPullOnlyPeriod = (periodMonth: string | null | undefined) => peri
 export const extensionCanPull = (version: string | null | undefined) =>
   !!version && compareVersions(version, RECO_PULL_EXTENSION) >= 0;
 
+/**
+ * GST Receivable Reco's pull needs 0.18.6: before it the extension took the
+ * credit ledger's set-off debits by their date in the month, so a return filed
+ * late (or in the same month) gave another month's ITC utilised (SUNRISE RENTAL
+ * SERVICES, Oct-26), and read only the ledger's first page.
+ */
+export const RECEIVABLE_PULL_EXTENSION = '0.18.6';
+export const extensionCanPullReceivable = (version: string | null | undefined) =>
+  !!version && compareVersions(version, RECEIVABLE_PULL_EXTENSION) >= 0;
+export const needsReceivableExtensionMessage = (version: string | null | undefined) =>
+  `The browser extension${version ? ` (v${version})` : ''} must be v${RECEIVABLE_PULL_EXTENSION} or later for this pull (it reads ITC utilised by the return's tax period). Reload it from the updated extension folder (chrome://extensions → Reload).`;
+
 export const needsExtensionMessage = (version: string | null | undefined) =>
   `The browser extension${version ? ` (v${version})` : ''} must be v${RECO_PULL_EXTENSION} or later. Reload it from the updated extension folder (chrome://extensions → Reload).`;
 

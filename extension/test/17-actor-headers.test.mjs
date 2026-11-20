@@ -73,7 +73,7 @@ const ok = (cond, name) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if 
 const restCalls = () => calls.filter((c) => c.url.startsWith(DB + '/rest/v1/'));
 
 const version = JSON.parse(read('manifest.json')).version;
-ok(version === '0.18.5', 'manifest is 0.18.5 (0.17.0 brought these headers; 0.18.x adds the Table 8A pull and the appeal files)');
+ok(version === '0.18.6', 'manifest is 0.18.6 (0.17.0 brought these headers; 0.18.x adds the Table 8A pull and the appeal files)');
 
 // 1. A job the app started: every write names the app user.
 await local.set({ gstk_active_job: { mode: 'filing', actorId: GITA, tabId: 1 } });

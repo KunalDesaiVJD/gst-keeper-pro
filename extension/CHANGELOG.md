@@ -2,6 +2,14 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-11-20 — GST Receivable Reco: ITC utilised by the return's tax period, every ledger page (v0.18.6)
+
+- ITC utilised was the "Other than reverse charge" debits dated in the reco month. A return filed late, or in the same month, posts its set-off in another month, so the wrong return's set-off was taken: SUNRISE RENTAL SERVICES, Oct-26 reco, took Aug-26's (filed 30/10/2026, CGST/SGST 4,982) instead of Sep-26's (filed 04/11/2026, 7,394). Now each ledger row's Tax Period is read, and ITC utilised is the set-off debit whose Tax Period is the month before the reco month, whatever its date. DRC-03 / other debits stay those dated in the reco month.
+- The credit ledger is opened from the month's first day to today (at most a year on), so a set-off filed after the month is in range; the opening is still the first day's. If the portal will not take that range, the month alone, as before.
+- Every page of the ledger grid is read (it pages; only the first page was read before), here and in the Credit Ledger report pull. The report keeps the month's own rows.
+- The app asks for 0.18.6 before a GST Receivable Reco pull (`RECEIVABLE_PULL_EXTENSION`).
+- `test/16-reco-pull-gate.test.mjs` (Sunrise's ledger), `test/17-actor-headers.test.mjs` now expects 0.18.6.
+
 ## 2026-10-25 — An appeal with no notice gets its files (v0.18.5)
 
 - An appeal filed on the portal (GST APL-01) that the appellate authority has not yet taken up has no notice and no task, so the notices step never opened its case folder and its APL-01, grounds and annexures were never downloaded (M J Surgical's appeal AD241225010791I against refund order ZD2409250165765). The applications step now opens the case folder of each appeal it lists (`case/folder` with `caseTypeCd: APPEL`, then `case/folder/items`) and downloads its files the same way as the notices step (`getEncrypDocIds`, `downloadhb`, `notices/<client>/case-folder/<arn>/<docid>.pdf`), ingested as `case_folder` items scoped to the appeal's ARN.
