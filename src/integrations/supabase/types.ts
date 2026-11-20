@@ -2280,6 +2280,10 @@ export type Database = {
       }
       builder_bu_agreement_confirmations: {
         Row: {
+          adopted_at: string | null
+          adopted_by: string | null
+          adopted_value: number | null
+          client_value: number | null
           agreement_value_at_request: number
           bu_event_id: string
           client_id: string
@@ -2305,6 +2309,10 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          adopted_at?: string | null
+          adopted_by?: string | null
+          adopted_value?: number | null
+          client_value?: number | null
           agreement_value_at_request?: number
           bu_event_id: string
           client_id: string
@@ -2330,6 +2338,10 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          adopted_at?: string | null
+          adopted_by?: string | null
+          adopted_value?: number | null
+          client_value?: number | null
           agreement_value_at_request?: number
           bu_event_id?: string
           client_id?: string

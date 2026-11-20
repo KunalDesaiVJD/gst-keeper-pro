@@ -541,3 +541,29 @@ export function pageSummary(units: { state: PageUnitState; agreement_value: numb
     totalLabel: replaced > 0 ? 'Total of units still on this link' : 'Total',
   };
 }
+
+/**
+ * The value a client typed in a dispute note before the page took a number
+ * ("Banakhat done 21,00,000", "20,00,000", "Rs. 6 lakh"): the last amount of
+ * at least Rs. 1,000 in the note, Indian or Western grouping, "lakh"/"L" and
+ * "crore"/"cr" understood. Null when the note names no amount.
+ */
+export function valueFromNote(note: string | null | undefined): number | null {
+  if (!note) return null;
+  const re = /(\d[\d,]*(?:\.\d+)?)\s*(lakhs?|lacs?|l\b|crores?|cr\b)?/gi;
+  let last: number | null = null;
+  for (const m of note.matchAll(re)) {
+    // Part of a date (12/10/2026, 12-10-2026): not an amount.
+    const at = m.index ?? 0;
+    const before = note[at - 1] || '';
+    const after = note[at + m[1].length] || '';
+    if (/[/-]/.test(before) || /[/-]/.test(after)) continue;
+    let n = Number(m[1].replace(/,/g, ''));
+    if (!Number.isFinite(n)) continue;
+    const unit = (m[2] || '').toLowerCase();
+    if (unit.startsWith('l')) n *= 100000;
+    else if (unit.startsWith('cr')) n *= 10000000;
+    if (n >= 1000) last = Math.round(n * 100) / 100;
+  }
+  return last;
+}

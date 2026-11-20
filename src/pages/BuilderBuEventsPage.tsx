@@ -36,13 +36,14 @@ import {
 } from '@/utils/builderBuEvent';
 import { prettyPeriodLabel } from '@/utils/builderLedger';
 import { fetchBuilderSettings } from '@/lib/builderSettings';
-import { moveLaterDeedsIntoBu, postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
+import { adoptClientValues, moveLaterDeedsIntoBu, postBuEvent, prepareBuEvent, unpostBuEvent, type PreparedEvent } from '@/lib/builderBuPosting';
 import {
   fetchAgreementConfirmations, fetchClearedDisputes, fetchConfirmRequests, isAgreementCleared,
   isBuAgreementConfirmationBlocked, overrideAgreementValue,
   type AgreementConfirmRequest, type AgreementConfirmStatus, type ClearedDispute,
 } from '@/lib/builderAgreementConfirmData';
-import { failedMailWords, mailOutcome, requestsNotOut, unitAsk } from '@/lib/builderConfirmRules';
+import { failedMailWords, mailOutcome, requestsNotOut, unitAsk, valueFromNote } from '@/lib/builderConfirmRules';
+import ApproveClientValuesDialog, { type ApproveRow } from '@/components/builder/ApproveClientValuesDialog';
 import SendAgreementConfirmDialog, { type ConfirmCandidate } from '@/components/builder/SendAgreementConfirmDialog';
 
 interface ProjectRow {
@@ -137,6 +138,7 @@ const BuilderBuEventsPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [sendFor, setSendFor] = useState<EventRow | null>(null);
+  const [approveFor, setApproveFor] = useState<{ ev: EventRow; rows: ApproveRow[] } | null>(null);
 
   const [dialog, setDialog] = useState(false);
   const [form, setForm] = useState(emptyEvent);
@@ -469,6 +471,47 @@ const BuilderBuEventsPage: React.FC = () => {
     }
   };
 
+  /** Disputed units of an event (or the ones named), for the Approve dialog. */
+  const openApprove = (ev: EventRow, onlyUnit?: string) => {
+    const cf = new Map((confirmations[ev.id] || []).map((c) => [c.unitId, c]));
+    const rows: ApproveRow[] = (eventUnits[ev.id] || [])
+      .filter((r) => r.booked_at_cutoff && (!onlyUnit || r.unit_id === onlyUnit))
+      .filter((r) => {
+        const c = cf.get(r.unit_id);
+        return c?.status === 'DISPUTED' || (c?.status === 'OVERRIDDEN' && c.adoptedValue != null && !!onlyUnit);
+      })
+      .map((r) => {
+        const c = cf.get(r.unit_id)!;
+        return {
+          unitId: r.unit_id,
+          unitNo: units.find((u) => u.id === r.unit_id)?.unit_no || '',
+          workingValue: Number(c.valueAtRequest ?? r.agreement_value) || 0,
+          valueTaxed: Number(r.value_taxed_upto_opening) || 0,
+          clientValue: c.adoptedValue ?? c.clientValue ?? valueFromNote(c.disputeNotes),
+          note: c.disputeNotes,
+        };
+      })
+      .sort((a, b) => a.unitNo.localeCompare(b.unitNo, undefined, { numeric: true }));
+    if (!rows.length) { toast.info('No disputed value to approve.'); return; }
+    setApproveFor({ ev, rows });
+  };
+
+  const handleApprove = async (items: { unitId: string; value: number }[], reason: string) => {
+    if (!approveFor || !user?.id) return;
+    setIsSaving(true);
+    try {
+      const res = await adoptClientValues({ buEventId: approveFor.ev.id, actorId: user.id, reason, items });
+      if (res.done.length) toast.success(`${res.done.length} value(s) approved; the working is re-done at those values.`);
+      if (res.failed.length) toast.error(res.failed.map((f) => f.message).join(' '));
+      setApproveFor(null);
+      await load(true);
+    } catch (e) {
+      toast.error(`Could not approve: ${(e as Error).message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handlePost = async (ev: EventRow) => {
     if (!project) return;
     const rows0 = eventUnits[ev.id] || [];
@@ -695,6 +738,7 @@ const BuilderBuEventsPage: React.FC = () => {
           const cfByUnit = new Map(cfRows.map((c) => [c.unitId, c]));
           const cfConfirmed = taxable.filter((r) => isAgreementCleared(cfByUnit.get(r.unit_id)?.status)).length;
           const cfOutstanding = taxable.length - cfConfirmed;
+          const cfDisputed = taxable.filter((r) => cfByUnit.get(r.unit_id)?.status === 'DISPUTED').length;
           const evRequests = requests[ev.id] || [];
           const lastReq = evRequests[0] || null;
           const unitNoOf = (id: string) => units.find((u) => u.id === id)?.unit_no || '';
@@ -760,6 +804,15 @@ const BuilderBuEventsPage: React.FC = () => {
                     >
                       <Send className="h-3.5 w-3.5" />
                       {cfRows.length ? 'Re-send confirmations' : 'Send confirmation requests'}
+                    </Button>
+                  )}
+                  {ev.status !== 'POSTED' && cfDisputed > 0 && canOverrideBuAgreement() && (
+                    <Button
+                      size="sm" className={WS_BTN} disabled={isSaving}
+                      onClick={() => openApprove(ev)}
+                      title="Approve the values the client gave with its disputes"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Approve client's values ({cfDisputed})
                     </Button>
                   )}
                   {ev.status !== 'POSTED' && cfOutstanding > 0 && canOverrideBuAgreement() && (
@@ -912,7 +965,9 @@ const BuilderBuEventsPage: React.FC = () => {
                               return (
                                 <>
                                   <Badge variant={variant} className="text-[10px] font-medium">
-                                    {status === 'NOT_SENT' ? 'Not sent' : status === 'OVERRIDDEN' ? 'Accepted by firm' : status}
+                                    {status === 'NOT_SENT' ? 'Not sent'
+                                      : status === 'OVERRIDDEN' ? (cf?.adoptedValue != null ? "Client's value approved" : 'Accepted by firm')
+                                        : status}
                                   </Badge>
                                   {answeredBy(cf) && (
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground">{answeredBy(cf)}</span>
@@ -921,6 +976,30 @@ const BuilderBuEventsPage: React.FC = () => {
                                     <span className="mt-0.5 block text-[11px] text-muted-foreground" title={cf.disputeNotes}>
                                       {cf.disputeNotes}
                                     </span>
+                                  )}
+                                  {status === 'DISPUTED' && (() => {
+                                    const v = cf?.clientValue ?? valueFromNote(cf?.disputeNotes);
+                                    return v ? (
+                                      <span className="mt-0.5 block text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                                        Client's value: {formatINR(v)}
+                                      </span>
+                                    ) : null;
+                                  })()}
+                                  {status === 'OVERRIDDEN' && cf?.adoptedValue != null && (
+                                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                                      {formatINR(cf.adoptedValue)} approved
+                                      {cf.valueAtRequest ? ` (working had ${formatINR(cf.valueAtRequest)})` : ''}
+                                    </span>
+                                  )}
+                                  {ev.status !== 'POSTED' && canOverrideBuAgreement()
+                                    && (status === 'DISPUTED' || (status === 'OVERRIDDEN' && cf?.adoptedValue != null)) && (
+                                    <button
+                                      type="button" disabled={isSaving}
+                                      className="mt-0.5 block text-[11px] font-medium text-primary hover:underline"
+                                      onClick={() => openApprove(ev, r.unit_id)}
+                                    >
+                                      {status === 'DISPUTED' ? "Approve client's value" : 'Change approved value'}
+                                    </button>
                                   )}
                                   {status === 'PENDING' && (() => {
                                     // Asked only once its e-mail is out (round 4), a per-unit e-mail
@@ -1012,6 +1091,14 @@ const BuilderBuEventsPage: React.FC = () => {
           );
         })
       )}
+
+      <ApproveClientValuesDialog
+        open={!!approveFor}
+        rows={approveFor?.rows || []}
+        busy={isSaving}
+        onClose={() => setApproveFor(null)}
+        onApprove={(items, reason) => void handleApprove(items, reason)}
+      />
 
       <SendAgreementConfirmDialog
         open={!!sendFor}

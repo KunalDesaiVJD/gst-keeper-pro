@@ -442,7 +442,23 @@ directly on the button pressed."
   next reader sees who confirmed it and cannot dispute it there (a client's own
   confirmation is never replaced); the page says an answer given there stands
   and to write to the firm if it is wrong. A disputed unit waits for staff, who
-  correct the working and send a new request for it.
+  correct the working and send a new request for it, or approve the client's
+  value (below).
+- **Approving the client's value (the firm, 20 Nov 2026,
+  `20261120120000_bu_confirm_client_value.sql`).** A dispute carries the value
+  the client says is right, typed as a number on the page (`client_value`; the
+  note is then optional). On BU Working, "Approve client's values" (and
+  "Approve client's value" on a unit) lists the disputed units with the
+  working's value, what is already taxed and the client's value (the number,
+  else the amount read from the note by `valueFromNote`), editable before
+  approving. `builder_bu_adopt_client_value` (GST Manager, superadmin or
+  `override_bu_agreement`; the event still PREPARED; only a DISPUTED unit, or
+  one approved before) makes the row OVERRIDDEN with `adopted_value`, and the
+  unit is worked again: the value taxed is the dastavej value, else the
+  approved value, else the opening snapshot, else the classification
+  (`prepareBuEvent`). "Accept without confirmation" keeps the working's own
+  value and clears an approved one; asking about the unit again clears both.
+  A person with no level is refused by both functions.
   *Open question for the firm:* "anyone can provide confirmation for the
   outstanding figures" could mean that another recipient may confirm a unit
   someone else disputed. Until the firm decides, a dispute stands. That is the
