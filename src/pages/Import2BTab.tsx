@@ -624,7 +624,12 @@ const Import2BTab: React.FC = () => {
   // the one door (twob_prior_books_apply), with a preview first.
   const isPrior = monthState.isPrior;
   const canPriorBooks = canChangePriorBooks(user?.role);
-  const readOnly = isPrior || !isStaff;
+  // A client's own login sets the 2B documents' Action and saves it on its
+  // own GSTIN like staff (the firm, 20 Nov 2026); the database accepts that
+  // client as the actor for its own rows (20261120100000). The books
+  // register, import, delete and prior months stay staff-only.
+  const isOwnClient = user?.role === 'client' && !!user?.id && user.id === selectedClient;
+  const readOnly = isPrior || !(isStaff || isOwnClient);
   // A save on Import 2B changes the 2B Reconciliation ledger (docs §15), as
   // Post did: the Import 2B & post permission's, as Post was (a GST Manager
   // and the superadmin hold every permission). Without it the month is
@@ -635,7 +640,7 @@ const Import2BTab: React.FC = () => {
   // round 3; the database lets exactly those through): each save is checked
   // first (docChangeTouchesLedger, bookSaveTouchesLedger) and a row whose
   // save would change the ledger is read-only, with the reason.
-  const mayPost = isPrior ? canPriorBooks : canWork2BImport();
+  const mayPost = isPrior ? canPriorBooks : (canWork2BImport() || isOwnClient);
   // While an import runs, every control that writes is off (and each write
   // checks again, importRunning): the merge must not undo a change made since
   // it read the month.
