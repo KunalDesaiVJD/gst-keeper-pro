@@ -1392,6 +1392,16 @@ superadmin may allow a manual entry for that one client, month and reco, with
 a reason, and everything must be traceable. Migration
 `20261021120000_reco_pull_push_gate.sql`, extension 0.16.0.
 
+**Net ITC (4C) once M-1 is filed (20 Nov 2026, `20261120130000`).** The GST
+Receivable Reco takes M-1's ITC availed from M-1's GSTR-3B as pushed (the latest
+successful `gstr3b_push_versions` row's `itc_net`, each head at least 0), not
+from ITC Summary's saved snapshot plus its live auto-linked rows; the page shows
+the ITC Summary figure beside it when the two differ by more than Rs. 1. A month
+with no push keeps the ITC Summary figure. Why: Farmacist's Sep-26 snapshot was
+saved before 8 invoices became Reclaim, so row 5.1 still held them while the live
+row 5.4 counted them again (Rs. 4,466.97 twice in Oct-26). On 20 Nov 2026 the 83
+recos with a push already agreed with it; that one alone differed.
+
 **Where the portal side comes from (from the Jun-2026 period).**
 
 | Figure | Source | Who | Refused otherwise |
