@@ -249,6 +249,12 @@ export interface AgreementConfirmStatus {
   status: ConfirmStatus;
   disputeNotes: string | null;
   overrideReason?: string | null;
+  /** The value the client gave with a dispute (a number on the page since 20 Nov 2026). */
+  clientValue?: number | null;
+  /** The value the firm approved after the client's dispute; the working uses it. */
+  adoptedValue?: number | null;
+  /** The working's value when the client was asked. */
+  valueAtRequest?: number | null;
   /** Who answered on the confirmation page, and when. */
   respondedByName?: string | null;
   respondedByEmail?: string | null;
@@ -290,9 +296,11 @@ type ConfirmRow = {
   override_reason: string | null; responded_by_name?: string | null; responded_by_email?: string | null;
   responded_at?: string | null; request_id?: string | null; sent_at?: string | null;
   legacy_emails?: string[] | null; legacy_outbox_id?: string | null;
+  client_value?: number | null; adopted_value?: number | null; agreement_value_at_request?: number | null;
 };
 const CONFIRM_COLUMNS = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at, '
-  + 'responded_by_name, responded_by_email, request_id, legacy_emails, legacy_outbox_id';
+  + 'responded_by_name, responded_by_email, request_id, legacy_emails, legacy_outbox_id, '
+  + 'client_value, adopted_value, agreement_value_at_request';
 // Before 20261021140000 is applied the newer columns do not exist: read the
 // older ones rather than show every unit as never sent.
 const CONFIRM_COLUMNS_OLD = 'bu_event_id, unit_id, status, dispute_notes, override_reason, responded_at, sent_at';
@@ -328,6 +336,9 @@ export async function fetchAgreementConfirmations(eventIds: string[]): Promise<R
       status: r.status as AgreementConfirmStatus['status'],
       disputeNotes: r.dispute_notes,
       overrideReason: r.override_reason,
+      clientValue: r.client_value == null ? null : Number(r.client_value),
+      adoptedValue: r.adopted_value == null ? null : Number(r.adopted_value),
+      valueAtRequest: r.agreement_value_at_request == null ? null : Number(r.agreement_value_at_request),
       respondedByName: r.responded_by_name ?? null,
       respondedByEmail: r.responded_by_email ?? null,
       respondedAt: r.responded_at ?? null,

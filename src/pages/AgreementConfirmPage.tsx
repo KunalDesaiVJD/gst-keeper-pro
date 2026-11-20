@@ -58,6 +58,8 @@ interface PageUnit {
   responded_by_email: string | null;
   responded_at: string | null;
   dispute_notes: string | null;
+  /** The value the client gave with its dispute. */
+  client_value?: number | null;
 }
 
 interface PageData {
@@ -127,6 +129,8 @@ const AgreementConfirmPage: React.FC = () => {
   // Open dispute boxes and what has been typed in each, by unit. Answering
   // another unit leaves them as they are.
   const [disputes, setDisputes] = useState<Record<string, string>>({});
+  // The correct value typed with each open dispute (20 Nov 2026), by unit.
+  const [disputeValues, setDisputeValues] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -236,7 +240,7 @@ const AgreementConfirmPage: React.FC = () => {
     }
   };
 
-  const respond = async (answers: { unit_id: string; action: 'CONFIRM' | 'DISPUTE'; notes?: string }[], key: string) => {
+  const respond = async (answers: { unit_id: string; action: 'CONFIRM' | 'DISPUTE'; notes?: string; value?: number }[], key: string) => {
     if (!token || !answers.length) return;
     const person = who();
     if (!person) return;
@@ -262,6 +266,7 @@ const AgreementConfirmPage: React.FC = () => {
       // Close the boxes of the units just answered; keep the others' drafts.
       const answered = new Set(results.map((r) => r.unit_id));
       setDisputes((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !answered.has(id))));
+      setDisputeValues((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !answered.has(id))));
       await load();
     } catch (e) {
       const msg = (e as Error).message;
@@ -331,7 +336,8 @@ const AgreementConfirmPage: React.FC = () => {
       case 'CONFIRMED': return { tone: 'text-emerald-700 dark:text-emerald-400', text: `Confirmed${by}.` };
       case 'DISPUTED': {
         const note = (u.dispute_notes || '').trim().replace(/[.\s]+$/, '');
-        return { tone: 'text-amber-700 dark:text-amber-400', text: `Disputed${by}${note ? `: ${note}` : ''}. We will follow up.` };
+        const val = Number(u.client_value) > 0 ? ` Correct value given: Rs. ${formatINR(Number(u.client_value))}.` : '';
+        return { tone: 'text-amber-700 dark:text-amber-400', text: `Disputed${by}${note ? `: ${note}` : ''}.${val} We will follow up.` };
       }
       case 'ACCEPTED': return { tone: 'text-muted-foreground', text: 'Settled by the firm. Nothing more is needed.' };
       case 'REPLACED': return { tone: 'text-muted-foreground', text: `Replaced by a newer request. Please use the link in the newer e-mail. ${CONTACT}` };
@@ -462,8 +468,21 @@ const AgreementConfirmPage: React.FC = () => {
               )}
               {u.state === 'PENDING' && disputes[u.unit_id] !== undefined && (
                 <div className="mt-2 space-y-2">
+                  <label className="block text-xs font-medium" htmlFor={`cv-${u.unit_id}`}>
+                    Correct agreement value (Rs.)
+                  </label>
+                  <Input
+                    id={`cv-${u.unit_id}`}
+                    inputMode="decimal"
+                    placeholder="e.g. 2100000"
+                    value={disputeValues[u.unit_id] ?? ''}
+                    onChange={(e) => {
+                      const text = e.target.value;
+                      setDisputeValues((prev) => ({ ...prev, [u.unit_id]: text }));
+                    }}
+                  />
                   <Textarea
-                    placeholder="What has changed? For example, the revised agreement value and its date."
+                    placeholder="Note (optional): what has changed, e.g. the revised agreement or banakhat and its date."
                     value={disputes[u.unit_id]}
                     onChange={(e) => {
                       const text = e.target.value;
@@ -485,8 +504,13 @@ const AgreementConfirmPage: React.FC = () => {
                       size="sm" variant="destructive" disabled={busy}
                       onClick={() => {
                         const note = (disputes[u.unit_id] || '').trim();
-                        if (!note) { toast.error('Please say what has changed.'); return; }
-                        void respond([{ unit_id: u.unit_id, action: 'DISPUTE', notes: note }], u.unit_id);
+                        const raw = (disputeValues[u.unit_id] || '').replace(/[,\s]/g, '');
+                        const value = raw ? Number(raw) : NaN;
+                        if (!raw || !Number.isFinite(value) || value <= 0) {
+                          toast.error('Please give the correct agreement value as a number.');
+                          return;
+                        }
+                        void respond([{ unit_id: u.unit_id, action: 'DISPUTE', notes: note || undefined, value }], u.unit_id);
                       }}
                     >
                       {savingUnit === u.unit_id && <Loader2 className="h-4 w-4 animate-spin" />} Submit dispute

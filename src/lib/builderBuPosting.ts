@@ -64,7 +64,7 @@ export async function prepareBuEvent(params: {
 
   const [
     { data: bookings }, { data: receipts }, { data: invoices }, { data: openings }, { data: openingAdjustments },
-    { data: deeds },
+    { data: deeds }, { data: adopted },
   ] =
     await Promise.all([
       supabase.from('builder_bookings').select('*').in('unit_id', unitIds),
@@ -76,7 +76,16 @@ export async function prepareBuEvent(params: {
       // The deed value, read here so every caller (BU event, the dastavej
       // auto-post, the late-discovery interest) takes it the same way.
       supabase.from('builder_units').select('id, dastavej_value').in('id', unitIds),
+      // A value the firm approved after the client disputed it (20 Nov 2026,
+      // builder_bu_adopt_client_value): the latest approval per unit.
+      supabase.from('builder_bu_agreement_confirmations')
+        .select('unit_id, adopted_value, adopted_at')
+        .in('unit_id', unitIds).eq('status', 'OVERRIDDEN').not('adopted_value', 'is', null)
+        .order('adopted_at', { ascending: false }),
     ]);
+  const adoptedValue = new Map<string, number>();
+  ((adopted || []) as { unit_id: string; adopted_value: number | null }[])
+    .forEach((r) => { if (!adoptedValue.has(r.unit_id) && (Number(r.adopted_value) || 0) > 0) adoptedValue.set(r.unit_id, Number(r.adopted_value)); });
   const deedValue = new Map(((deeds || []) as { id: string; dastavej_value: number | null }[])
     .filter((d) => (Number(d.dastavej_value) || 0) > 0)
     .map((d) => [d.id, Number(d.dastavej_value)]));
@@ -181,8 +190,10 @@ export async function prepareBuEvent(params: {
       ratePct: cls?.ratePct || 0,
       // The value taxed is the deed's when a deed value is recorded (the
       // firm, 18 Nov 2026: "as per the Dastavej only"), else the agreement
-      // value (opening snapshot, then the classification engine).
-      agreementValue: deedValue.get(u.id) ?? (opening?.agreement_value || cls?.agreementValue || 0),
+      // value: the one the firm approved after the client's dispute, else the
+      // opening snapshot, then the classification engine.
+      agreementValue: deedValue.get(u.id) ?? adoptedValue.get(u.id)
+        ?? (opening?.agreement_value || cls?.agreementValue || 0),
       dastavejDate: u.dastavej_date,
       bookingId: booking?.id ?? null,
       bookingDate: booking?.booking_date ?? (hasOpeningActivity ? opening!.as_at_date : null),
@@ -1323,6 +1334,30 @@ async function refreshPreparedUnits(params: { buEventId: string; unitIds: string
       }).catch(() => undefined);
     }
   }
+}
+
+/**
+ * Approve disputed units' values (the client's figure, or one agreed with the
+ * client) and work those units again at the approved value. The database checks
+ * who is acting and that the event is still PREPARED; each unit is one call.
+ * Returns the units approved and any refused, with the database's words.
+ */
+export async function adoptClientValues(params: {
+  buEventId: string; actorId: string; reason?: string | null;
+  items: { unitId: string; value: number }[];
+}): Promise<{ done: string[]; failed: { unitId: string; message: string }[] }> {
+  const done: string[] = [];
+  const failed: { unitId: string; message: string }[] = [];
+  for (const it of params.items) {
+    const { error } = await supabase.rpc('builder_bu_adopt_client_value' as never, {
+      p_bu_event_id: params.buEventId, p_unit_id: it.unitId, p_actor_id: params.actorId,
+      p_value: it.value, p_reason: params.reason || null,
+    } as never);
+    if (error) failed.push({ unitId: it.unitId, message: error.message });
+    else done.push(it.unitId);
+  }
+  if (done.length) await refreshPreparedUnits({ buEventId: params.buEventId, unitIds: done, userId: null });
+  return { done, failed };
 }
 
 /**
