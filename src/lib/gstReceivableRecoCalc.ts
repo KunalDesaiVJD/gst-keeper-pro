@@ -7,6 +7,25 @@ import { fetchFiledFigures } from './itcAutoLink';
 import { fetchFsiCredit } from './builderFsiCredit';
 import { fetchTable4Adjustments } from './gstr3bTable4Adjustments';
 
+/**
+ * M-1's net ITC (Table 4C) as the app pushed it: the latest successful GSTR-3B
+ * push of the month. Once M-1 is filed it is the ITC availed (20 Nov 2026,
+ * 20261120130000): ITC Summary's saved snapshot can be older than the push
+ * (Farmacist Sep-26 counted a reclaim twice). Null when nothing was pushed.
+ */
+export async function fetchPushedNetItc(clientId: string, periodMonth: string):
+  Promise<{ cgst: number; sgst: number; igst: number; pushedAt: string } | null> {
+  const { data, error } = await supabase.from('gstr3b_push_versions')
+    .select('payload, action_at').eq('client_id', clientId).eq('period_month', periodMonth).eq('status', 'ok')
+    .order('action_at', { ascending: false }).limit(1);
+  if (error) throw new Error(`Could not read the GSTR-3B push of ${periodMonth}: ${error.message}`);
+  const row = (data || [])[0] as { payload: any; action_at: string } | undefined;
+  const net = row?.payload?.itc_elg?.itc_net;
+  if (!row || !net || typeof net !== 'object') return null;
+  const h = (v: unknown) => Math.max(0, Number(v) || 0);
+  return { cgst: h(net.cgst), sgst: h(net.sgst), igst: h(net.igst), pushedAt: row.action_at };
+}
+
 // Mirrors the "DIFFERENCE" figure on the GST Receivable Reco page
 // (src/pages/GstReceivableRecoPage.tsx) — same source tables, same cross-head
 // set-off simulation, same Rs.10 tolerance. The GSTR-3B push gate reads the
@@ -260,6 +279,9 @@ export async function computeGstReceivableRecoDiff(clientId: string, periodMonth
     availedCgst = Math.max(0, total4A.cgst - total4B.cgst + fsiCredit.cgst);
     availedSgst = Math.max(0, total4A.sgst - total4B.sgst + fsiCredit.sgst);
     availedIgst = Math.max(0, total4A.igst - total4B.igst);
+    // M-1 filed: its net ITC as pushed, as the database does.
+    const pushed = prevMonth ? await fetchPushedNetItc(clientId, prevMonth) : null;
+    if (pushed) { availedCgst = pushed.cgst; availedSgst = pushed.sgst; availedIgst = pushed.igst; }
   }
 
   if (!utilizedFromCsv) {

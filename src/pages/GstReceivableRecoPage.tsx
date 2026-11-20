@@ -32,7 +32,7 @@ import { computeGstr1OutputTax } from '@/utils/computeGstr1OutputTax';
 import { fetchFiledFigures } from '@/lib/itcAutoLink';
 import { fetchFsiCredit } from '@/lib/builderFsiCredit';
 import { fetchTable4Adjustments, type Table4Adjustments } from '@/lib/gstr3bTable4Adjustments';
-import { utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';
+import { fetchPushedNetItc, utilisedFromLedger } from '@/lib/gstReceivableRecoCalc';
 import ManualSourceAllowanceControl from '@/components/manualSource/ManualSourceAllowanceControl';
 import Gstr3bGateNote from '@/components/reco/Gstr3bGateNote';
 import { fetchManualSourceAllowances, liveAllowance, staffNames, type ManualSourceAllowance } from '@/lib/manualSource';
@@ -171,6 +171,8 @@ const GstReceivableRecoPage: React.FC = () => {
   const [availedCgst, setAvailedCgst] = useState(0);
   const [availedSgst, setAvailedSgst] = useState(0);
   const [availedIgst, setAvailedIgst] = useState(0);
+  // M-1 filed and pushed: ITC availed is the push's 4C; what ITC Summary gives, to flag a gap.
+  const [availedPush, setAvailedPush] = useState<{ pushedAt: string; itcSummary: { cgst: number; sgst: number; igst: number } } | null>(null);
   // ITC actually utilized. When the Credit Ledger CSV has been uploaded we
   // pull the M-1 Debit row's per-head amounts (cross-head accurate). Otherwise
   // we fall back to GSTR-1 output (per-head approximation).
@@ -263,7 +265,7 @@ const GstReceivableRecoPage: React.FC = () => {
     setIsLoading(true);
     setLoadError(null);
     // Nothing of the client or month shown before is kept.
-    setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
+    setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0); setAvailedPush(null);
     setPrevReturnFiled(false); setHasItcSummary(false);
     try {
       // 1. Persisted gst_receivable_reco row
@@ -552,13 +554,21 @@ const GstReceivableRecoPage: React.FC = () => {
           : { igst: 0, cgst: 0, sgst: 0 };
         // A head whose 4C is negative credits nothing: the portal adds it to
         // that head's liability and the ledger's set-off debit pays it.
-        setAvailedCgst(Math.max(0, total4A.cgst - total4B.cgst + fsiCredit.cgst));
-        setAvailedSgst(Math.max(0, total4A.sgst - total4B.sgst + fsiCredit.sgst));
-        setAvailedIgst(Math.max(0, total4A.igst - total4B.igst));
+        const fromSummary = {
+          cgst: Math.max(0, total4A.cgst - total4B.cgst + fsiCredit.cgst),
+          sgst: Math.max(0, total4A.sgst - total4B.sgst + fsiCredit.sgst),
+          igst: Math.max(0, total4A.igst - total4B.igst),
+        };
+        // M-1 is filed: its net ITC (4C) as pushed, as computeGstReceivableRecoDiff
+        // and the DB take it (20261120130000); the ITC Summary figure is kept to flag a gap.
+        const pushed = prevMonth ? await fetchPushedNetItc(selectedClientId, prevMonth) : null;
+        const use = pushed || fromSummary;
+        setAvailedCgst(use.cgst); setAvailedSgst(use.sgst); setAvailedIgst(use.igst);
+        setAvailedPush(pushed ? { pushedAt: pushed.pushedAt, itcSummary: fromSummary } : null);
       } else {
         setTable4Adj(null);
         setHasItcSummary(!!itcData?.data);
-        setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
+        setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0); setAvailedPush(null);
       }
 
       // 3. GSTR-1 (M-1) → output tax. Only used as a fallback when the CSV
@@ -596,7 +606,7 @@ const GstReceivableRecoPage: React.FC = () => {
       }
     } catch (error: any) {
       setLoadError(error.message);
-      setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0);
+      setAvailedCgst(0); setAvailedSgst(0); setAvailedIgst(0); setAvailedPush(null);
       toast.error('Failed to fetch data: ' + error.message);
     } finally {
       setIsLoading(false);
@@ -1081,10 +1091,31 @@ const GstReceivableRecoPage: React.FC = () => {
               The previous month's figures could not be read ({loadError}). The Net ITC available (4C) shows 0, so the closing and the difference below are incomplete. Reload the page.
             </div>
           )}
+          {availedPush && (() => {
+            const s = availedPush.itcSummary;
+            const gap = (['igst', 'cgst', 'sgst'] as const)
+              .map((h) => ({ h, d: s[h] - ({ igst: availedIgst, cgst: availedCgst, sgst: availedSgst })[h] }))
+              .filter((x) => Math.abs(x.d) > 1);
+            if (!gap.length) return null;
+            return (
+              <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                Net ITC (4C) is taken from {prevMonthLabel || 'the previous month'}'s GSTR-3B as pushed on{' '}
+                {new Date(availedPush.pushedAt).toLocaleDateString('en-IN')}. {prevMonthLabel || 'Its'} ITC Summary gives a different figure
+                ({gap.map((x) => `${x.h.toUpperCase()} ${formatNumber(s[x.h])}`).join(', ')}): its saved snapshot is older than the push.
+                Open that ITC Summary and save it again so the two agree.
+              </div>
+            );
+          })()}
           {/* Headline figures */}
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
             <KpiTile label="Opening as per portal" value={formatNumber(openingTotal)} hint={isPulled ? (openingPortalEmpty ? 'Pulled, no balance on the portal' : 'Pulled from the portal') : manualLabel ? 'Manual (allowed)' : manualRevoked ? 'Manual entry revoked' : openingSource === 'csv' ? 'CSV, not allowed' : openingSource === 'not_applicable' ? 'Not applicable, not allowed' : 'Not pulled'} />
-            <KpiTile label="Add: Net ITC available (4C)" value={formatNumber(availedTotal)} hint={prevMonthLabel ? `From ${prevMonthLabel} ITC Summary` : 'Previous month ITC Summary'} />
+            <KpiTile
+              label="Add: Net ITC available (4C)"
+              value={formatNumber(availedTotal)}
+              hint={availedPush
+                ? `From ${prevMonthLabel || 'the previous month'}'s GSTR-3B as pushed`
+                : prevMonthLabel ? `From ${prevMonthLabel} ITC Summary` : 'Previous month ITC Summary'}
+            />
             <KpiTile label="Closing as per portal" value={formatNumber(portalClosingTotal)} hint="Opening + 4C − utilized − DRC-03" />
             <KpiTile label="Closing as per books" value={formatNumber(booksClosingTotal)} hint="Typed from the books" />
             <KpiTile
