@@ -303,7 +303,7 @@ ok(eq(c3.utilised, { igst: 10, cgst: 200, sgst: 200 }) && eq(c3.drc, { igst: 0, 
   }
 }
 
-// ── 0.18.6: the set-off is found by its Tax Period, not its date ────────────
+// ── 0.18.7: the set-off is found by its Tax Period, not its date ────────────
 // SUNRISE RENTAL SERVICES, credit ledger 01/09/2026 – 20/11/2026: the Aug-26
 // return was filed on 30/10 and the Sep-26 return on 04/11. The October reco
 // takes Sep-26's set-off (7,394 + 7,394), never Aug-26's (dated in October).
