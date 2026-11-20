@@ -2,13 +2,24 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
-## 2026-11-20 — GST Receivable Reco: ITC utilised by the return's tax period, every ledger page (v0.18.6)
+## 2026-11-20 — GST Receivable Reco: ITC utilised by the return's tax period, every ledger page (v0.18.7)
 
 - ITC utilised was the "Other than reverse charge" debits dated in the reco month. A return filed late, or in the same month, posts its set-off in another month, so the wrong return's set-off was taken: SUNRISE RENTAL SERVICES, Oct-26 reco, took Aug-26's (filed 30/10/2026, CGST/SGST 4,982) instead of Sep-26's (filed 04/11/2026, 7,394). Now each ledger row's Tax Period is read, and ITC utilised is the set-off debit whose Tax Period is the month before the reco month, whatever its date. DRC-03 / other debits stay those dated in the reco month.
 - The credit ledger is opened from the month's first day to today (at most a year on), so a set-off filed after the month is in range; the opening is still the first day's. If the portal will not take that range, the month alone, as before.
 - Every page of the ledger grid is read (it pages; only the first page was read before), here and in the Credit Ledger report pull. The report keeps the month's own rows.
-- The app asks for 0.18.6 before a GST Receivable Reco pull (`RECEIVABLE_PULL_EXTENSION`).
-- `test/16-reco-pull-gate.test.mjs` (Sunrise's ledger), `test/17-actor-headers.test.mjs` now expects 0.18.6.
+- The app asks for 0.18.7 before a GST Receivable Reco pull (`RECEIVABLE_PULL_EXTENSION`).
+- `test/16-reco-pull-gate.test.mjs` (Sunrise's ledger), `test/17-actor-headers.test.mjs` now expects 0.18.7.
+- Carries 0.18.6 (the GSTR-1 push: the JSON once, then its status) unchanged.
+
+## 2026-11-02 — GSTR-1 push: the JSON once, then its status (v0.18.6)
+
+- Seen from 30 Oct to 2 Nov 2026 (TISHA INTERNATIONAL, SHANTAM DESIGN STUDIO, SUNRISE RENTAL SERVICES, SV ENVIRO, DINESH PATEL; on 0.17.0 and 0.18.5): the JSON was uploaded, then the portal showed its login page. The push took that for a dropped session, logged in again and, from the dashboard, attached the same JSON again; the portal logged it out again, and the push went round the login page until the tab was closed. Every push of those days ended "Portal tab closed during the upload", so the app never had the portal's status.
+- **The JSON goes up once per push.** The attach is saved on the job (`gstr1.attached`: when, and the Upload History's top row before it) before the file reaches the portal. Whatever page the tab lands on next (a reload, a fresh login, the upload page opened again), the push reads the upload's status and never attaches the file again.
+- **Logged out after the upload: a login only to read the status.** The banner says the JSON is not sent again. Twice at most, counted on the upload (`gstr1.relogins`), since a login resets the session-drop count; a third logout ends the push.
+- **It waits for the portal's final status**, up to 20 minutes from the attach (GSTN says up to 15). The first look at the Upload History lasts 4 minutes; then, every 2 minutes, the upload page is opened again from the dashboard (period, Prepare Offline) and read afresh, since the history does not always update in place. A row is taken as this upload only when it is not the row on top before the attach and, when it shows its date, not older than the attach. The tab keeps itself alive for the 10-minute idle rule while it waits.
+- **An unread status is not a failed upload.** A push that ends after the attach without the portal's answer (logged out again, an error, 20 minutes) says "The JSON was uploaded to the portal at hh:mm IST, but its status could not be read: … Click Refresh errors …" (or "Timed out … (20 min)"), keeps the Upload History snapshot, and the GSTR-1 page offers Refresh errors for it. A file the portal refuses outright is still a plain failure.
+- Nothing else changes: the NIL push, Refresh errors, the e-invoice plan, the GSTR-3B push and every pull run as in 0.18.5. Why the portal shows its login page after an upload is not visible from here; this makes the push survive it and stops the second upload.
+- Test `test/22-gstr1-upload-once.test.mjs`; `test/17-actor-headers.test.mjs` now expects 0.18.6. The GSTR-1 page (same release) waits 35 minutes for a result and offers Refresh errors for the new wording.
 
 ## 2026-10-25 — An appeal with no notice gets its files (v0.18.5)
 

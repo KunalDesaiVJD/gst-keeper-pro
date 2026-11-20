@@ -40,12 +40,12 @@ export const extensionCanPull = (version: string | null | undefined) =>
   !!version && compareVersions(version, RECO_PULL_EXTENSION) >= 0;
 
 /**
- * GST Receivable Reco's pull needs 0.18.6: before it the extension took the
+ * GST Receivable Reco's pull needs 0.18.7: before it the extension took the
  * credit ledger's set-off debits by their date in the month, so a return filed
  * late (or in the same month) gave another month's ITC utilised (SUNRISE RENTAL
  * SERVICES, Oct-26), and read only the ledger's first page.
  */
-export const RECEIVABLE_PULL_EXTENSION = '0.18.6';
+export const RECEIVABLE_PULL_EXTENSION = '0.18.7';
 export const extensionCanPullReceivable = (version: string | null | undefined) =>
   !!version && compareVersions(version, RECEIVABLE_PULL_EXTENSION) >= 0;
 export const needsReceivableExtensionMessage = (version: string | null | undefined) =>
