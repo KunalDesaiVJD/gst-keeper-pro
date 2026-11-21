@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ClientServiceCategories, hasAnyService, type ClientServices } from '@/components/clients/ClientServiceCategories';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -35,6 +36,8 @@ const AddClientPage: React.FC = () => {
   const { canEditGstr1ImportMode, canAddEditClients } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
 
+  // Service categories (20261121100000): a new client files returns unless unticked.
+  const [services, setServices] = useState<ClientServices>({ returns: true, annualReturn: false, notices: true });
   const [formData, setFormData] = useState({
     gstin: '',
     name: '',
@@ -174,6 +177,10 @@ const AddClientPage: React.FC = () => {
       newErrors.returns = 'Select at least one return type';
     }
 
+    if (!hasAnyService(services)) {
+      newErrors.services = 'Select at least one service, or the client shows in no module';
+    }
+
     // Validate builder fields for Regular type
     if (formData.registrationType === 'Regular' && !formData.regularSubType) {
       newErrors.regularSubType = 'Please select Builder, Contractor or Normal';
@@ -236,6 +243,12 @@ const AddClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          returns_filing: services.returns,
+          annual_return_assigned: services.annualReturn,
+          notices_handled: services.notices,
+          // A client the firm does not handle notices for is not synced either
+          // (what clients_notices_switches does on a later switch).
+          ...(services.notices ? {} : { notices_sync_excluded: true }),
           einvoice_applicable: formData.einvoiceExemption ? false : formData.einvoiceApplicable,
           einvoice_exemption: formData.einvoiceExemption || null,
           gst_user_id: formData.gstUserId.trim() || null,
@@ -350,6 +363,12 @@ const AddClientPage: React.FC = () => {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Services: which modules list this client */}
+            <div className="space-y-2">
+              <Label>Services<Req /></Label>
+              <ClientServiceCategories value={services} onChange={setServices} error={errors.services} />
+            </div>
+
             {/* GSTIN */}
             <div className="space-y-2">
               <Label htmlFor="gstin">GSTIN<Req /></Label>

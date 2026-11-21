@@ -132,6 +132,7 @@ interface Client {
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
   inactive_at_hand?: boolean | null;
+  returns_filing?: boolean | null;
   target_date_group1: number | null;
   target_date_group2: number | null;
 }
@@ -342,7 +343,7 @@ const FilingStatusPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, builder_itc_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, target_date_group1, target_date_group2')
+      .select('id, name, gstin, mobile, email, assigned_accountant, registration_type, regular_sub_type, builder_itc_type, selected_returns, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, returns_filing, target_date_group1, target_date_group2')
       .order('name');
     
     if (error) {

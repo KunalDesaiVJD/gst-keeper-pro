@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ClientServiceCategories, hasAnyService, type ClientServices } from '@/components/clients/ClientServiceCategories';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -93,6 +94,9 @@ const EditClientPage: React.FC = () => {
     inactiveAtHand: false,
     noticesSyncExcluded: false,
     liberal2BReconciliation: false,
+    serviceReturns: true,
+    serviceAnnualReturn: false,
+    serviceNotices: true,
     einvoiceApplicable: false,
     einvoiceExemption: '',
     defaultTargetDate: '',
@@ -113,6 +117,12 @@ const EditClientPage: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const services: ClientServices = {
+    returns: formData.serviceReturns,
+    annualReturn: formData.serviceAnnualReturn,
+    notices: formData.serviceNotices,
+  };
 
   const schemeChanged = formData.registrationType !== '' && originalRegType.current !== '' && formData.registrationType !== originalRegType.current;
 
@@ -154,6 +164,9 @@ const EditClientPage: React.FC = () => {
         inactiveAtHand: !!(data as any).inactive_at_hand,
         noticesSyncExcluded: !!(data as any).notices_sync_excluded,
         liberal2BReconciliation: (originalLiberal.current = !!(data as any).liberal_2b_reconciliation),
+        serviceReturns: data.returns_filing !== false,
+        serviceAnnualReturn: !!data.annual_return_assigned,
+        serviceNotices: data.notices_handled !== false,
         einvoiceApplicable: !!data.einvoice_applicable && !data.einvoice_exemption,
         einvoiceExemption: data.einvoice_exemption || '',
         defaultTargetDate: defaultTarget,
@@ -243,6 +256,10 @@ const EditClientPage: React.FC = () => {
 
     if (formData.selectedReturns.length === 0) {
       newErrors.returns = 'Select at least one return type';
+    }
+
+    if (!hasAnyService(services)) {
+      newErrors.services = 'Select at least one service, or the client shows in no module';
     }
 
     if (formData.cancellationDate && formData.registrationDate) {
@@ -351,6 +368,12 @@ const EditClientPage: React.FC = () => {
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
           notices_sync_excluded: formData.noticesSyncExcluded,
+          // Service categories: each module lists only its own clients
+          // (20261121100000). Notices & Litigation is notices_handled, the
+          // switch Notices · Settings shows too.
+          returns_filing: formData.serviceReturns,
+          annual_return_assigned: formData.serviceAnnualReturn,
+          notices_handled: formData.serviceNotices,
           liberal_2b_reconciliation: formData.liberal2BReconciliation,
           // Who switched Strict / Liberal: sent only with a switch; the
           // database keeps the time and writes the log (migration 20261017100000).
@@ -458,6 +481,26 @@ const EditClientPage: React.FC = () => {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
+        <SectionCard
+          title="Services"
+          description="What the firm does for this client, in any combination. Each module lists only the clients ticked for it."
+        >
+          <ClientServiceCategories
+            value={services}
+            error={errors.services}
+            onChange={(next) => setFormData(prev => ({
+              ...prev,
+              serviceReturns: next.returns,
+              serviceAnnualReturn: next.annualReturn,
+              serviceNotices: next.notices,
+              // The database excludes a client from the notices sync when
+              // Notices & Litigation goes off and includes it when it comes back
+              // on (clients_notices_switches); show the same here.
+              noticesSyncExcluded: next.notices === prev.serviceNotices ? prev.noticesSyncExcluded : !next.notices,
+            }))}
+          />
+        </SectionCard>
+
         <SectionCard
           title="Identity & registration"
           description="Fields marked * are required. Changing the registration type asks for the date the new scheme applies from."

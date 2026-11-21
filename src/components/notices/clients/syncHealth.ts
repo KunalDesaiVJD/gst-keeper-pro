@@ -209,7 +209,8 @@ export const syncableIds = (rows: ClientHealth[]) =>
 export async function loadClientHealth(): Promise<ClientHealth[]> {
   const [clients, status] = await Promise.all([
     fetchAllRows<ClientBase>('clients', 'id, name, gstin, gst_user_id, inactive_at_hand, notices_sync_excluded, assigned_accountant, gst_password_changed_at',
-      (q) => q.order('name').order('id')),
+      // Only clients ticked for Notices & Litigation (Edit Client → Services).
+      (q) => q.eq('notices_handled', true).order('name').order('id')),
     fetchAllRows<StepStatus>('client_sync_status', '*', (q) => q.in('step', STEPS).order('client_id').order('step')),
   ]);
   const byClient = new Map<string, Partial<Record<Step, StepStatus>>>();
