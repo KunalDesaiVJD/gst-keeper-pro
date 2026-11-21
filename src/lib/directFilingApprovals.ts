@@ -1,10 +1,12 @@
 import { supabase } from '@/integrations/supabase/client';
 
 /**
- * GSTR-1 direct-filing approvals.
+ * Direct-filing approvals (GSTR-1 and GSTR-3B).
  *
- * From the Sep-2026 return period a GSTR-1 / GSTR-1 (IFF) that was never
- * pushed to the portal through GST Keeper (filing_status.pushed_at IS NULL)
+ * From the Sep-2026 return period a GSTR-1 / GSTR-1 (IFF), and from the
+ * Oct-2026 period a GSTR-3B / GSTR-3B (Q) (20261121120000), that was never
+ * pushed to the portal through GST Keeper (filing_status.pushed_at IS NULL;
+ * a GSTR-3B's marker is written only by a push that passed the reco check)
  * cannot become Filed — by the Filing Status dropdown or by the extension's
  * "Pull from portal" — until a superadmin approves a request explaining why it
  * was filed directly on the portal. The database trigger
@@ -12,11 +14,20 @@ import { supabase } from '@/integrations/supabase/client';
  * staff meet a request dialog instead of the raw trigger error.
  */
 
-export const DIRECT_FILING_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)'] as const;
+export const DIRECT_FILING_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'] as const;
 export type DirectFilingReturnType = (typeof DIRECT_FILING_RETURN_TYPES)[number];
 
-/** First return period (YYYYMM) the rule applies to — Sep-2026. */
-const FIRST_PERIOD_KEY = 202609;
+/** First return period (YYYYMM) the rule applies to, per return. */
+const FIRST_PERIOD_KEY: Record<DirectFilingReturnType, number> = {
+  'GSTR-1': 202609,
+  'GSTR-1 (IFF)': 202609,
+  'GSTR-3B': 202610,
+  'GSTR-3B (Q)': 202610,
+};
+
+/** A GSTR-3B counts as pushed only by a push that passed the reco check, and a NIL tick does not excuse it. */
+export const isGstr3bFamily = (returnType: string | null | undefined): boolean =>
+  returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)';
 
 export const MIN_REASON_LENGTH = 15;
 
@@ -68,7 +79,7 @@ export function directFilingRuleApplies(returnType: string | null | undefined, p
   if (!returnType || !(DIRECT_FILING_RETURN_TYPES as readonly string[]).includes(returnType)) return false;
   const m = /^(\d{2})\/(\d{4})$/.exec(periodMonth || '');
   if (!m) return false;
-  return Number(m[2]) * 100 + Number(m[1]) >= FIRST_PERIOD_KEY;
+  return Number(m[2]) * 100 + Number(m[1]) >= FIRST_PERIOD_KEY[returnType as DirectFilingReturnType];
 }
 
 /** The trigger's error text ("… was not pushed through GST Keeper …"). */
@@ -247,16 +258,17 @@ export function directFilingState(args: {
   pushedAt: string | null | undefined;
   alreadyFiled?: boolean;
   /**
-   * A period ticked NIL in GST Keeper has no data that could have been filed
-   * around the app, so it needs no push (mirrors the DB guard, migration
-   * 20261009130000).
+   * A GSTR-1 period ticked NIL in GST Keeper has no data that could have been
+   * filed around the app, so it needs no push (mirrors the DB guard, migration
+   * 20261009130000). Not a GSTR-3B: its push gate asks for the reco pulls on a
+   * Nil month too (20261121120000).
    */
   isNil?: boolean;
   approvals: DirectFilingApproval[];
 }): DirectFilingState {
   if (!directFilingRuleApplies(args.returnType, args.periodMonth)) return 'not_applicable';
   if (args.alreadyFiled) return 'not_applicable';
-  if (args.isNil) return 'not_applicable';
+  if (args.isNil && !isGstr3bFamily(args.returnType)) return 'not_applicable';
   if (args.pushedAt) return 'pushed';
   const a = pickApproval(args.approvals);
   if (!a) return 'needs_request';

@@ -485,8 +485,8 @@ const FilingStatusPage: React.FC = () => {
     loadData();
   }, [fetchClients, fetchFilingRecords, fetchSchemeHistories, fetchGstr1DataClientIds]);
 
-  // GSTR-1 direct-filing approvals (from the Sep-2026 period). A GSTR-1 /
-  // IFF that was not pushed through GST Keeper cannot become Filed until a
+  // Direct-filing approvals (GSTR-1 from Sep-2026, GSTR-3B from Oct-2026). A
+  // return that was not pushed through GST Keeper cannot become Filed until a
   // superadmin approves a request — a DB trigger enforces it; this keeps
   // staff on a request dialog instead of the raw trigger error.
   const isSuperadmin = user?.role === 'superadmin';

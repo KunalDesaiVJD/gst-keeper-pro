@@ -12,6 +12,7 @@ import {
   MIN_REASON_LENGTH,
   decideDirectFilingApproval,
   requestDirectFilingApproval,
+  isGstr3bFamily,
 } from '@/lib/directFilingApprovals';
 
 export interface DirectFilingTarget {
@@ -100,7 +101,7 @@ const RequestDirectFilingDialog: React.FC<{
 
         <div className="space-y-3 text-sm">
           <Note tone="warn">
-            This {target.returnType} was not pushed to the portal through GST Keeper. It cannot be marked Filed or
+            This {target.returnType} was not pushed to the portal through GST Keeper{isGstr3bFamily(target.returnType) ? ' with a passing reco check (Suspended Reco and GST Receivable Reco pulled and tallied)' : ''}. It cannot be marked Filed or
             pulled from the portal until a superadmin approves a direct-filing request — the request is how the
             superadmin learns what went wrong.
           </Note>

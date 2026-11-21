@@ -141,8 +141,11 @@ which is wrong for CMP-08 (quarter) and ITC-04 (half-year), so the page offers n
     portal a GST Manager reopens it ("Filed by mistake" on its row) and then uses Re-run carry
     forward on the accepted return (its carry was skipped while that month counted as filed);
   - `refused`: the ARN cannot be this return's (state code, tax period), the staff member lacks
-    the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026 still needs its
-    push or a direct-filing approval).
+    the Filing status permission, or a rule refused Filed (GSTR-1 from 09/2026, and GSTR-3B /
+    GSTR-3B (Q) from 10/2026, still needs its push or a direct-filing approval; a GSTR-3B's push
+    counts only when its reco check passed, and a NIL tick does not excuse it: `20261121120000`,
+    after UNITED DEVELOPERS-NO ITC's 10/2026 3B was filed on the portal with Suspended Reco never
+    pulled).
 - **A PDF a pull did not check is never passed off as one, and one attached by hand is never
   taken off** (round 2, then round 3 by the lead's decision). When a pull brings no checked PDF:
   - a PDF an earlier pull checked is kept;
