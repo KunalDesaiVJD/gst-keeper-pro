@@ -29,6 +29,8 @@ import { describeClientDeleteError } from '@/lib/clientDeleteError';
 import { toast } from 'sonner';
 import BulkAddClientsDialog from '@/components/clients/BulkAddClientsDialog';
 import LiberalModeListDialog from '@/components/clients/LiberalModeListDialog';
+import BulkServicesDialog from '@/components/clients/BulkServicesDialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import ResetClientPasswordDialog, { type ResetClientTarget } from '@/components/clients/ResetClientPasswordDialog';
 import { EinvoiceStatusBadge } from '@/components/clients/EinvoiceStatusBadge';
 import {
@@ -61,7 +63,17 @@ interface Client {
   email: string | null;
   registration_type: string;
   selected_returns: string[] | null;
+  returns_filing: boolean;
+  annual_return_assigned: boolean;
+  notices_handled: boolean;
 }
+
+/** Service categories as short badges (Edit Client → Services). */
+const SERVICE_BADGES: { col: 'returns_filing' | 'annual_return_assigned' | 'notices_handled'; label: string; title: string }[] = [
+  { col: 'returns_filing', label: 'Returns', title: 'Returns filing' },
+  { col: 'annual_return_assigned', label: '9/9C', title: 'GSTR-9 / 9C' },
+  { col: 'notices_handled', label: 'Notices', title: 'Notices & Litigation' },
+];
 
 type TabId = 'clients' | 'credentials';
 
@@ -86,6 +98,9 @@ const ClientsPage: React.FC = () => {
   const confirm = useConfirm();
   const [activeTab, setActiveTab] = useState<TabId>('clients');
   const [searchTerm, setSearchTerm] = useState('');
+  // Clients ticked for the bulk "Set services" action.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -108,7 +123,7 @@ const ClientsPage: React.FC = () => {
   const fetchClients = useCallback(async () => {
     const { data, error } = await supabase
       .from('clients')
-      .select('id, name, gstin, mobile, email, registration_type, selected_returns')
+      .select('id, name, gstin, mobile, email, registration_type, selected_returns, returns_filing, annual_return_assigned, notices_handled')
       .order('name');
 
     if (error) {
@@ -247,6 +262,21 @@ const ClientsPage: React.FC = () => {
     (!einvFilter || matchesEinv(client.id, einvFilter))
   );
 
+  const canBulk = canAddEditClients();
+  const pickedClients = clients.filter((c) => picked.has(c.id));
+  const allShownPicked = filteredClients.length > 0 && filteredClients.every((c) => picked.has(c.id));
+  const someShownPicked = filteredClients.some((c) => picked.has(c.id));
+  const togglePick = (id: string, on: boolean) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  const toggleAllShown = (on: boolean) => setPicked((prev) => {
+    const next = new Set(prev);
+    filteredClients.forEach((c) => (on ? next.add(c.id) : next.delete(c.id)));
+    return next;
+  });
+
   const filteredCreds = useMemo(() => {
     const q = credSearch.trim().toLowerCase();
     if (!q) return creds;
@@ -289,6 +319,13 @@ const ClientsPage: React.FC = () => {
           activeTab === 'clients'
             ? (
                 <>
+                  {canBulk && (
+                    <Button size="sm" variant="outline" className={WS_BTN} disabled={picked.size === 0}
+                      title={picked.size === 0 ? 'Tick clients in the list first' : undefined}
+                      onClick={() => setServicesOpen(true)}>
+                      Set services{picked.size > 0 ? ` (${picked.size})` : ''}
+                    </Button>
+                  )}
                   <LiberalModeListDialog triggerClassName={WS_BTN} />
                   {canAddEditClients() && (
                     <>
@@ -422,15 +459,25 @@ const ClientsPage: React.FC = () => {
             </Card>
           ) : (
             <div className={cn(WS_TABLE_WRAP, 'max-h-[70vh]')}>
-              <table className={cn(WS_TABLE, 'min-w-[960px]')}>
+              <table className={cn(WS_TABLE, 'min-w-[1080px]')}>
                 <thead>
                   <tr>
+                    {canBulk && (
+                      <th className={cn(WS_TH, 'w-8 text-center')}>
+                        <Checkbox
+                          aria-label="Select all shown clients"
+                          checked={allShownPicked ? true : someShownPicked ? 'indeterminate' : false}
+                          onCheckedChange={(v) => toggleAllShown(v === true)}
+                        />
+                      </th>
+                    )}
                     <th className={cn(WS_TH, 'w-10 text-center')}>#</th>
                     <th className={WS_TH}>Client Name</th>
                     <th className={WS_TH}>GSTIN</th>
                     <th className={WS_TH}>Contact</th>
                     <th className={WS_TH}>Registration</th>
                     <th className={WS_TH}>Returns</th>
+                    <th className={WS_TH}>Services</th>
                     <th className={WS_TH}>E-invoice</th>
                     {showActions && (
                       <th className={cn(WS_TH, 'w-24 text-center')}>Actions</th>
@@ -440,6 +487,15 @@ const ClientsPage: React.FC = () => {
                 <tbody>
                   {filteredClients.map((client, i) => (
                     <tr key={client.id} className={WS_TR}>
+                      {canBulk && (
+                        <td className={cn(WS_TD, 'text-center')}>
+                          <Checkbox
+                            aria-label={`Select ${client.name}`}
+                            checked={picked.has(client.id)}
+                            onCheckedChange={(v) => togglePick(client.id, v === true)}
+                          />
+                        </td>
+                      )}
                       <td className={cn(WS_TD, 'text-center tabular-nums text-muted-foreground')}>{i + 1}</td>
                       <td className={cn(WS_TD, 'font-medium text-foreground')}>
                         <span className="flex items-center gap-1.5">
@@ -478,6 +534,16 @@ const ClientsPage: React.FC = () => {
                               {ret}
                             </Badge>
                           ))}
+                        </div>
+                      </td>
+                      <td className={WS_TD}>
+                        <div className="flex flex-wrap gap-1">
+                          {SERVICE_BADGES.filter((b) => client[b.col]).map((b) => (
+                            <Badge key={b.col} variant="outline" title={b.title} className="whitespace-nowrap text-[10px] font-medium">
+                              {b.label}
+                            </Badge>
+                          ))}
+                          {SERVICE_BADGES.every((b) => !client[b.col]) && <span className="text-muted-foreground">—</span>}
                         </div>
                       </td>
                       <td className={WS_TD}>
@@ -617,6 +683,7 @@ const ClientsPage: React.FC = () => {
           </div>
         </>
       )}
+      <BulkServicesDialog open={servicesOpen} onOpenChange={setServicesOpen} clients={pickedClients} onDone={fetchClients} />
       <ResetClientPasswordDialog client={resetTarget} onOpenChange={(open) => { if (!open) setResetTarget(null); }} />
     </div>
   );
