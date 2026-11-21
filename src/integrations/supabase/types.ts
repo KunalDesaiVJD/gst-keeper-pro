@@ -5419,6 +5419,7 @@ export type Database = {
         Row: {
           ai_learning: boolean
           ai_learning_at: string | null
+          annual_return_assigned: boolean
           ai_learning_by_name: string | null
           ai_consent_at: string | null
           ai_consent_note: string | null
@@ -5457,6 +5458,7 @@ export type Database = {
           registration_cancellation_date: string | null
           registration_date: string
           registration_type: Database["public"]["Enums"]["registration_type"]
+          returns_filing: boolean
           regular_sub_type: string | null
           residential_area: number | null
           selected_returns: Database["public"]["Enums"]["return_type"][] | null
@@ -5467,6 +5469,7 @@ export type Database = {
         Insert: {
           ai_learning?: boolean
           ai_learning_at?: string | null
+          annual_return_assigned?: boolean
           ai_learning_by_name?: string | null
           ai_consent_at?: string | null
           ai_consent_note?: string | null
@@ -5504,6 +5507,7 @@ export type Database = {
           registration_cancellation_date?: string | null
           registration_date: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
+          returns_filing?: boolean
           regular_sub_type?: string | null
           residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null
@@ -5514,6 +5518,7 @@ export type Database = {
         Update: {
           ai_learning?: boolean
           ai_learning_at?: string | null
+          annual_return_assigned?: boolean
           ai_learning_by_name?: string | null
           ai_consent_at?: string | null
           ai_consent_note?: string | null
@@ -5551,6 +5556,7 @@ export type Database = {
           registration_cancellation_date?: string | null
           registration_date?: string
           registration_type?: Database["public"]["Enums"]["registration_type"]
+          returns_filing?: boolean
           regular_sub_type?: string | null
           residential_area?: number | null
           selected_returns?: Database["public"]["Enums"]["return_type"][] | null

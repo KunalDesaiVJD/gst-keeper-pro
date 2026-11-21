@@ -24,7 +24,7 @@ function useMasterOptions() {
     staleTime: 5 * 60_000,
     queryFn: async () => {
       const [clients, matters] = await Promise.all([
-        supabase.from('clients').select('id, name, gstin').order('name'),
+        supabase.from('clients').select('id, name, gstin').eq('notices_handled', true).order('name'),
         fetchAllRows<{ financial_years: string[] | null }>('litigation_matters', 'financial_years', (q) => q.order('id')),
       ]);
       if (clients.error) throw clients.error;

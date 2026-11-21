@@ -70,7 +70,8 @@ const changesOf = (c: Omit<ChangesRow, 'client_id'> | null | undefined): Signoff
 
 export async function loadRegister(financialYear: string): Promise<RegisterData> {
   const [clients, turnover, activity, periods, changes, schemeRows] = await Promise.all([
-    allRows<RegisterClient>((a, b) => supabase.from('clients').select(CLIENT_COLUMNS).order('name').range(a, b)),
+    // Only clients ticked for GSTR-9 / 9C (Edit Client → Services, 20261121100000).
+    allRows<RegisterClient>((a, b) => supabase.from('clients').select(CLIENT_COLUMNS).eq('annual_return_assigned', true).order('name').range(a, b)),
     allRows<TurnoverEntry & { client_id: string }>((a, b) =>
       supabase
         .from('client_annual_turnover')

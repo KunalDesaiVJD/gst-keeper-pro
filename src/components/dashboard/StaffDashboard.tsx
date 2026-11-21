@@ -156,7 +156,7 @@ const StaffDashboard: React.FC = () => {
     try {
       const { data: clientData, count: clientCount } = await supabase
         .from('clients')
-        .select('id, selected_returns, registration_date, cancellation_date, registration_cancellation_date, registration_type, target_date_group1, target_date_group2, inactive_at_hand', { count: 'exact' });
+        .select('id, selected_returns, registration_date, cancellation_date, registration_cancellation_date, registration_type, target_date_group1, target_date_group2, inactive_at_hand, returns_filing', { count: 'exact' });
 
       // "Inactive at hand" clients deliberately still count toward Total
       // Clients (a headcount, independent of whether returns are being
@@ -164,7 +164,9 @@ const StaffDashboard: React.FC = () => {
       // below — Pending Filings, Target Due/Overdue, and the breakdown table
       // all need to match the Filing Status page, which already excludes
       // them via generateFilingRecords' own isClientVisibleForMonth check.
-      const inactiveClientIds = new Set((clientData || []).filter((c: any) => c.inactive_at_hand).map((c: any) => c.id));
+      // A client not ticked for Returns filing (Edit Client → Services) is
+      // left out of the same filing tiles.
+      const inactiveClientIds = new Set((clientData || []).filter((c: any) => c.inactive_at_hand || c.returns_filing === false).map((c: any) => c.id));
 
       const { data: filingData } = await supabase
         .from('filing_status')

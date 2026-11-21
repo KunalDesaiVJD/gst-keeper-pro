@@ -72,6 +72,8 @@ const AnnualReturnPage: React.FC = () => {
       .select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type, registration_date, cancellation_date, registration_cancellation_date')
       .order('name');
     if (user && !isStaff) query = query.eq('id', user.id);
+    // Staff pick from the clients ticked for GSTR-9 / 9C (Edit Client → Services).
+    else query = query.eq('annual_return_assigned', true);
     query.then(({ data, error }) => {
       if (error) { toast.error('Failed to fetch clients: ' + error.message); return; }
       const list = (data || []) as WorkspaceClient[];

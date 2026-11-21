@@ -26,6 +26,7 @@ export interface FilingClient {
   cancellation_date?: string | null; // "GSTR 10 Date" in the UI (final-return date)
   registration_cancellation_date?: string | null; // "Cancellation Date" — effective cancellation of registration
   inactive_at_hand?: boolean | null;
+  returns_filing?: boolean | null; // Service category: off = not a Returns filing client
   target_date_group1?: number | null;
   target_date_group2?: number | null;
 }
@@ -54,6 +55,8 @@ export interface GeneratedFilingRecord {
 }
 
 export function isClientVisibleForMonth(client: FilingClient, periodMonth: string): boolean {
+  // Edit Client → Services: only Returns filing clients are in Filing Status.
+  if (client.returns_filing === false) return false;
   const [monthStr, yearStr] = periodMonth.split('/');
   const periodDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, 1);
   const regDate = new Date(client.registration_date);
