@@ -17,6 +17,7 @@ import {
   tin,
   type DiffLine,
   type PayableSideWorking,
+  type StepKey,
   type Workings,
 } from '../engine';
 import { drc03MatchesFY, METHOD_LABEL, SIDE_LABEL, type Drc03Filing, type SetOff } from '../payables';
@@ -49,7 +50,9 @@ import {
   FIRM_NAME,
   fmtDate,
   fmtDateTime,
+  papersForSteps,
   statusText,
+  STEP_PAPERS,
   type Cell,
   type ExportMeta,
   type PaperSet,
@@ -162,7 +165,7 @@ const STEP_NAME: Record<string, string> = {
   overview: '0 · Overview', portal: '1 · Portal data', sales: '2 · Sales (PL-OUTPUT)', purchases: '3 · Purchases & ITC (PL-INPUT)',
   duties: '4 · Duties & Taxes', rcm: '5 · RCM', outward: '6 · Outward reco (GSTR 9-OUTPUT)', itc: '7 · ITC reco (GSTR 9-INPUT)',
   expense: '8 · 9C expense heads (GSTR 9C)', annexures: '9 · Annexures', gstr9: '10 · GSTR-9', gstr9c: '11 · GSTR-9C',
-  notice: '12 · Notice format', review: '13 · Review & lock',
+  notice: '12 · Notice format', review: '13 · Review & lock', payables: '14 · Payables & set-off',
 };
 
 const PORTAL_SOURCE_LABEL: Record<string, string> = {
@@ -177,6 +180,8 @@ const PORTAL_SOURCE_LABEL: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 interface Ctx {
+  /** The steps a one-step export was asked for (empty = every paper). */
+  steps: StepKey[];
   docs: AnnualReturnDocs;
   w: Workings;
   meta: ExportMeta;
@@ -259,6 +264,7 @@ function cover(c: Ctx): WorkingPaper {
   t.data('VERIFIED BY', c.verifiedText);
   t.data('REVIEWED BY', c.reviewedText);
   t.data('EXPORTED ON', c.printed);
+  if (c.steps.length) t.data('PAPERS IN THIS FILE', `Only ${c.steps.map((k) => STEP_NAME[k] ?? k).join(', ')} (${c.steps.flatMap((k) => STEP_PAPERS[k] ?? []).join(', ')}); the full set has every paper`);
   return paper(c, {
     ref: 'A1', title: 'Cover', sheet: 'A1 COVER', phase: 'summary', master: 'MASTER',
     source: 'Source: party details and status of the working — MASTER of MASTER_PMS', widths: [30, 90],
@@ -1404,6 +1410,7 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
   const monthMeta = docs.portal.monthMeta;
   const gstr9Source = docs.portal.gstr9Meta?.source ?? null;
   const ctx: Ctx = {
+    steps: input.steps ?? [],
     docs,
     w,
     meta,
@@ -1440,7 +1447,10 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
   ];
   // The index lists every paper, itself included, in order.
   const placeholder: WorkingPaper = { ref: 'A2', title: 'Index', sheet: 'A2 INDEX', phase: 'summary', master: '—', source: '', widths: [], blocks: [], openDiffs: null };
-  const ordered = [papers[0], placeholder, ...papers.slice(1)];
+  // A one-step export keeps the cover, the index and that step's papers (STEP_PAPERS).
+  const keep = papersForSteps(input.steps);
+  const chosen = keep ? papers.filter((wp) => keep.has(wp.ref)) : papers;
+  const ordered = [chosen[0], placeholder, ...chosen.slice(1)];
   ordered[1] = index(ctx, ordered);
   return {
     papers: ordered,

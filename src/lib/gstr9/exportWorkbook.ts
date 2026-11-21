@@ -10,7 +10,7 @@
 // never part of the main bundle.
 
 import { downloadBlob } from './export/download';
-import { exportFileName, type WorkingPapersInput } from './export/model';
+import { exportFileName, stepFileKind, type WorkingPapersInput } from './export/model';
 import { buildWorkingPapers } from './export/papers';
 
 export type { ExportMeta, WorkingPapersInput } from './export/model';
@@ -22,7 +22,7 @@ export async function buildWorkbook(input: WorkingPapersInput): Promise<{ name: 
   const set = buildWorkingPapers(input);
   const { renderWorkbook } = await import('./export/excel');
   const buffer = await renderWorkbook(set);
-  return { name: exportFileName('GSTR9_Working', input.meta, 'xlsx'), buffer };
+  return { name: exportFileName(stepFileKind('GSTR9_Working', input.steps), input.meta, 'xlsx'), buffer };
 }
 
 /** Build and download the Excel working papers. Returns the file name. */

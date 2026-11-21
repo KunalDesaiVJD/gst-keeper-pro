@@ -8,9 +8,15 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { statusText, type WorkingPapersInput } from '@/lib/gstr9/export/model';
+import { useSearchParams } from 'react-router-dom';
+import type { StepKey } from '@/lib/gstr9/engine';
+import { STEP_PAPERS, statusText, type WorkingPapersInput } from '@/lib/gstr9/export/model';
+import { STEP_META } from './overview/steps';
 import { loadFullChangeLog } from '@/lib/gstr9/store';
 import { useWorkspace } from './WorkspaceContext';
 
@@ -25,6 +31,13 @@ const KINDS: Record<ExportKind, { label: string; hint: string; icon: React.React
 
 const ORDER: ExportKind[] = ['excel', 'wppdf', 'gstr9pdf', 'noticepdf'];
 
+/** Steps 1–14: each can be exported on its own (its papers, with the cover and index). */
+const TAB_STEPS = STEP_META.filter((s) => STEP_PAPERS[s.key]);
+const tabName = (k: StepKey): string => {
+  const m = STEP_META.find((s) => s.key === k);
+  return m ? `${m.n}. ${m.label}` : k;
+};
+
 /**
  * Export actions for the open working. Everything pending is saved first,
  * then the file is built from the engine's figures and downloaded. The
@@ -35,12 +48,17 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
   const ws = useWorkspace();
   const [busy, setBusy] = useState<ExportKind | null>(null);
   const kinds = ORDER.filter((k) => !only || only.includes(k));
+  const [params] = useSearchParams();
+  const openStep = params.get('step') as StepKey | null;
+  const currentTab = openStep && STEP_PAPERS[openStep] ? openStep : null;
 
-  const run = async (kind: ExportKind) => {
+  /** `steps` limits the working papers to those tabs; left out, every tab is exported. */
+  const run = async (kind: ExportKind, steps?: StepKey[]) => {
     if (busy) return;
     setBusy(kind);
     const working = kind === 'excel' || kind === 'wppdf';
-    const progress = working ? toast.loading(`Building the ${KINDS[kind].label.toLowerCase()}…`) : undefined;
+    const scope = steps?.length ? ` (${steps.map(tabName).join(', ')})` : '';
+    const progress = working ? toast.loading(`Building the ${KINDS[kind].label.toLowerCase()}${scope}…`) : undefined;
     try {
       // Build the file from what the save left in the database, never from
       // unsaved or overtaken figures on screen.
@@ -58,7 +76,7 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
       let file: string;
       if (working) {
         const changeLog = await loadFullChangeLog(client.id, financialYear);
-        const input: WorkingPapersInput = { docs, workings, meta, period, setOffs: ws.setOffs, drc03s: ws.drc03s, changeLog, audience, sheets };
+        const input: WorkingPapersInput = { docs, workings, meta, period, setOffs: ws.setOffs, drc03s: ws.drc03s, changeLog, audience, sheets, steps };
         if (kind === 'excel') {
           const { exportWorkbook } = await import('@/lib/gstr9/exportWorkbook');
           file = await exportWorkbook(input);
@@ -102,15 +120,46 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Saves pending changes first</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {kinds.map((k) => (
-          <DropdownMenuItem key={k} onSelect={() => void run(k)} className="items-start gap-2">
-            <span className="mt-0.5 text-muted-foreground">{KINDS[k].icon}</span>
-            <span className="flex flex-col">
-              <span className="text-sm">{KINDS[k].label}</span>
-              <span className="text-[11px] text-muted-foreground">{KINDS[k].hint}</span>
-            </span>
-          </DropdownMenuItem>
-        ))}
+        {kinds.map((k) =>
+          k === 'excel' || k === 'wppdf' ? (
+            <DropdownMenuSub key={k}>
+              <DropdownMenuSubTrigger className="items-start gap-2">
+                <span className="mt-0.5 text-muted-foreground">{KINDS[k].icon}</span>
+                <span className="flex flex-col">
+                  <span className="text-sm">{KINDS[k].label}</span>
+                  <span className="text-[11px] text-muted-foreground">All tabs, or one tab of 1–14</span>
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-[70vh] w-64 overflow-y-auto">
+                <DropdownMenuItem onSelect={() => void run(k)} className="flex-col items-start gap-0">
+                  <span className="text-sm font-medium">All tabs (1–14)</span>
+                  <span className="text-[11px] text-muted-foreground">{KINDS[k].hint}</span>
+                </DropdownMenuItem>
+                {currentTab && (
+                  <DropdownMenuItem onSelect={() => void run(k, [currentTab])} className="flex-col items-start gap-0">
+                    <span className="text-sm font-medium">This tab only</span>
+                    <span className="text-[11px] text-muted-foreground">{tabName(currentTab)}</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">One tab, with the cover and index</DropdownMenuLabel>
+                {TAB_STEPS.map((s) => (
+                  <DropdownMenuItem key={s.key} onSelect={() => void run(k, [s.key])} className="text-sm">
+                    {tabName(s.key)}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : (
+            <DropdownMenuItem key={k} onSelect={() => void run(k)} className="items-start gap-2">
+              <span className="mt-0.5 text-muted-foreground">{KINDS[k].icon}</span>
+              <span className="flex flex-col">
+                <span className="text-sm">{KINDS[k].label}</span>
+                <span className="text-[11px] text-muted-foreground">{KINDS[k].hint}</span>
+              </span>
+            </DropdownMenuItem>
+          ),
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
