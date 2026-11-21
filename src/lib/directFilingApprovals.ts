@@ -12,11 +12,19 @@ import { supabase } from '@/integrations/supabase/client';
  * staff meet a request dialog instead of the raw trigger error.
  */
 
-export const DIRECT_FILING_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)'] as const;
+export const DIRECT_FILING_RETURN_TYPES = ['GSTR-1', 'GSTR-1 (IFF)', 'GSTR-3B', 'GSTR-3B (Q)'] as const;
 export type DirectFilingReturnType = (typeof DIRECT_FILING_RETURN_TYPES)[number];
 
-/** First return period (YYYYMM) the rule applies to — Sep-2026. */
-const FIRST_PERIOD_KEY = 202609;
+/**
+ * First return period (YYYYMM) the rule applies to: GSTR-1 / IFF from Sep-2026,
+ * GSTR-3B / 3B (Q) from Oct-2026 (the database's rule since 20261009200000;
+ * the app offered no request for a GSTR-3B until 21 Nov 2026).
+ */
+const FIRST_PERIOD_KEY: Record<DirectFilingReturnType, number> = {
+  'GSTR-1': 202609, 'GSTR-1 (IFF)': 202609, 'GSTR-3B': 202610, 'GSTR-3B (Q)': 202610,
+};
+export const isGstr3bFamily = (returnType: string | null | undefined): boolean =>
+  returnType === 'GSTR-3B' || returnType === 'GSTR-3B (Q)';
 
 export const MIN_REASON_LENGTH = 15;
 
@@ -68,7 +76,7 @@ export function directFilingRuleApplies(returnType: string | null | undefined, p
   if (!returnType || !(DIRECT_FILING_RETURN_TYPES as readonly string[]).includes(returnType)) return false;
   const m = /^(\d{2})\/(\d{4})$/.exec(periodMonth || '');
   if (!m) return false;
-  return Number(m[2]) * 100 + Number(m[1]) >= FIRST_PERIOD_KEY;
+  return Number(m[2]) * 100 + Number(m[1]) >= FIRST_PERIOD_KEY[returnType as DirectFilingReturnType];
 }
 
 /** The trigger's error text ("… was not pushed through GST Keeper …"). */
@@ -256,7 +264,8 @@ export function directFilingState(args: {
 }): DirectFilingState {
   if (!directFilingRuleApplies(args.returnType, args.periodMonth)) return 'not_applicable';
   if (args.alreadyFiled) return 'not_applicable';
-  if (args.isNil) return 'not_applicable';
+  // NIL exempts a GSTR-1 only: a GSTR-3B is always pushed with its reco check (as the DB).
+  if (args.isNil && !isGstr3bFamily(args.returnType)) return 'not_applicable';
   if (args.pushedAt) return 'pushed';
   const a = pickApproval(args.approvals);
   if (!a) return 'needs_request';
