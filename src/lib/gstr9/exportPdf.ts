@@ -14,7 +14,7 @@ import { reportTable } from '@/utils/reportTheme';
 import type { Workings } from './engine';
 import { drawChrome, drawTitleBlock, NAVY, PAGE, pdfText } from './export/chrome';
 import { gstr9FormTables, noticeTables, type FormCell, type FormTable } from './export/formTables';
-import { exportFileName, FIRM_NAME, fmtDateTime, type ExportMeta, type WorkingPapersInput } from './export/model';
+import { exportFileName, FIRM_NAME, fmtDateTime, stepFileKind, type ExportMeta, type WorkingPapersInput } from './export/model';
 import { buildWorkingPapers } from './export/papers';
 import { renderWorkingPapersPdf } from './export/pdf';
 
@@ -165,7 +165,7 @@ export function exportNoticePdf(workings: Workings, meta: ExportMeta): string {
 /** Build the working-papers PDF without saving it (tests, previews). */
 export function buildWorkingPapersPdf(input: WorkingPapersInput): { doc: jsPDF; name: string; pages: Record<string, number> } {
   const { doc, pages } = renderWorkingPapersPdf(buildWorkingPapers(input));
-  return { doc, name: exportFileName('GSTR9_WorkingPapers', input.meta, 'pdf'), pages };
+  return { doc, name: exportFileName(stepFileKind('GSTR9_WorkingPapers', input.steps), input.meta, 'pdf'), pages };
 }
 
 /** The working papers — every paper of the Excel, in the same order and with the same WP refs — as one PDF. Returns the file name. */

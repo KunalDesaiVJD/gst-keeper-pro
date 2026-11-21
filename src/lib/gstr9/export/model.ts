@@ -5,7 +5,7 @@
 // figures; excel.ts and pdf.ts only lay it out. Nothing here computes tax.
 
 import type { ChangeLogEntry } from '../audit';
-import type { Workings } from '../engine';
+import type { StepKey, Workings } from '../engine';
 import type { Drc03Filing, SetOff } from '../payables';
 import { displayName, stageOf } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
@@ -43,7 +43,53 @@ export interface WorkingPapersInput {
   audience?: 'staff' | 'client';
   /** Sheets saved for the working — "Preparing" rather than "Not started" once there are any. */
   sheets?: number;
+  /**
+   * Export only the papers of these steps (1–14), with the cover and index.
+   * Left out or empty, every paper is exported, as before.
+   */
+  steps?: StepKey[];
 }
+
+/**
+ * The papers each step of the workspace reproduces (by WP ref), so one step
+ * can be exported on its own. The cover (A1) and the index (A2) always go too.
+ */
+export const STEP_PAPERS: Partial<Record<StepKey, string[]>> = {
+  portal: ['B6'],
+  sales: ['B1'],
+  purchases: ['B2'],
+  duties: ['B3', 'B4'],
+  rcm: ['B5'],
+  outward: ['C1'],
+  itc: ['C2'],
+  expense: ['C3'],
+  annexures: ['C4'],
+  gstr9: ['D1'],
+  gstr9c: ['D2'],
+  notice: ['D3'],
+  review: ['A3', 'C5', 'F1'],
+  payables: ['E1'],
+};
+
+/** The refs kept for a step selection, or null for every paper. */
+export const papersForSteps = (steps: StepKey[] | undefined): Set<string> | null => {
+  if (!steps?.length) return null;
+  const keep = new Set(['A1', 'A2']);
+  steps.forEach((k) => (STEP_PAPERS[k] ?? []).forEach((ref) => keep.add(ref)));
+  return keep;
+};
+
+/** "GSTR9_Working" → "GSTR9_Working_Step04_Duties_Taxes" for a one-step export; unchanged for the full set. */
+export const stepFileKind = (kind: string, steps: StepKey[] | undefined): string => {
+  if (!steps?.length) return kind;
+  if (steps.length > 1) return `${kind}_${steps.length}Steps`;
+  const k = steps[0];
+  const n = STEP_ORDER.indexOf(k) + 1;
+  return `${kind}_Step${String(n).padStart(2, '0')}_${k}`;
+};
+
+/** Steps 1–14 in the workspace's order (STEP_META of the Annual Return page). */
+const STEP_ORDER: StepKey[] = ['portal', 'sales', 'purchases', 'duties', 'rcm', 'outward', 'itc', 'expense', 'annexures', 'gstr9', 'gstr9c', 'notice', 'review', 'payables'];
 
 // ---------------------------------------------------------------------------
 // Cells, rows, blocks
