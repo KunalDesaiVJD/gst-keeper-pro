@@ -91,7 +91,7 @@ const TABLE_LABELS: Record<string, string> = {
   gstr1_manual_entries: 'GSTR-1 manual entries',
   gstr1_upload_versions: 'GSTR-1 uploads',
   gstr1_upload_versions_quarantine: 'GSTR-1 uploads (set aside)',
-  gstr1_direct_filing_approvals: 'GSTR-1 direct filing approvals',
+  gstr1_direct_filing_approvals: 'Direct filing approvals (GSTR-1 / 3B)',
   einvoice_docs: 'E-invoices',
   portal_gstr1_category_figures: 'GSTR-1 portal figures',
   gstr3b_adjustments: 'GSTR-3B adjustments',
