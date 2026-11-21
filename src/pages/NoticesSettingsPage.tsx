@@ -180,8 +180,8 @@ const NoticesSettingsPage: React.FC = () => {
         </Panel>
 
         <Panel
-          title={`Clients we handle · ${handledCount} of ${rows.length}`}
-          info="Switched off: the client's notices leave the command centre, the work queue, every list, report and alert, and the notices sync skips the client. Switch it back on and everything returns, with nothing lost."
+          title={`Applicability · clients we handle · ${handledCount} of ${rows.length}`}
+          info="The same switch as Notices & Litigation under Clients → Services and Edit Client → Services: a change here shows there and the other way round. Switched off: the client's notices leave the command centre, the work queue, every list, report and alert, and the notices sync skips the client. Switch it back on and everything returns, with nothing lost."
           actions={canEdit && picked.size > 0 ? (
             <>
               <span className="text-xs text-muted-foreground">{picked.size} selected</span>
