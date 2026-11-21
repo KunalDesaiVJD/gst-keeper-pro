@@ -92,7 +92,7 @@ const DirectFilingApprovalsPanel: React.FC<{
           </Badge>
         </span>
       }
-      description="GSTR-1s filed directly on the portal instead of being pushed from GST Keeper. Each needs your approval before it can be marked Filed or pulled from the portal."
+      description="GSTR-1s and GSTR-3Bs filed directly on the portal instead of being pushed from GST Keeper. Each needs your approval before it can be marked Filed or pulled from the portal."
     >
       {loading ? (
         <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</div>
