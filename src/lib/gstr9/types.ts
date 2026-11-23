@@ -569,7 +569,7 @@ export interface AnnexuresDoc {
 /** Value + tax row of the 9C rate-wise tables (Tables 9, 11 and Part V). */
 export type RateWiseRow = ValTax;
 
-// Row keys follow GSTR_9C_Offline_Utility.xlsm v2.8 (verified 27 Aug 2026).
+// Row keys follow GSTR_9C_Offline_Utility.xlsm v2.8 (verified 27 Aug 2026), unchanged in v2.9 (FY 2025-26, verified 23 Nov 2026).
 export const GSTR9C_T5_KEYS = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'] as const;
 export type Gstr9cT5Key = (typeof GSTR9C_T5_KEYS)[number];
 /** Table 5 rows that are subtracted to reach P (the rest are added): =A+B+C+D-E+F-G-H-I+J-K-L+M+N+O. */
@@ -618,6 +618,8 @@ export interface Gstr9cDoc {
   t15Reasons: string;
   t16: Record<Gstr9cT16Key, number>;
   partV: Record<Gstr9cPartVKey, RateWiseRow>;
+  /** Home sheet of the 9C utility: "Name of Act, if you are liable to audit under any Act" (at most 30 characters; JSON `act_name`). */
+  actName: string;
   certification: Record<
     | 'place'
     | 'signatory_name'

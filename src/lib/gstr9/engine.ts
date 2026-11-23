@@ -492,7 +492,7 @@ export interface Workings {
       R: Tax;
     };
     t12: { A: Tax; B: Tax; C: Tax; D: Tax; E: Tax; F: Tax };
-    t14: { rows: Record<string, ValTax>; R: ValTax; S: Tax; T: Tax };
+    t14: { rows: Record<string, ValTax>; R: ValTax; S: Tax; /** S − R, as the form reads (the firm's sheet `c14.T` is R − S). */ T: Tax };
     /** The computed value of every "computed unless typed" 9C cell, whether or not it is overridden. */
     defaults: {
       t5A: number;
@@ -1044,7 +1044,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   c14.R = addV(beforeQ, c14.Q); // D28
   const c14Check = subV(netItc, c14.R); // D30
   const c14S = t7J;
-  const c14T = subT(taxOf(c14.R), c14S);
+  const c14T = subT(taxOf(c14.R), c14S); // the firm's sheet: R − S
+  // The form (and the 9C offline utility, H25 = H24 − H23): 14T = S − R.
+  const t14FormT = subT(c14S, taxOf(c14.R));
 
   // ------------------------------------------------------------ Annexure-1 (income reco)
   const A = docs.annexures;
@@ -1250,7 +1252,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     label: string,
     a: ValTax,
     b: ValTax,
-    opts: { direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean },
+    opts: { direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean; legacyFlip?: boolean },
   ) => {
     const hasTaxable = opts.hasTaxable ?? false;
     const hasTax = opts.hasTax ?? true;
@@ -1261,8 +1263,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const j = J[key] || null;
     let stale = false;
     if (j && j.diffAt) {
-      const moved = subV(diff, { ...val(), ...j.diffAt });
-      stale = Math.max(hasTax ? maxAbs(moved) : 0, hasTaxable ? Math.abs(moved.t) : 0) > tol + 1e-9;
+      const at = { ...val(), ...j.diffAt };
+      const movedBy = (m: ValTax) => Math.max(hasTax ? maxAbs(m) : 0, hasTaxable ? Math.abs(m.t) : 0);
+      stale = movedBy(subV(diff, at)) > tol + 1e-9;
+      // A line whose direction was turned round: a reason recorded against the old sign still fits.
+      if (stale && opts.legacyFlip) stale = movedBy(addV(diff, at)) > tol + 1e-9;
     }
     const hasText = !!j && !!j.text && !!j.text.trim();
     diffs.push({
@@ -1430,8 +1435,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('gstr9c.12F', 'gstr9c', 'GSTR-9C 12F: un-reconciled ITC (E − D)', withT(0, c12E), withT(0, c12D), {
     direction: 'E − D', aLabel: 'Claimed in GSTR-9 (E)', bLabel: 'As per books (D)',
   });
-  push('gstr9c.14T', 'gstr9c', 'GSTR-9C 14T: un-reconciled ITC by expense head (R − S)', withT(0, taxOf(c14.R)), withT(0, c14S), {
-    direction: 'R − S', aLabel: 'Eligible ITC by head (R)', bLabel: 'Claimed in GSTR-9 (S)',
+  // 14T is S − R as the form and the 9C utility read it (it was R − S before 23 Nov 2026; a
+  // justification recorded against the old sign still stands, see `legacyFlip`).
+  push('gstr9c.14T', 'gstr9c', 'GSTR-9C 14T: un-reconciled ITC by expense head (S − R)', withT(0, c14S), withT(0, taxOf(c14.R)), {
+    direction: 'S − R', aLabel: 'Claimed in GSTR-9 (S)', bLabel: 'Eligible ITC by head (R)', legacyFlip: true,
   });
 
   const stepOpen = {
@@ -1504,7 +1511,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       t7: c7,
       t9: { rows: c9rows, derived: c9derived, source: t9Source, P: c9P, Q: c9Q, R: c9R },
       t12: { A: c12A, B: c12B, C: c12C, D: c12D, E: c12E, F: c12F },
-      t14: { rows: c14, R: c14.R, S: c14S, T: c14T },
+      t14: { rows: c14, R: c14.R, S: c14S, T: t14FormT },
       defaults: { t5A: t5ADefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },

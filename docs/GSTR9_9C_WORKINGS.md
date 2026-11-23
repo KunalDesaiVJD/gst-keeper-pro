@@ -579,3 +579,4 @@ checks the version before starting it.
 | Steps | `components/gstr9/steps/*` + one folder per step |
 | Exports — working papers (Excel via ExcelJS, PDF via jsPDF), GSTR-9 PDF, Notice PDF | `export/papers.ts` builds one working-paper model (WP refs A1 Cover … F1 Revision history) that `export/excel.ts` and `export/pdf.ts` both render, so the two never disagree; `exportWorkbook.ts` / `exportPdf.ts` are the entry points. Every figure comes from `computeWorkings`; the paper layout keeps the firm's sheet names and row labels. ExcelJS and the renderers are lazy-loaded chunks. |
 | Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |
+| GSTR-9C portal JSON (offline utility v2.9: shape, codes, checks) | `gstr9cJson.ts`, `components/gstr9/gstr9c/PortalJsonPart.tsx`, `scripts/verify-gstr9c-json.mjs`; read `docs/GSTR9C_PORTAL_JSON.md` (14T is S − R on the form) |
