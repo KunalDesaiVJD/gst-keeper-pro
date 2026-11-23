@@ -78,7 +78,7 @@ const recordOf = <K extends string, T>(keys: readonly K[], make: () => T): Recor
 export const defaultRcmCategories = () => [];
 
 export const emptyRule42Month = (): Rule42Month => ({
-  e: null, f: null, t1: null, t2: null, t3: null, t4: null, cg: null, reversed: null, notUtilised: false, notUtilisedReason: '',
+  e: null, f: null, t1: null, t2: null, t3: null, t4: null, cg: null, reversed: null, notUtilised: false, notUtilisedReason: '', reversed43: null,
 });
 
 export const emptyRule42 = (): Rule42Doc => ({
@@ -87,6 +87,7 @@ export const emptyRule42 = (): Rule42Doc => ({
   d2Reason: '',
   postingPeriod: null,
   final7C: null,
+  final7D: null,
   months: Object.fromEntries(FY_MONTHS.map((m) => [m, emptyRule42Month()])) as Record<MonthKey, Rule42Month>,
   note: '',
 });

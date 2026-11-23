@@ -343,7 +343,7 @@ typed over only by the superadmin, enforced in the DB too; payables are
 set off only via an imported DRC-03 or a GSTR-3B effect with its copy
 (`annual_return_payable_setoffs`, not blocked by the lock).
 
-Rule 42 (common credit, exempt supplies) is the working on ITC reco › Rule 42/43 (`src/lib/gstr9/rule42.ts`, §6 position 34, `node scripts/verify-gstr9-rule42.mjs`): off per client/FY until switched on, then 7C is its final figure and Payables carries what is still to reverse with interest.
+Rule 42 (common credit, exempt supplies) and Rule 43 (capital goods in common use, read from the shared `capital_goods_register` and its use history) are the working on ITC reco › Rule 42/43 (`src/lib/gstr9/rule42.ts`, `rule43.ts`, §6 positions 39–40, `node scripts/verify-gstr9-rule42.mjs`): off per client/FY until switched on, then 7C is Rule 42's final figure, 7D is Σ Te, and Payables carries what is still to reverse with interest.
 
 **Read `docs/GSTR9_9C_WORKINGS.md` before changing anything here.** Two
 rules are firm decisions: the workings never read the app's own GSTR-1 /

@@ -225,9 +225,6 @@ const Rule42Card: React.FC = () => {
       <SheetGrid<PRow> label="Rule 42 by tax period" rows={rows} columns={columns} getRowId={(r) => r.id} readOnly={readOnly} onRowsChange={onRowsChange} footer={footer} maxHeight="calc(100vh - 320px)" />
 
       <FigureTable label="Rule 42 — final for the year" columns={annualCols} rows={annualRows} />
-      <Note tone="info">
-        Rule 43 (capital goods: Tc ÷ 60 a month, Te = E ÷ F × Tr) joins this tab once the shared capital goods register is in; until then 7D stays as typed in Table 7 entries.
-      </Note>
     </SectionCard>
   );
 };

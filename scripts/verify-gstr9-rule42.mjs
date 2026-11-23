@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Checks for the Rule 42 working of the Annual Return (src/lib/gstr9/rule42.ts
+// Checks for the Rule 42 and Rule 43 workings of the Annual Return (src/lib/gstr9/rule42.ts
 // and its wiring in engine.ts), on small hand-made workings. Needs no client data:
 //
 //   node scripts/verify-gstr9-rule42.mjs
@@ -17,6 +17,7 @@ const E = await load('src/lib/gstr9/engine.ts');
 const D = await load('src/lib/gstr9/defaults.ts');
 const R = await load('src/lib/gstr9/rule42.ts');
 const PP = await load('src/lib/gstr9/portalParser.ts');
+const R43 = await load('src/lib/gstr9/rule43.ts');
 
 const FY = '2024-25';
 const ctx = { clientName: 'Test', gstin: '27AAAAA0000A1Z5', financialYear: FY, noItcBuilder: false };
@@ -201,6 +202,77 @@ const year = ({ taxable = 90000, exempt = 10000, partA = 1080000, partBExempt = 
   const out = R.spreadTagged({ i: 0, c: 120, s: 120, x: 0 }, { apr: { i: 0, c: 32, s: 32, x: 0 } }, w);
   eq('12 typed month kept', out.apr.c, 32);
   eq('12 others spread', out.may.c, 8);
+}
+
+// ─── Rule 43 ────────────────────────────────────────────────────────────────
+const asset = (o) => ({
+  id: o.id ?? 'a1', description: o.description ?? 'Machine', hsn: '', invoiceNo: '', invoiceDate: o.invoiceDate, supplierGstin: '', putToUseDate: null,
+  useClass: o.useClass ?? 'common', itc: o.itc ?? { i: 0, c: 60000, s: 60000, x: 0 }, itcRoute: o.itcRoute ?? 'normal', rule43Reversed: { i: 0, c: 0, s: 0, x: 0 },
+  disposalType: o.disposalDate ? 'sale' : null, disposalDate: o.disposalDate ?? null, disposalInvoiceNo: '', buyerType: 'b2b', supplyType: 'intra', rate: 18,
+  disposalValue: 0, outTax: null, scrapProviso: false, relatedParty: false, inSalesLedger: false, shortfallRoute: 'not_done', postedInBooks: false, note: '',
+  useHistory: o.useHistory ?? [],
+});
+
+// 13. A common asset all year: Tm = Tc ÷ 60, Te = E ÷ F × Tr, 7D = Σ Te.
+{
+  const d = year();
+  const w = E.computeWorkings(d, { ...ctx, capitalGoods: [asset({ invoiceDate: '2023-10-15' })] });
+  eq('13 Tm (CGST)', w.r43.assets[0].tm.c, 1000);
+  is('13 months in the year', w.r43.assets[0].monthsInYear, 12);
+  eq('13 Tr a month', w.r43.periods[0].tr.c, 1000);
+  eq('13 Te a month', w.r43.periods[0].te.c, 100);
+  eq('13 7D = Σ Te', w.g9.t7.D.c, 1200);
+  eq('13 payable (nothing reversed)', w.r43.payable.c, 1200);
+  const pay = w.payables.input.components.find((x) => x.key === 'r43');
+  eq('13 Payables carries Rule 43', pay ? pay.value.c : -1, 1200);
+  // interest on April's 100 from 20 May 2024 to 20 Oct 2025
+  eq('13 April interest', w.r43.periods[0].interest.c, Math.round(100 * 0.18 * daysBetween(Date.UTC(2024, 4, 20), Date.UTC(2025, 9, 20)) / 365 * 100) / 100);
+}
+
+// 14. Exempt-only to common: Tc less 5 points a quarter or part from the invoice.
+{
+  const a = asset({ invoiceDate: '2023-01-10', itc: { i: 0, c: 100000, s: 100000, x: 0 }, useHistory: [
+    { fromDate: '2023-01-10', useClass: 'exempt_or_non_business' }, { fromDate: '2024-07-10', useClass: 'common' }] });
+  const t = R43.tcOf(a);
+  is('14 quarters to the change', t.quarters, 7);
+  eq('14 Tc after 35 points', t.tc.c, 65000);
+  const w = E.computeWorkings(year(), { ...ctx, capitalGoods: [a] });
+  is('14 months common (Jul–Mar)', w.r43.assets[0].monthsInYear, 9);
+  is('14 nothing in April', w.r43.periods[0].tr.c, 0);
+}
+
+// 15. Disposed of in December: out of Tr from that month; useful life ends.
+{
+  const w = E.computeWorkings(year(), { ...ctx, capitalGoods: [
+    asset({ id: 's', invoiceDate: '2023-10-15', disposalDate: '2024-12-05' }),
+    asset({ id: 'o', invoiceDate: '2019-04-01' }),
+    asset({ id: 'l', invoiceDate: '2019-05-01' }),
+    asset({ id: 't', invoiceDate: '2023-10-15', useClass: 'taxable' }),
+    asset({ id: 'n', invoiceDate: '2023-10-15', itcRoute: 'not_taken' }),
+  ] });
+  const by = Object.fromEntries(w.r43.assets.map((a) => [a.id, a]));
+  is('15 sold in Dec: Apr–Nov', by.s.monthsInYear, 8);
+  is('15 life over', by.o.excluded, 'Useful life over');
+  is('15 last month of life', by.l.monthsInYear, 1);
+  is('15 taxable only out', by.t.excluded, 'Not in common use this year');
+  is('15 no credit out', by.n.excluded, 'No credit taken');
+}
+
+// 16. 7E keeps out the Rule 43 reversal; override of 7D; working off = typed 7D.
+{
+  const d = year();
+  M.forEach((m) => { d.portal.months[m].itc4b1 = { i: 0, c: 200, s: 200, x: 0 }; d.gstr9.r42.months[m].reversed = { i: 0, c: 100, s: null, x: 0 }; d.gstr9.r42.months[m].reversed43 = { i: 0, c: 50, s: null, x: 0 }; });
+  const c2 = { ...ctx, capitalGoods: [asset({ invoiceDate: '2023-10-15' })] };
+  let w = E.computeWorkings(d, c2);
+  eq('16 7E = 4B(1) less 42 and 43 reversed', w.g9.t7.E.c, 2400 - 1200 - 600);
+  eq('16 still to reverse', w.r43.payable.c, 600);
+  d.gstr9.r42.final7D = { i: 0, c: 900, s: null, x: 0 };
+  w = E.computeWorkings(d, c2);
+  eq('16 7D override', w.g9.t7.D.c, 900);
+  d.gstr9.r42.enabled = false;
+  d.gstr9.t7.r43 = { i: 0, c: 77, s: null, x: 0 };
+  w = E.computeWorkings(d, c2);
+  eq('16 working off: 7D as typed', w.g9.t7.D.c, 77);
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nall checks passed');

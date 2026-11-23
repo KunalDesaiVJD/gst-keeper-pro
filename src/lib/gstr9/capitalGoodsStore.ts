@@ -9,6 +9,7 @@ import type { CapitalGoodsAsset } from './capitalGoods';
 import { YearLockedError } from './store';
 
 const TABLE = 'capital_goods_register';
+const HISTORY = 'capital_goods_use_history';
 
 type Row = Record<string, unknown>;
 
@@ -105,13 +106,25 @@ export async function loadCapitalGoods(clientId: string): Promise<CapitalGoodsAs
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return ((data ?? []) as Row[]).map(rowToAsset);
+  const assets = ((data ?? []) as Row[]).map(rowToAsset);
+  // The changes of use (Rule 43). A failure here leaves each asset in its own class.
+  const hist = await supabase.from(HISTORY as never).select('asset_id, from_date, use_class').eq('client_id', clientId).order('from_date', { ascending: true });
+  const byAsset = new Map<string, CapitalGoodsAsset['useHistory']>();
+  if (!hist.error) {
+    ((hist.data ?? []) as Row[]).forEach((r) => {
+      const id = str(r.asset_id);
+      const list = byAsset.get(id) ?? [];
+      list.push({ fromDate: str(r.from_date).slice(0, 10), useClass: str(r.use_class) as CapitalGoodsAsset['useClass'] });
+      byAsset.set(id, list);
+    });
+  }
+  return assets.map((a) => ({ ...a, useHistory: byAsset.get(a.id) ?? [] }));
 }
 
 /** Write the changed assets and delete the removed ones. */
 export async function saveCapitalGoods(
   clientId: string,
-  changed: Array<{ asset: CapitalGoodsAsset; sortOrder: number }>,
+  changed: Array<{ asset: CapitalGoodsAsset; sortOrder: number; historyChanged?: boolean }>,
   deletedIds: string[],
   updatedBy: string,
 ): Promise<void> {
@@ -119,6 +132,20 @@ export async function saveCapitalGoods(
     const rows = changed.map(({ asset, sortOrder }) => assetToRow(asset, clientId, updatedBy, sortOrder));
     const { error } = await supabase.from(TABLE as never).upsert(rows as never, { onConflict: 'id' });
     if (error) lockAware(error);
+    // The use history of an asset whose changes of use were edited: the dates now held, the rest removed.
+    for (const { asset } of changed.filter((c) => c.historyChanged)) {
+      const list = asset.useHistory ?? [];
+      const keep = list.map((h) => h.fromDate);
+      let del = supabase.from(HISTORY as never).delete().eq('asset_id', asset.id);
+      if (keep.length) del = del.not('from_date', 'in', `(${keep.join(',')})`);
+      const d = await del;
+      if (d.error) lockAware(d.error);
+      if (list.length) {
+        const rows = list.map((h) => ({ asset_id: asset.id, client_id: clientId, from_date: h.fromDate, use_class: h.useClass, updated_by: updatedBy }));
+        const u = await supabase.from(HISTORY as never).upsert(rows as never, { onConflict: 'asset_id,from_date' });
+        if (u.error) lockAware(u.error);
+      }
+    }
   }
   if (deletedIds.length) {
     const { error } = await supabase.from(TABLE as never).delete().eq('client_id', clientId).in('id', deletedIds);
