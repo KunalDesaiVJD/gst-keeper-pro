@@ -70,6 +70,8 @@ const CALLERS = {
   'supabase/functions/notice-ai/claude.ts': [/model: AI_MODEL,/, /effort: AI_EFFORT,/, /const req = pinned\(asked\);/],
   'supabase/functions/notice-ai/cli.ts': [/const model = AI_CLI_MODEL;/, /model, effort: AI_EFFORT, timeoutMs/],
   'agent/src/read/claude.ts': [/model: AI_MODEL,/, /effort: AI_EFFORT,/, /model: AI_MODEL, effort: AI_EFFORT \}/],
+  // The GST Assistant (23 Nov 2026): one turn of its tool loop.
+  'supabase/functions/gst-assistant/claude.ts': [/model: AI_MODEL,/, /output_config: \{ effort: AI_EFFORT \},/],
 };
 const TALKS = [/@anthropic-ai\/sdk['"]/, /\bnew Anthropic\(/, /\.messages\.(?:create|stream|countTokens)\(/, /api\.anthropic\.com\/v1/];
 for (const f of files) {
@@ -95,7 +97,7 @@ for (const [f, needs] of Object.entries(CALLERS)) {
 }
 
 // 4. Effort literals in the AI code.
-const AI_CODE = files.filter((f) => f.startsWith('supabase/functions/notice-') || f.startsWith('agent/src/read/') || f === 'src/lib/replyFactory.ts' || f.startsWith('src/components/notices/reply/factory/'));
+const AI_CODE = files.filter((f) => f.startsWith('supabase/functions/notice-') || f.startsWith('supabase/functions/gst-assistant/') || f.startsWith('agent/src/read/') || f === 'src/lib/replyFactory.ts' || f.startsWith('src/components/notices/reply/factory/'));
 for (const f of AI_CODE) {
   const s = read(f);
   for (const m of s.matchAll(/\beffort\w*['"]?\s*[:=]\s*(?:[\w?.]+\s*(?:\?\?|\|\|)\s*)?['"`](\w+)['"`]/g)) {

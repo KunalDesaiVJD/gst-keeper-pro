@@ -13,6 +13,9 @@ import { cn } from '@/lib/utils';
 import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
 
+// The GST Assistant, loaded once a staff page is up.
+const AssistantPanel = React.lazy(() => import('@/components/assistant/AssistantPanel'));
+
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
   const location = useLocation();
@@ -82,6 +85,7 @@ const MainLayout: React.FC = () => {
             <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
           </ErrorBoundary>
         </main>
+        {isStaffRole() && <Suspense fallback={null}><AssistantPanel /></Suspense>}
       </div>
 
       {/* Ctrl K / ⌘K search over clients and notices - only for staff */}

@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/build-assistant-knowledge.mjs && vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "node scripts/typecheck.mjs"
+    "typecheck": "node scripts/build-assistant-knowledge.mjs && node scripts/typecheck.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -48,6 +48,7 @@
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.6.0",
     "exceljs": "^4.4.0",
+    "html-to-image": "^1.11.13",
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.4",
     "jspdf-autotable": "^5.0.2",

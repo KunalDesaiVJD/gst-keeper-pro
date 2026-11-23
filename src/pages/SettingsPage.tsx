@@ -6,11 +6,12 @@ import { PasswordInput } from '@/components/ui/password-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/gstr9/badge';
 import { SectionCard } from '@/components/gstr9/ui';
+import AssistantSettings from '@/components/assistant/AssistantSettings';
 import { TAB_LIST_CLASS, TAB_TRIGGER_CLASS } from '@/components/gstr9/reco/StepTabs';
 import { WS_PAGE } from '@/components/workspace/theme';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield, Mail } from 'lucide-react';
+import { Settings, Lock, Users, AlertCircle, Check, X, Loader2, Database, Shield, Mail, Sparkles } from 'lucide-react';
 import ManageMastersPage from '@/pages/ManageMastersPage';
 import UserControlPage from '@/pages/UserControlPage';
 import RemindersPage from '@/pages/RemindersPage';
@@ -294,7 +295,19 @@ const SettingsPage: React.FC = () => {
               GST Reminders
             </TabsTrigger>
           )}
+          {isStaffRole() && (
+            <TabsTrigger value="assistant" className={TAB_TRIGGER_CLASS}>
+              <Sparkles className="h-4 w-4" />
+              AI Assistant
+            </TabsTrigger>
+          )}
         </TabsList>
+
+        {isStaffRole() && (
+          <TabsContent value="assistant">
+            <AssistantSettings />
+          </TabsContent>
+        )}
 
         <TabsContent value="password">
           <SectionCard
