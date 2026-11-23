@@ -38,7 +38,10 @@ import {
   TaxIn,
   ValTax,
   WorkspaceContext,
+  R42_CLASS_DEFAULT,
 } from './types';
+import { emptyRule42 } from './defaults';
+import { computeRule42, R42_CLASS_COUNTS, type R42Tag, type Rule42Result } from './rule42';
 
 // ---------------------------------------------------------------------------
 // Arithmetic helpers
@@ -270,6 +273,8 @@ export interface PayableSideWorking {
 }
 
 export interface Workings {
+  /** Rule 42 working (ITC reco › Rule 42/43); computed whether or not it is switched on. */
+  r42: Rule42Result & { tagged: Record<R42Tag, Tax>; books: { e: number; f: number } };
   ctx: WorkspaceContext;
   tolerance: number;
 
@@ -902,13 +907,51 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   t6.O = addT(t6.I, t6.N);
 
   // ------------------------------------------------------------ Table 7
+  // ------------------------------------------------------------ Rule 42 (common credit, exempt supplies)
+  const R42 = G.r42 ?? emptyRule42();
+  const r42Tagged: Record<R42Tag, Tax> = { t1: tax(), t2: tax(), t3: tax(), t4: tax(), cg: tax() };
+  docs.purchases.rows.forEach((r) => {
+    const t = rowTax(r);
+    if (r.section === 'capital_goods') { r42Tagged.cg = addT(r42Tagged.cg, t); return; }
+    const u = r.use;
+    if (u === 't1' || u === 't2' || u === 't3' || u === 't4') r42Tagged[u] = addT(r42Tagged[u], t);
+  });
+  docs.rcm.categories.forEach((cat) => {
+    const tbl: RcmItcTable = cat.itcTable && cat.itcTable in byItcTable ? cat.itcTable : '6C';
+    if (tbl === 'none') return; // no credit taken, so none in T
+    const t = taxOf(rcmCats[cat.id].total);
+    if (cat.itcType === 'cg') { r42Tagged.cg = addT(r42Tagged.cg, t); return; }
+    const u = cat.use;
+    if (u === 't1' || u === 't2' || u === 't3' || u === 't4') r42Tagged[u] = addT(r42Tagged[u], t);
+  });
+  const r42Books = { e: 0, f: partA.t };
+  docs.sales.partB.forEach((r) => {
+    const cls = r.r42 ?? R42_CLASS_DEFAULT[r.nature] ?? 'non_taxable';
+    const k = R42_CLASS_COUNTS[cls] ?? R42_CLASS_COUNTS.non_taxable;
+    const v = (r.r42Value === null || r.r42Value === undefined ? num(r.amount) : num(r.r42Value)) * k.factor;
+    if (k.f) r42Books.f += v;
+    if (k.e) r42Books.e += v;
+  });
+  const r42 = computeRule42({
+    financialYear: ctx.financialYear,
+    quarterly: !!ctx.quarterly,
+    doc: R42,
+    months: byMonth((m) => ({ itc: P.months[m].itc4aTotal, turnover: P.months[m].turnover ?? null })),
+    tagged: r42Tagged,
+    books: r42Books,
+  });
+  const r42On = !!R42.enabled && !ctx.noItcBuilder;
+  // POSITION (Rule 42 working): 7C is the year's final figure; 7E keeps out only what the GSTR-3Bs reversed under Rule 42.
+  const t7C = r42On ? r42.t7C : tin(G.t7.r42);
+  const r42In4B1 = r42On ? r42.reversed : tin(G.t7.r42);
+
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
   // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
   // 4B(1) less what is typed in 7A2, 7C and 7D (never below nil), so they are not counted twice;
   // the sheet's 9-INPUT E21 takes all of 4B(1).
-  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), tin(G.t7.r42), tin(G.t7.r43)));
+  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), r42In4B1, tin(G.t7.r43)));
   const t7: Record<Table7Key, Tax> = {
-    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: tin(G.t7.r42), D: tin(G.t7.r43),
+    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: t7C, D: tin(G.t7.r43),
     E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? t7E4B1 : tin(G.t7.s17_5),
     F: tin(G.t7.tran1), G: tin(G.t7.tran2),
   };
@@ -1070,6 +1113,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const payInput = payableSide('input', [
     { key: 'excessItc', label: 'Excess ITC claimed as per reconciliation (Annexure-3 row 3)', value: excessItc },
     { key: 'other', label: 'Other payments — input (Annexure-3 row 4)', value: otherOf('input') },
+    ...(r42On ? [
+      { key: 'r42', label: 'Rule 42 reversal still due: final for the year less reversed in the GSTR-3Bs', value: r42.payable },
+      { key: 'r42Interest', label: 'Interest u/s 50 on Rule 42 (true-up from 1 April, short months from their due dates)', value: r42.interest },
+    ] : []),
   ]);
   const alreadyPaid = addT(payOutput.setOff, payInput.setOff);
 
@@ -1235,6 +1282,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('purchases.dt', 'purchases', 'Net ITC: P&L vs Duties & Taxes (PL-INPUT row 81)', withT(0, taxOf(netItc)), withT(0, dtiNet), {
     direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net',
   });
+  if (r42On) {
+    push('itc.r42F', 'itc', 'Rule 42: total turnover F, books vs the periods', val(r42Books.f), val(r42.periodsF), {
+      direction: 'Books − periods', aLabel: 'Books (Sales)', bLabel: 'Σ periods (3B / typed)', hasTaxable: true, hasTax: false,
+    });
+    push('itc.r42E', 'itc', 'Rule 42: exempt supplies E, books vs the periods', val(r42Books.e), val(r42.periodsE), {
+      direction: 'Books − periods', aLabel: 'Books (Sales)', bLabel: 'Σ periods (3B / typed)', hasTaxable: true, hasTax: false,
+    });
+    push('itc.r42Net', 'itc', 'Rule 42: final for the year vs reversed in the GSTR-3Bs (settled in Payables)', withT(0, r42.annual.final), withT(0, r42.reversed), {
+      direction: 'Final − reversed', aLabel: 'Final (rule 42(2))', bLabel: 'Reversed in 4(B)(1)', informational: true,
+    });
+  }
   const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
     if (!months.length) return;
     push(key, step, `${what}: GSTR-3B not fetched for ${months.map((m) => MONTH_LABEL[m]).join(', ')}`, withT(0, books), val(), {
@@ -1385,6 +1443,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   return {
     ctx,
     tolerance: tol,
+    r42: { ...r42, enabled: r42On, tagged: r42Tagged, books: { e: Math.round(r42Books.e * 100) / 100, f: Math.round(r42Books.f * 100) / 100 } },
     sales: {
       rows: salesRows, partA, partATaxable: partA.t, partBTotal, partBByNature,
       total: salesTotal, auditReportTotal, auditDiff, byRate,

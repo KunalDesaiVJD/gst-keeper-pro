@@ -108,7 +108,9 @@ export function describePath(path: string, financialYear: string): FieldInfo {
     return {
       group: `months.${m}`,
       groupLabel: MONTH_LABEL[m] ? monthTitle(m, financialYear) : m,
-      label: `${f?.label ?? p[2]} · ${head(p[3])}`,
+      label: p[2] === 'turnover'
+        ? `3.1 value · ${({ taxable: '(a) taxable', zero: '(b) zero rated', nilExempt: '(c) nil and exempt', nonGst: '(e) non-GST' } as Record<string, string>)[p[3]] ?? p[3]}`
+        : `${f?.label ?? p[2]} · ${head(p[3])}`,
     };
   }
   if (p[0] === 'gstr9') {

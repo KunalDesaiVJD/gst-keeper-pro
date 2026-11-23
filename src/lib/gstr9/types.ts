@@ -94,8 +94,43 @@ export interface NonTaxRow {
   ledger: string;
   nature: NonTaxNature;
   amount: number;
+  /** Rule 42/43 class of the ledger (E and F); null/undefined = the default for its nature (R42_CLASS_DEFAULT). */
+  r42?: R42Class | null;
+  /** Value counted for Rule 42 when it differs from the ledger (land at stamp duty value, securities at 1%); null = the amount. */
+  r42Value?: number | null;
   f?: Formulas;
 }
+
+/**
+ * How a non-taxable ledger counts in Rule 42/43's E (exempt supplies) and F (total turnover in the State),
+ * per s.17(3) and its Explanation and the Explanations to Rules 42 and 43 (src/lib/gstr9/rule42.ts).
+ */
+export type R42Class =
+  | 'taxable' // F only (e.g. supplies taxed through an e-commerce operator u/s 9(5))
+  | 'zero_rated' // F only: exports and SEZ supplies stay out of E
+  | 'exempt' // E and F
+  | 'nil' // E and F
+  | 'non_taxable' // E and F (alcoholic liquor for human consumption, petroleum products, …)
+  | 'rcm_outward' // E and F: tax paid by the recipient on reverse charge
+  | 'sch3_para5' // E and F: sale of land, or of a building after completion (Schedule III para 5)
+  | 'securities' // E and F, at 1% of the value
+  | 'excluded_e' // F only: interest on deposits, loans and advances (not a bank or NBFC), Entry 84 / 92A
+  | 'not_turnover'; // neither: other Schedule III activities, income that is not a supply
+
+/** Rule 42 class a ledger starts with, from its Table 5 nature. */
+export const R42_CLASS_DEFAULT: Record<NonTaxNature, R42Class> = {
+  export_wo: 'zero_rated',
+  sez_wo: 'zero_rated',
+  rcm_outward: 'rcm_outward',
+  ecom_95: 'taxable',
+  exempt: 'exempt',
+  nil: 'nil',
+  non_gst: 'non_taxable',
+  not_in_gstr9: 'not_turnover',
+};
+
+/** Where an input's credit stands for Rule 42 (T1 to T4 of rule 42(1)); common is the default. */
+export type CreditUse = 'common' | 't1' | 't2' | 't3' | 't4';
 
 export interface SalesDoc {
   partA: SalesRow[];
@@ -144,6 +179,8 @@ export interface PurchaseRow {
   cess: number;
   /** null = default for the section: purchase → purchases, capital_goods → capital_goods, expense → other2. */
   head: ExpenseHead | null;
+  /** Rule 42 credit use (T1 non-business, T2 exempt only, T3 blocked, T4 taxable only); null/undefined = common. */
+  use?: CreditUse | null;
   f?: Formulas;
 }
 
@@ -236,6 +273,8 @@ export interface RcmCategory {
   itcTable: RcmItcTable;
   /** 6C / 6D column; undefined = input services, as the sheet. */
   itcType?: RcmItcType;
+  /** Rule 42 credit use of the category's ITC; null/undefined = common. */
+  use?: CreditUse | null;
   months: Record<MonthKey, RcmCell>;
 }
 
@@ -313,6 +352,19 @@ export interface PortalMonth {
   itc4d: Tax;
   /** Total 4A (all five rows) — fallback for 6A when the GSTR-9 JSON isn't available. */
   itc4aTotal: Tax;
+  /**
+   * Outward values of 3.1 — Rule 42's E and F for the month. Absent on months imported before
+   * 23 Nov 2026 (re-import to fill it).
+   */
+  turnover?: PortalTurnover;
+}
+
+/** GSTR-3B 3.1 taxable values: (a) taxable, (b) zero rated, (c) nil and exempt, (e) non-GST. */
+export interface PortalTurnover {
+  taxable: number;
+  zero: number;
+  nilExempt: number;
+  nonGst: number;
 }
 
 export type PortalSource = 'extension' | 'upload' | 'as_filed_3b' | 'manual';
@@ -368,6 +420,40 @@ export interface OtherReversalRow {
   f?: Formulas;
 }
 
+/** One tax period of the Rule 42 working: what staff type over the defaults. Every null = the default. */
+export interface Rule42Month {
+  /** E, exempt supplies — null = as-filed GSTR-3B 3.1(c) + 3.1(e). */
+  e: number | null;
+  /** F, total turnover in the State — null = 3.1(a) + (b) + (c) + (e). */
+  f: number | null;
+  /** T1 to T4 — null = the year's tagged credit spread over the months by their share of T. */
+  t1: TaxIn | null;
+  t2: TaxIn | null;
+  t3: TaxIn | null;
+  t4: TaxIn | null;
+  /** Capital goods credit inside the month's 4A, left out of T (Rule 43's) — null = spread. */
+  cg: TaxIn | null;
+  /** The Rule 42 part of the month's 4(B)(1) — what was actually reversed. null = nil. */
+  reversed: TaxIn | null;
+  /** Rule 88B(3): the credit ledger never fell below the short reversal, so no interest. */
+  notUtilised: boolean;
+  notUtilisedReason: string;
+}
+
+export interface Rule42Doc {
+  /** The working is on: 7C comes from it. Off = 7C as typed in Table 7. */
+  enabled: boolean;
+  /** D2 (5% of C2 for non-business use) — off unless the client uses common credit partly for non-business. */
+  d2: boolean;
+  d2Reason: string;
+  /** MM/YYYY of the GSTR-3B that carries the annual true-up — null = September after the FY. */
+  postingPeriod: string | null;
+  /** 7C override (superadmin) — null = the working's final figure. */
+  final7C: TaxIn | null;
+  months: Record<MonthKey, Rule42Month>;
+  note: string;
+}
+
 export interface Gstr9ManualDoc {
   /** 6A1 — ITC of a preceding FY availed in this FY (other than reclaim). null = use Last Year Effect. */
   t6A1: TaxIn | null;
@@ -408,6 +494,8 @@ export interface Gstr9ManualDoc {
   /** Table 13 — typed; the ITC reco suggests MAX(books ITC − 7J, 0) (GSTR 9-INPUT row 28). */
   t13: TaxIn;
   t14: Record<'igst' | 'cgst' | 'sgst' | 'cess' | 'interest', { payable: number; paid: number }>;
+  /** Rule 42 working (ITC reco › Rule 42/43). Optional: docs saved before 23 Nov 2026 have none. */
+  r42?: Rule42Doc;
   t15: {
     // The form's interest / penalty / late fee columns apply to refunds too; optional for docs saved before 24 Oct 2026.
     refundClaimed: Tax & Partial<Record<'interest' | 'penalty' | 'lateFee' | 'others', number>>;

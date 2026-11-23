@@ -42,7 +42,7 @@ const POLL_MAX = 36;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-type Field = keyof PortalMonth;
+type Field = Exclude<keyof PortalMonth, 'turnover'>;
 const RECO_FIELDS: Field[] = ['outTax', 'itcExclRcm', 'rcm'];
 const OTHER_FIELDS: Field[] = ['itc4aTotal', 'itc4a5', 'itc4b1', 'itc4b2', 'itc4d'];
 const fieldInfo = (k: Field) => MONTH_FIELDS.find((f) => f.key === k)!;

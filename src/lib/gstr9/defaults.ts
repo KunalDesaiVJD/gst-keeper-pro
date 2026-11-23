@@ -20,6 +20,8 @@ import {
   Tax,
   TaxIn,
   ValTax,
+  Rule42Doc,
+  Rule42Month,
 } from './types';
 
 export const zTax = (): Tax => ({ i: 0, c: 0, s: 0, x: 0 });
@@ -75,6 +77,20 @@ const recordOf = <K extends string, T>(keys: readonly K[], make: () => T): Recor
 /** Default RCM categories — the four blocks of the firm's RCM sheet, all empty. */
 export const defaultRcmCategories = () => [];
 
+export const emptyRule42Month = (): Rule42Month => ({
+  e: null, f: null, t1: null, t2: null, t3: null, t4: null, cg: null, reversed: null, notUtilised: false, notUtilisedReason: '',
+});
+
+export const emptyRule42 = (): Rule42Doc => ({
+  enabled: false,
+  d2: false,
+  d2Reason: '',
+  postingPeriod: null,
+  final7C: null,
+  months: Object.fromEntries(FY_MONTHS.map((m) => [m, emptyRule42Month()])) as Record<MonthKey, Rule42Month>,
+  note: '',
+});
+
 export const emptyDocs = (): AnnualReturnDocs => ({
   sales: { partA: [], partB: [], auditReportTotal: null },
   purchases: { rows: [], suspendedOtherAdj: zIn() },
@@ -125,6 +141,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
     t12: null,
     t13: zIn(),
     t14: recordOf(['igst', 'cgst', 'sgst', 'cess', 'interest'] as const, () => ({ payable: 0, paid: 0 })),
+    r42: emptyRule42(),
     t15: {
       refundClaimed: extTax(),
       refundSanctioned: extTax(),

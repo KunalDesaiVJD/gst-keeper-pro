@@ -8,7 +8,9 @@
 
 import { describeChange, hiddenFromClients, SHEET_LABEL, type ChangeLogEntry } from '../audit';
 import {
+  addT,
   diffStatus,
+  subT,
   EXPENSE_HEAD_LABEL,
   NON_TAX_NATURE_LABEL,
   OUTWARD_CATEGORY_LABEL,
@@ -729,6 +731,51 @@ function gstr9Output(c: Ctx): WorkingPaper {
   }, p);
 }
 
+function rule42Paper(c: Ctx): WorkingPaper {
+  const { w, heads, just } = c;
+  const n = heads.length;
+  const R = w.r42;
+  const p = new PaperBuilder();
+  p.h1('RULE 42 — COMMON CREDIT USED FOR EXEMPT SUPPLIES');
+  p.note('C1 = T − (T1 + T2 + T3); C2 = C1 − T4; D1 = E ÷ F × C2; D2 = 5% × C2 (non-business). Provisional per tax period, final for the year under rule 42(2); interest u/s 50 at 18%.');
+  const groups = ['T (4A LESS CAPITAL GOODS)', 'T1 + T2 + T3', 'T4', 'C2 COMMON CREDIT', 'D1 + D2 PROVISIONAL', 'REVERSED IN 3B 4(B)(1)', 'SHORT (EXCESS)', 'INTEREST U/S 50'];
+  const t = p.table([
+    [{ v: 'PERIOD', rowSpan: 2 }, { v: 'E (EXEMPT)', rowSpan: 2 }, { v: 'F (TOTAL)', rowSpan: 2 }, { v: 'E ÷ F', rowSpan: 2 }, ...groups.map((g) => ({ v: g, span: n, align: 'center' as const }))],
+    [null, null, null, null, ...groups.flatMap(() => headRow(heads))],
+  ], { freeze: true, groups: groupCols(groups.length, n, 0).map((g) => g.map((x) => x + 3)) });
+  R.periods.forEach((x) => {
+    t.data(
+      x.label, x.e, x.f, `${(x.ratio * 100).toFixed(2)}%`,
+      ...taxCells(x.t, heads), ...taxCells(addT(x.t1, x.t2, x.t3), heads), ...taxCells(x.t4, heads), ...taxCells(x.c2, heads),
+      ...taxCells(x.provisional, heads), ...taxCells(x.reversed, heads), ...taxCells(x.short, heads), ...taxCells(x.interest, heads),
+    );
+  });
+  const A = R.annual;
+  t.total('TOTAL', R.periodsE, R.periodsF, null, ...taxCells(A.t, heads), ...taxCells(addT(A.t1, A.t2, A.t3), heads), ...taxCells(A.t4, heads), ...taxCells(A.c2, heads),
+    ...taxCells(R.provisional, heads), ...taxCells(R.reversed, heads), ...taxCells(subT(R.provisional, R.reversed), heads), ...taxCells(R.interestShort, heads));
+  p.h2('FINAL FOR THE YEAR AND TRUE-UP');
+  const f = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1 });
+  f.data('E ÷ F FOR THE YEAR', ...Array(n).fill(null), `${A.e.toLocaleString('en-IN')} ÷ ${A.f.toLocaleString('en-IN')} = ${(A.ratio * 100).toFixed(2)}% (${A.ratioSource === 'books' ? 'Sales, books' : 'Σ periods'})`);
+  f.data('C2 COMMON CREDIT', ...taxCells(A.c2, heads), '');
+  f.data('D1 = E ÷ F × C2', ...taxCells(A.d1, heads), '');
+  f.data('D2 = 5% × C2', ...taxCells(A.d2, heads), R.periods.length && c.docs.gstr9.r42?.d2 ? c.docs.gstr9.r42.d2Reason : 'Not applied');
+  f.total('FINAL — GSTR-9 TABLE 7C', ...taxCells(R.t7C, heads), R.t7CSource === 'override' ? 'Typed over by a superadmin' : 'From this working');
+  f.data('PROVISIONAL (Σ PERIODS)', ...taxCells(R.provisional, heads), '');
+  f.sub('TRUE-UP: FINAL LESS PROVISIONAL', ...taxCells(R.trueUp, heads), `Post by ${R.latestPeriod}; chosen ${R.postingPeriod}`);
+  f.data('REVERSED IN THE GSTR-3Bs', ...taxCells(R.reversed, heads), '');
+  f.total('STILL TO REVERSE (PAYABLES)', ...taxCells(R.payable, heads), just('itc.r42Net'));
+  f.data('CREDIT TO TAKE BACK', ...taxCells(R.recredit, heads), `By ${R.latestPeriod}`);
+  f.data(`INTEREST ON TRUE-UP (${R.trueUpInterestDays} DAYS FROM 1 APRIL)`, ...taxCells(R.interestTrueUp, heads), '');
+  f.data('INTEREST ON SHORT PERIODS', ...taxCells(R.interestShort, heads), '');
+  f.total('INTEREST U/S 50 (PAYABLES)', ...taxCells(R.interest, heads), '');
+  R.warnings.forEach((x) => p.note(x));
+  return paper(c, {
+    ref: 'C2A', title: 'RULE 42 — Common credit for exempt supplies', sheet: 'C2A RULE 42', phase: 'reconcile', master: 'RULE 42',
+    source: 'Source: as-filed GSTR-3B 4A and 3.1 by period; T1 to T4 from the Purchases / RCM credit-use tags; E and F for the year from Sales Part A and B — Rule 42 working of the Annual Return',
+    widths: [16, 16, 16, 10, ...Array(groups.length * n).fill(13)], freezeCols: 1,
+  }, p);
+}
+
 function gstr9Input(c: Ctx): WorkingPaper {
   const { w, heads, just } = c;
   const p = new PaperBuilder();
@@ -1440,7 +1487,7 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
     cover(ctx),
     signOff(ctx),
     plOutput(ctx), plInput(ctx), dto(ctx), dti(ctx), rcm(ctx), portalData(ctx),
-    gstr9Output(ctx), gstr9Input(ctx), gstr9cHeads(ctx), annexure(ctx), differences(ctx),
+    gstr9Output(ctx), gstr9Input(ctx), ...(w.r42.enabled ? [rule42Paper(ctx)] : []), gstr9cHeads(ctx), annexure(ctx), differences(ctx),
     gstr9Form(ctx), gstr9c(ctx), notice(ctx),
     payables(ctx),
     revisionHistory(ctx),
