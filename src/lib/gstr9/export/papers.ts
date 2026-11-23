@@ -23,6 +23,7 @@ import {
   type Workings,
 } from '../engine';
 import { drc03MatchesFY, METHOD_LABEL, SIDE_LABEL, type Drc03Filing, type SetOff } from '../payables';
+import { BASIS_LABEL, DISPOSAL_LABEL, SHORTFALL_ROUTE_LABEL } from '../capitalGoods';
 import { ITC_ROWS, MONTH_FIELDS, monthTitle, T5_ROWS, T9_ROWS } from '../portalImport';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
 import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
@@ -223,7 +224,7 @@ const headRow = (heads: Head[]): string[] => heads.map((h) => HEAD_LABEL[h]);
 /** Which papers show which difference lines (by key prefix) — for the index and the cover. */
 const DIFF_PREFIX: Record<string, string[]> = {
   B1: ['sales.'], B2: ['purchases.'], B3: ['dto.'], B4: ['dti.'], B5: ['rcm.'],
-  C1: ['out.'], C2: ['itc.'], C3: ['gstr9c.14T'], C4: ['ann1.', 'ann2.', 'ann4.'], C5: [''],
+  C1: ['out.'], C2: ['itc.'], C3: ['gstr9c.14T'], C4: ['ann1.', 'ann2.', 'ann4.'], C5: [''], C6: ['cg.'],
   D1: ['g9.'], D2: ['gstr9c.'],
 };
 
@@ -799,8 +800,13 @@ function gstr9Input(c: Ctx): WorkingPaper {
   vrow('data', 'ITC REVERSAL (7H1 - SUSPENDED ITC REVERSED)', null, I.reversal7H1);
   vrow('data', 'AS PER SECTION 17(5) (7E)', null, I.s17_5);
   vrow('data', 'OTHER REVERSALS (7A-7D, 7F, 7G, OTHER 7H)', null, I.otherReversals);
+  if (nz(w.cg.reversal)) vrow('data', '   of which: reversal u/s 18(6), capital goods sold (C6 Annexure-5)', null, w.cg.reversal);
   vrow('total', 'TOTAL (SHOULD BE MATCHED WITH 7(J) OF GSTR 9)', null, I.total7J);
-  vrow('data', 'AS PER BOOK (DUTIES & TAXES NET, AFTER LAST YEAR EFFECT)', null, I.asPerBook);
+  if (nz(I.cgNotInBooks)) {
+    vrow('data', 'DUTIES & TAXES NET, AFTER LAST YEAR EFFECT', null, I.asPerBookLedger);
+    vrow('data', '   Less: s.18(6) reversal not yet in the ITC ledger (C6 Annexure-5)', null, I.cgNotInBooks);
+  }
+  vrow('data', nz(I.cgNotInBooks) ? 'AS PER BOOK (AFTER THE s.18(6) REVERSAL)' : 'AS PER BOOK (DUTIES & TAXES NET, AFTER LAST YEAR EFFECT)', null, I.asPerBook);
   vrow('subtotal', 'DIFFERENCE (7J - BOOK)', null, I.residual, just('itc.books'));
   vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12; 8C AS NEGATIVE) — SUGGESTED', null, I.t12Suggested);
   vrow('data', `   Table 12 used (${w.g9.t12Source === 'override' ? 'typed' : 'computed'})`, null, w.g9.t12, '', w.g9.t12Source === 'override' ? 'typed' : undefined);
@@ -878,6 +884,7 @@ function annexure(c: Ctx): WorkingPaper {
   const a1 = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', ...headRow(heads), wide('JUSTIFICATION', 5 - heads.length)]], { keyCols: 2 });
   a1.data('A', 'GROSS TAXABLE INCOME AS PER P/L', ...valCells(A1.A, heads));
   a1.data('', 'NET NON-GST INCOME AS PER P/L', src(A1.nonGst, 'typed'));
+  if (A1.CG.t || nz(A1.CG)) a1.data('', 'CAPITAL GOODS SOLD OUTSIDE P/L REVENUE (C6 ANNEXURE-5)', ...valCells(A1.CG, heads));
   a1.data('B', 'SALE RETURN AS PER P/L', ...(['t', ...heads] as Array<'t' | Head>).map((h) => src(A1.B[h], 'typed')));
   a1.sub('C: A-B', 'TOTAL INCOME FROM P/L', ...valCells(A1.C, heads));
   a1.data('D', 'TAX PAID ON RCM AS PER BOOKS', ...valCells(A1.D, heads));
@@ -896,8 +903,9 @@ function annexure(c: Ctx): WorkingPaper {
   a2('data', 'A', 'DR. BALANCE OF ITC LEDGER', A2.A);
   a2('data', 'A1', 'RCM - ITC', A2.A1);
   a2('data', 'A2', 'DEBIT NOTE', A2.A2);
+  if (nz(A2.A3)) a2('data', 'A3', 's.18(6) REVERSAL ON CAPITAL GOODS SOLD, NOT YET IN THE ITC LEDGER (C6)', A2.A3);
   a2('data', 'B', 'OTHER ADJUSTMENT IN DR./CR. SIDE', A2.B);
-  a2('subtotal', 'C=A+A1-A2-B', 'NET ITC AVAILED', A2.C);
+  a2('subtotal', nz(A2.A3) ? 'C=A+A1-A2-A3-B' : 'C=A+A1-A2-B', 'NET ITC AVAILED', A2.C);
   a2('data', 'D', 'ITC OF THIS YEAR CLAIMED IN NEXT YEAR (EFFECT TO BE GIVEN IN CLAUSE 11 & 12 OF GSTR-09)', A2.D);
   a2('subtotal', 'E=C+D', 'TOTAL', A2.E);
   a2('data', 'F', 'AS PER PORTAL (CLAUSE 6A AUTO POPULATED, WHICH INCLUDES ITC OF PREVIOUS YEAR CLAIMED IN THIS YEAR & ITC OF THIS YEAR)', A2.F);
@@ -916,6 +924,7 @@ function annexure(c: Ctx): WorkingPaper {
   a3.data(sr(3), `EXCESS ITC CLAIMED AS PER RECO${docs.annexures.a3ExcessItc === null ? ' — suggested (Table 12)' : ''}`, ...(docs.annexures.a3ExcessItc === null ? taxCells(A3.excessItc, all) : srcTax(A3.excessItc, all, () => 'typed')));
   a3.data(sr(4), 'ANY OTHER PAYMENT (TO BE SPECIFIED)', ...taxCells(A3.other, all));
   docs.annexures.a3Other.forEach((o) => a3.data('', `   ${o.description || 'Other'}`, ...srcTax(tin(o), all, () => 'typed')));
+  if (nz(A3.cg186)) a3.data(sr(5), 'CAPITAL GOODS SOLD u/s 18(6): SHORTFALL NOT YET REVERSED (C6 ANNEXURE-5)', ...taxCells(A3.cg186, all));
   a3.total(lbl('TOTAL'), ...taxCells(A3.total, all));
   a3.data('', 'DRC-03 PAYABLE (POSITIVE HEADS)', ...taxCells(A3.payable, all));
   a3.data('', 'EXCESS PAID (NEGATIVE HEADS)', ...taxCells(A3.excessPaid, all));
@@ -933,6 +942,75 @@ function annexure(c: Ctx): WorkingPaper {
     widths: [12, 70, 18, 16, 16, 16, 16, 48],
   }, p);
 }
+
+const isoDate = (v: string | null): string => (v ? fmtDate(v) : '');
+
+/** C6 — Annexure-5: the s.18(6) computation for each capital asset sold in the year, and where it went. */
+function capitalGoodsSold(c: Ctx): WorkingPaper {
+  const { w, heads } = c;
+  const cg = w.cg;
+  const p = new PaperBuilder();
+  p.h1('ANNEXURE-5 — CAPITAL GOODS SOLD u/s 18(6)');
+  p.note('Section 18(6) CGST Act: on the supply of capital goods or plant and machinery on which ITC was taken, the higher of (a) the tax on the transaction value (s.15) and (b) the ITC taken reduced by 5 percentage points for every quarter or part thereof from the date of the invoice (Rule 40(2); Rule 44(6) read with Rule 44(1)(b), worked per head) is payable. Proviso: refractory bricks, moulds and dies, jigs and fixtures supplied as scrap pay tax on the transaction value only.');
+  if (!cg.assets.length) {
+    p.note(`No capital goods sold in ${c.meta.financialYear}.`);
+  } else {
+    p.h2('COMPUTATION SCHEDULE');
+    const t = p.table([[
+      'SR', 'ASSET', 'HSN', 'PURCHASE INVOICE', 'INVOICE DATE', 'ITC TAKEN', 'DISPOSAL', 'DATE OF SALE', 'SALE INVOICE', 'TRANSACTION VALUE', 'RATE',
+      'QUARTERS', 'LESS %', '(b) ITC AS REDUCED', '(a) TAX ON VALUE', 'PAYABLE (HIGHER)', 'SHORTFALL (b − a)', 'SHORTFALL DEALT WITH', 'BASIS / NOTES',
+    ]], { keyCols: 2, freeze: true, autoFilter: true });
+    const sum = (x: Tax) => x.i + x.c + x.s + x.x;
+    cg.assets.forEach((a, i) => {
+      const k = cg.calc[a.id];
+      t.data(
+        sr(i + 1), { v: a.description || 'Asset', src: 'typed' }, a.hsn, a.invoiceNo, isoDate(a.invoiceDate), src(sum(k.itcTaken), 'typed'),
+        a.disposalType ? DISPOSAL_LABEL[a.disposalType] : '', isoDate(a.disposalDate), a.disposalInvoiceNo, src(a.disposalValue, 'typed'), rate(a.rate, 'typed'),
+        k.quarters === null ? '' : int(k.quarters), k.reductionPct === null ? '' : rate(k.reductionPct), sum(k.reduced), sum(k.outTax), k.payable, sum(k.shortfall),
+        sum(k.shortfall) > 0.005 ? SHORTFALL_ROUTE_LABEL[a.shortfallRoute] : '',
+        [...k.issues, BASIS_LABEL[k.basis], ...k.notes].join(' '),
+      );
+    });
+    t.total('', lbl('TOTAL', 4), sum(cg.assets.reduce((acc, a) => addTax(acc, cg.calc[a.id].itcTaken), zeroTax())), '', '', '',
+      cg.assets.reduce((s2, a) => s2 + a.disposalValue, 0), '', '', '',
+      sum(cg.assets.reduce((acc, a) => addTax(acc, cg.calc[a.id].reduced), zeroTax())),
+      sum(cg.assets.reduce((acc, a) => addTax(acc, cg.calc[a.id].outTax), zeroTax())), cg.payable,
+      sum(cg.assets.reduce((acc, a) => addTax(acc, cg.calc[a.id].shortfall), zeroTax())), '', '');
+
+    p.h2('BY TAX HEAD');
+    const hb = p.table([['ASSET', 'FIGURE', ...headRow(ALL_HEADS), 'TOTAL']], { keyCols: 2 });
+    cg.assets.forEach((a) => {
+      const k = cg.calc[a.id];
+      hb.data(a.description || 'Asset', 'ITC taken', ...srcTax(k.itcTaken, ALL_HEADS, () => 'typed'), sum(k.itcTaken));
+      if (k.quarters !== null) hb.data('', `(b) ITC as reduced — ${k.quarters} quarter${k.quarters === 1 ? '' : 's'}, less ${k.reductionPct}%`, ...taxCells(k.reduced, ALL_HEADS), sum(k.reduced));
+      hb.data('', `(a) Tax on transaction value${k.outTaxComputed ? ' (from the rate)' : ' (as charged)'}`, ...taxCells(k.outTax, ALL_HEADS), sum(k.outTax));
+      if (sum(k.itcAfterR43) !== sum(k.itcTaken)) hb.data('', 'ITC after Rule 43 reversals to date (information)', ...taxCells(k.itcAfterR43, ALL_HEADS), sum(k.itcAfterR43));
+      hb.sub('', 'Shortfall (b − a), split over the heads of (b)', ...taxCells(k.shortfall, ALL_HEADS), sum(k.shortfall));
+    });
+
+    p.h2('WHERE THE FIGURES GO');
+    const g = p.table([['PARTICULARS', 'VALUE', ...headRow(heads), 'WHERE']], { keyCols: 1 });
+    g.data('Sales outside the Sales ledgers — registered buyers', cg.table4.b2b.t, ...taxCells(cg.table4.b2b, heads), 'GSTR-9 4B (C1), 9C Table 9');
+    g.data('Sales outside the Sales ledgers — unregistered buyers', cg.table4.b2c.t, ...taxCells(cg.table4.b2c, heads), 'GSTR-9 4A (C1), 9C Table 9');
+    g.data('Shortfall reported as ITC reversal', null, ...taxCells(cg.reversal, heads), 'GSTR-9 7H (C2), Annexure-2 G2');
+    g.data('   of which reversed in GSTR-3B 4(B)(2)', null, ...taxCells(cg.reversed3b, heads), '');
+    g.data('   of which paid by DRC-03', null, ...taxCells(cg.drc03, heads), '');
+    g.data('   of which not yet dealt with', null, ...taxCells(cg.notDone, heads), 'Annexure-3 row 5, Payables input side (E1)');
+    g.data('Shortfall paid as output tax on the invoice', null, ...taxCells(cg.asOutputTax, heads), 'GSTR-9 Table 4');
+    g.data('Shortfall not yet in the books’ ITC ledger', null, ...taxCells(cg.notInBooks, heads), 'ITC reco (C2), Annexure-2 A3');
+    g.data('Sale value outside the P&L revenue', cg.valueOutsidePl, ...heads.map(() => null), 'Annexure-1 (C4), GSTR-9C 5O (D2)');
+  }
+  p.note('Firm positions (23 Nov 2026, docs/GSTR9_9C_WORKINGS.md §6 items 34–38): the higher of is compared on the total, the shortfall split over the heads of the ITC as reduced; ITC taken is the credit availed before any Rule 42/43 reversal; TRAN-1 credit counts from the original invoice date; a quarter is three months from the invoice date and a part counts in full.');
+  return paper(c, {
+    ref: 'C6', title: 'ANNEXURE-5 — Capital goods sold u/s 18(6)', sheet: 'C6 ANNEXURE-5 CG SOLD', phase: 'reconcile', master: '—',
+    source: 'Source: the client’s capital goods register (Purchases · Capital goods sold); s.18(6), Rule 40(2), Rule 44(6)',
+    widths: [6, 30, 10, 16, 13, 16, 18, 13, 14, 18, 9, 10, 9, 18, 18, 18, 18, 26, 48],
+    freezeCols: 2,
+  }, p);
+}
+
+const zeroTax = (): Tax => ({ i: 0, c: 0, s: 0, x: 0 });
+const addTax = (a: Tax, b: Tax): Tax => ({ i: a.i + b.i, c: a.c + b.c, s: a.s + b.s, x: a.x + b.x });
 
 /** The engine's status label; a re-check says why, since the sheet has no popover to explain it. */
 const statusLabel = (d: DiffLine, tolerance: number): WpCell => {
@@ -1487,7 +1565,7 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
     cover(ctx),
     signOff(ctx),
     plOutput(ctx), plInput(ctx), dto(ctx), dti(ctx), rcm(ctx), portalData(ctx),
-    gstr9Output(ctx), gstr9Input(ctx), ...(w.r42.enabled ? [rule42Paper(ctx)] : []), gstr9cHeads(ctx), annexure(ctx), differences(ctx),
+    gstr9Output(ctx), gstr9Input(ctx), ...(w.r42.enabled ? [rule42Paper(ctx)] : []), gstr9cHeads(ctx), annexure(ctx), differences(ctx), capitalGoodsSold(ctx),
     gstr9Form(ctx), gstr9c(ctx), notice(ctx),
     payables(ctx),
     revisionHistory(ctx),
