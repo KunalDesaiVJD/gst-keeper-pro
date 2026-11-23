@@ -349,7 +349,7 @@ set off only via an imported DRC-03 or a GSTR-3B effect with its copy
 
 Rule 42 (common credit, exempt supplies) and Rule 43 (capital goods in common use, read from the shared `capital_goods_register` and its use history) are the working on ITC reco › Rule 42/43 (`src/lib/gstr9/rule42.ts`, `rule43.ts`, §6 positions 39–40, `node scripts/verify-gstr9-rule42.mjs`): off per client/FY until switched on, then 7C is Rule 42's final figure, 7D is Σ Te, and Payables carries what is still to reverse with interest.
 
-Builder clients' GSTR-9C Table 5 comes from the advance roll-forward on GSTR-9C › Advances (`src/lib/gstr9/builderAdvances.ts`, §6 position 39, `node scripts/verify-gstr9-builder-adv.mjs`): one open year per client, earlier years closed and read-only, held by the trigger of `20261123150000`.
+Builder clients' GSTR-9C Table 5 comes from the advance roll-forward on GSTR-9C › Advances (`src/lib/gstr9/builderAdvances.ts`, §6 position 41, `node scripts/verify-gstr9-builder-adv.mjs`): one open year per client, earlier years closed and read-only, held by the trigger of `20261123150000`.
 
 **Read `docs/GSTR9_9C_WORKINGS.md` before changing anything here.** Two
 rules are firm decisions: the workings never read the app's own GSTR-1 /

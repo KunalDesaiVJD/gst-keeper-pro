@@ -602,7 +602,7 @@ category is set to 6D/6F, inputs / capital goods, or No ITC (positions 24–25);
 interest/FD income is Non-GST (5F).
 
 
-39. **Builder advance roll-forward** (GSTR-9C › Advances, Builder clients only;
+41. **Builder advance roll-forward** (GSTR-9C › Advances, Builder clients only;
     `src/lib/gstr9/builderAdvances.ts`, data `builderAdvancesData.ts`, card
     `gstr9c/BuilderAdvancePart.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
     approved 23 Nov 2026; `node scripts/verify-gstr9-builder-adv.mjs`). Stored in
