@@ -42,6 +42,7 @@ import {
 } from './types';
 import { emptyRule42 } from './defaults';
 import { computeRule42, R42_CLASS_COUNTS, type R42Tag, type Rule42Result } from './rule42';
+import { normalizeBuilderAdv, rollForward, type BuilderRollForward } from './builderAdvances';
 import { summariseCgYear, type CgYearSummary } from './capitalGoods';
 
 // ---------------------------------------------------------------------------
@@ -489,6 +490,8 @@ export interface Workings {
 
   gstr9c: {
     t5: { A: number; P: number; Q: number; R: number; rows: Record<string, number>; /** 5O: the part that is capital goods sold outside the P&L. */ OCg: number };
+    /** Builder clients: the advance roll-forward of the year (null = not used). */
+    builderAdv: BuilderRollForward | null;
     t7: { A: number; B: number; C: number; D: number; D1: number; E: number; F: number; G: number };
     t9: {
       rows: Record<string, RateWiseRow>;
@@ -1164,6 +1167,12 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t5A = C.t5A === null || C.t5A === undefined ? t5ADefault : num(C.t5A);
   const t5Rows: Record<string, number> = { A: t5A };
   GSTR9C_T5_KEYS.forEach((k) => { t5Rows[k] = num(C.t5[k]); });
+  // Builder clients: the advance roll-forward fills 5B, 5C, 5H, 5I, 5J and 5O.
+  const builderAdvDoc = normalizeBuilderAdv(C.builderAdv);
+  const builderAdv = builderAdvDoc ? rollForward(builderAdvDoc) : null;
+  if (builderAdv) {
+    (Object.keys(builderAdv.t5) as Array<keyof typeof builderAdv.t5>).forEach((k) => { t5Rows[k] = builderAdv.t5[k]; });
+  }
   // 5O "reasons not listed above" also carries capital goods sold outside the P&L revenue (Annexure-5),
   // the register's figure unless typed (t5OCg). POSITION (§6 item 37).
   const t5OCgDefault = cg.valueOutsidePl;
@@ -1558,6 +1567,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     },
     gstr9c: {
       t5: { A: t5A, P: t5P, Q: t5Q, R: t5Q - t5P, rows: t5Rows, OCg: t5OCg },
+      builderAdv,
       t7: c7,
       t9: { rows: c9rows, derived: c9derived, source: t9Source, P: c9P, Q: c9Q, R: c9R },
       t12: { A: c12A, B: c12B, C: c12C, D: c12D, E: c12E, F: c12F },

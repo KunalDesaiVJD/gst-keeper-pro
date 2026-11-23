@@ -12,6 +12,8 @@
 // typed by staff.
 
 /** Tax heads, in the order the Excel uses them: IGST, CGST, SGST, Cess. */
+import type { BuilderAdvanceDoc } from './builderAdvances';
+
 export interface Tax {
   i: number;
   c: number;
@@ -620,6 +622,7 @@ export type Gstr9cPartVKey = (typeof GSTR9C_PARTV_KEYS)[number];
 export const GSTR9C_T16_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'] as const; // Central, State/UT, Integrated, Cess, Interest, Penalty
 export type Gstr9cT16Key = (typeof GSTR9C_T16_KEYS)[number];
 
+
 export interface Gstr9cDoc {
   /** 5A override — null = audit report total from the Sales step (PL-OUTPUT D54), else books Part A+B. */
   t5A: number | null;
@@ -629,6 +632,12 @@ export interface Gstr9cDoc {
   t5OCg?: number | null;
   /** 5Q override — null = GSTR-9 total turnover (5N + 10 − 11). */
   t5Q: number | null;
+  /**
+   * Builder clients: the customer-advance roll-forward (null = not used). While set it fills
+   * 5B, 5C, 5H, 5I, 5J and 5O and the typed values of those rows are not used
+   * (src/lib/gstr9/builderAdvances.ts).
+   */
+  builderAdv?: BuilderAdvanceDoc | null;
   t6Reasons: string;
   /** 7B/7C/7D/7D1 overrides — null = derived from GSTR-9 Table 5. */
   t7: Record<'B' | 'C' | 'D' | 'D1', number | null>;

@@ -227,7 +227,7 @@ const headRow = (heads: Head[]): string[] => heads.map((h) => HEAD_LABEL[h]);
 const DIFF_PREFIX: Record<string, string[]> = {
   B1: ['sales.'], B2: ['purchases.'], B3: ['dto.'], B4: ['dti.'], B5: ['rcm.'],
   C1: ['out.'], C2: ['itc.'], C3: ['gstr9c.14T'], C4: ['ann1.', 'ann2.', 'ann4.'], C5: [''], C6: ['cg.'],
-  D1: ['g9.'], D2: ['gstr9c.'],
+  D1: ['g9.'], D2: ['gstr9c.'], D2A: ['gstr9c.5R'],
 };
 
 interface Spec {
@@ -812,6 +812,56 @@ function rule42Paper(c: Ctx): WorkingPaper {
     ref: 'C2A', title: 'RULE 42 — Common credit for exempt supplies', sheet: 'C2A RULE 42', phase: 'reconcile', master: 'RULE 42',
     source: 'Source: as-filed GSTR-3B 4A and 3.1 by period; T1 to T4 from the Purchases / RCM credit-use tags; E and F for the year from Sales Part A and B — Rule 42 working of the Annual Return',
     widths: [16, 16, 16, 10, ...Array(groups.length * n).fill(13)], freezeCols: 1,
+  }, p);
+}
+
+/** Builder clients: the customer-advance roll-forward behind GSTR-9C Table 5 (the firm's TURNOVER IN 9C sheet). */
+function builderAdvPaper(c: Ctx): WorkingPaper {
+  const { w, docs, meta, just } = c;
+  const B = w.gstr9c.builderAdv!;
+  const doc = docs.gstr9c.builderAdv;
+  const fy = meta.financialYear;
+  const end = `31.03.${Number(fy.slice(0, 4)) + 1}`;
+  const start = `01.04.${fy.slice(0, 4)}`;
+  const p = new PaperBuilder();
+  p.h1('GSTR-9C SALES RECONCILIATION — CUSTOMER ADVANCES');
+  p.note('Advance received in the FY = closing advance − opening advance + revenue recognised. Openings are carried from the year before, which is closed.');
+  const t = p.table([['PARTICULARS', 'AMOUNT', 'AMOUNT', 'NOTE']], { keyCols: 1 });
+  t.data(`CLOSING BALANCE OF ADVANCE AS ON ${end}`, { v: B.closingAdvance, src: 'typed' }, null, 'Audited balance sheet');
+  t.data(`LESS: OPENING BALANCE AS ON ${start}`, B.openingAdvance, null, 'Carried from the year before');
+  t.data('ADD: REVENUE RECOGNISED (TRANSFERRED TO WIP / SALES)', { v: B.revenue, src: 'typed' }, null, 'Audited statement of profit and loss');
+  t.sub(`TOTAL ADVANCE RECEIVED DURING FY ${fy}`, B.received, B.received, '');
+  p.h2('CUMULATIVE');
+  const k = p.table([['PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 1 });
+  k.data(`ADVANCE RECEIVED UP TO ${fy.slice(0, 4)}`, B.receivedBefore, 'Carried from the year before');
+  k.data(`ADVANCE RECEIVED IN FY ${fy}`, B.received, '');
+  k.sub(`TOTAL ADVANCE RECEIVED UP TO FY ${fy}`, B.receivedToDate, '');
+  k.data(`LESS: SALES ACCOUNTED UP TO THE END OF FY ${fy}`, B.salesToDate, `Before: ${B.salesBefore.toLocaleString('en-IN')}`);
+  k.total(`UNADJUSTED ADVANCES AT THE END OF FY ${fy}`, B.unadjustedEnd, Math.abs(B.unadjustedEnd - B.closingAdvance) > 0.5 ? 'Does not equal the closing advance' : 'Equals the closing advance');
+  p.h2('JUSTIFICATION OF DIFFERENCE IN GSTR-9C (TABLE 5)');
+  const j = p.table([['NO.', 'PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 2 });
+  j.data('5A', 'Turnover as per audit report', w.gstr9c.t5.A, Math.abs(w.gstr9c.t5.A - B.revenue) > 0.5 ? `Revenue recognised is ${B.revenue.toLocaleString('en-IN')}` : '');
+  j.data('5B', 'Add: unbilled revenue at the beginning', B.t5.B, '');
+  j.data('5C', 'Add: unadjusted advances at the end (closing advance)', B.t5.C, '');
+  j.data('5H', 'Less: unbilled revenue at the end', B.t5.H, '');
+  j.data('5I', 'Less: unadjusted advances at the beginning (opening advance)', B.t5.I, '');
+  (doc?.adjustments ?? []).forEach((a) => j.data(`5${a.row}`, `${a.row === 'J' ? 'Less' : 'Add'}: ${a.label}`, { v: a.amount, src: 'typed' }, a.reason));
+  j.total('5P', 'Annual turnover after adjustments', w.gstr9c.t5.P, '');
+  j.data('5Q', 'Turnover as per GSTR-9', w.gstr9c.t5.Q, '');
+  j.total('5R', 'Difference (Q − P)', w.gstr9c.t5.R, just('gstr9c.5R'));
+  if (B.tieOut && doc?.tieOut) {
+    p.h2('TIE-OUT WITH THE BUILDER MODULE');
+    const r = p.table([['PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 1 });
+    r.data('Receipts dated in the FY (bounced cheques left out, excl. GST)', doc.tieOut.receipts, `Read ${doc.tieOut.readAt ? fmtDateTime(doc.tieOut.readAt) : ''}`);
+    r.data('Less: refunds paid to cancelled members', doc.tieOut.refunds, '');
+    r.sub('Net received per the Builder module', B.tieOut.net, '');
+    r.data('Advance received per this roll-forward', B.received, '');
+    r.total('Difference', B.tieOut.diff, doc.tieOut.note || '');
+  }
+  return paper(c, {
+    ref: 'D2A', title: 'GSTR-9C — Builder advance roll-forward (Table 5)', sheet: 'D2A BUILDER ADVANCES', phase: 'returns', master: 'TURNOVER IN 9C',
+    source: 'Source: closing advance and revenue from the audited financial statements, openings from the closed year before, receipts and refunds from the Builder module',
+    widths: [70, 20, 20, 50],
   }, p);
 }
 
@@ -1604,7 +1654,7 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
     signOff(ctx),
     plOutput(ctx), plInput(ctx), dto(ctx), dti(ctx), rcm(ctx), portalData(ctx),
     gstr9Output(ctx), gstr9Input(ctx), ...(w.r42.enabled ? [rule42Paper(ctx)] : []), gstr9cHeads(ctx), annexure(ctx), differences(ctx), capitalGoodsSold(ctx),
-    gstr9Form(ctx), gstr9c(ctx), notice(ctx),
+    gstr9Form(ctx), gstr9c(ctx), ...(w.gstr9c.builderAdv ? [builderAdvPaper(ctx)] : []), notice(ctx),
     payables(ctx),
     revisionHistory(ctx),
   ];
