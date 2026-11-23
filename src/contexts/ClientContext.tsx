@@ -5,13 +5,22 @@ interface ClientContextType {
   setSelectedClientId: (clientId: string) => void;
 }
 
+const CLIENT_KEY = 'gstk_selected_client';
+
 const ClientContext = createContext<ClientContextType | undefined>(undefined);
 
 export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [selectedClientId, setSelectedClientIdState] = useState<string>('');
+  // Kept for this tab only, so a reload (a new build, Reload on an error card) keeps the client.
+  const [selectedClientId, setSelectedClientIdState] = useState<string>(() => {
+    try { return sessionStorage.getItem(CLIENT_KEY) ?? ''; } catch { return ''; }
+  });
 
   const setSelectedClientId = useCallback((clientId: string) => {
     setSelectedClientIdState(clientId);
+    try {
+      if (clientId) sessionStorage.setItem(CLIENT_KEY, clientId);
+      else sessionStorage.removeItem(CLIENT_KEY);
+    } catch { /* storage unavailable */ }
   }, []);
 
   return (

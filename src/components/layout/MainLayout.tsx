@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,15 +12,26 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
+import { lazyWithReload } from '@/lib/chunkReload';
+import { installBuildWatcher, newBuildAvailable } from '@/lib/buildVersion';
 
 // The GST Assistant, loaded once a staff page is up.
-const AssistantPanel = React.lazy(() => import('@/components/assistant/AssistantPanel'));
+const AssistantPanel = lazyWithReload(() => import('@/components/assistant/AssistantPanel'));
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
   const location = useLocation();
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // A newer build was deployed while this tab was open: its old page files are
+  // gone, so the next page change loads the new build in full (buildVersion.ts).
+  useEffect(() => { installBuildWatcher(); }, []);
+  const firstPath = useRef(true);
+  useEffect(() => {
+    if (firstPath.current) { firstPath.current = false; return; }
+    if (newBuildAvailable()) window.location.reload();
+  }, [location.pathname]);
 
   if (isLoading) {
     return (
@@ -85,7 +96,8 @@ const MainLayout: React.FC = () => {
             <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
           </ErrorBoundary>
         </main>
-        {isStaffRole() && <Suspense fallback={null}><AssistantPanel /></Suspense>}
+        {/* The assistant failing never takes the page with it. */}
+        {isStaffRole() && <ErrorBoundary variant="silent"><Suspense fallback={null}><AssistantPanel /></Suspense></ErrorBoundary>}
       </div>
 
       {/* Ctrl K / ⌘K search over clients and notices - only for staff */}
