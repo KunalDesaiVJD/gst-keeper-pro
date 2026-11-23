@@ -95,6 +95,22 @@ export const Table5Card: React.FC = () => {
         write: (d, v) => ({ ...d, t5: { ...d.t5, [k]: n0(v?.t) } }),
         warn: sub ? (_h, v) => (v < 0 ? 'Enter this as a positive amount — the form subtracts it.' : null) : undefined,
       });
+      // 5O also carries capital goods sold outside the P&L revenue (Annexure-5), added to what is typed above.
+      if (k === 'O' && (def.t5OCg || (C.t5OCg !== null && C.t5OCg !== undefined))) {
+        lines.push({
+          id: 'Ocg',
+          code: '5O+',
+          label: 'of which: capital goods sold outside the P&L revenue (added to 5O)',
+          mode: 'override',
+          heads: ['t'],
+          stored: amount(C.t5OCg ?? null),
+          def: { t: def.t5OCg },
+          fKey: 't5OCg',
+          write: (d, v) => ({ ...d, t5OCg: v ? n0(v.t) : null }),
+          source: 'Annexure-5',
+          sourceTitle: 'Sale value of capital goods sold this year that are not in a Sales ledger (Purchases · Capital goods sold)',
+        });
+      }
     });
     lines.push(
       {
@@ -133,7 +149,7 @@ export const Table5Card: React.FC = () => {
       },
     );
     return lines;
-  }, [C.t5A, C.t5, C.t5Q, def.t5A, def.t5Q, W.t5.P, W.t5.R, auditMissing]);
+  }, [C.t5A, C.t5, C.t5Q, C.t5OCg, def.t5A, def.t5Q, def.t5OCg, W.t5.P, W.t5.R, auditMissing]);
 
   return (
     <SectionCard

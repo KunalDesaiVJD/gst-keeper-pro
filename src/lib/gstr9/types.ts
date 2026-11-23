@@ -44,6 +44,8 @@ export type MonthKey = (typeof FY_MONTHS)[number];
 /** Original "=a+b" expressions staff typed, keyed by field name — shown back on edit, like Excel. */
 export type Formulas = Record<string, string>;
 
+import type { CapitalGoodsAsset } from './capitalGoods';
+
 // ---------------------------------------------------------------------------
 // Step: Sales (PL-OUTPUT)
 // ---------------------------------------------------------------------------
@@ -506,6 +508,8 @@ export interface Gstr9cDoc {
   t5A: number | null;
   /** 5B..5O adjustments, typed as positive amounts; GSTR9C_T5_SUB rows are subtracted. M/N/O may be negative. */
   t5: Record<Gstr9cT5Key, number>;
+  /** The capital goods part of 5O (sale value outside the P&L revenue) — null/absent = from the register (Annexure-5). */
+  t5OCg?: number | null;
   /** 5Q override — null = GSTR-9 total turnover (5N + 10 − 11). */
   t5Q: number | null;
   t6Reasons: string;
@@ -640,5 +644,9 @@ export interface WorkspaceContext {
   /** QRMP client (registration type IFF): GSTR-3B is filed quarterly. */
   quarterly?: boolean;
   /** Live set-offs from the payable register (payables.ts); none when omitted. */
-  setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;
+  setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;  /**
+   * The client's capital goods register (capital_goods_register, all years); the engine takes the
+   * assets disposed of in this FY (s.18(6), capitalGoods.ts). None when omitted.
+   */
+  capitalGoods?: CapitalGoodsAsset[];
 }

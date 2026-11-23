@@ -39,6 +39,7 @@ import {
   ValTax,
   WorkspaceContext,
 } from './types';
+import { summariseCgYear, type CgYearSummary } from './capitalGoods';
 
 // ---------------------------------------------------------------------------
 // Arithmetic helpers
@@ -364,6 +365,10 @@ export interface Workings {
     asPer3B: Tax; // row 16 = 6A2
     total: ValTax; // row 18 (= 6O)
     reversal7H1: Tax; // row 20
+    /** s.18(6) shortfall in Table 7H that the books' ITC ledger does not carry (Annexure-5) — taken off the book figure. */
+    cgNotInBooks: Tax;
+    /** D&T net before that adjustment (row 25 as typed). */
+    asPerBookLedger: Tax;
     s17_5: Tax; // row 21
     otherReversals: Tax; // rest of Table 7
     total7J: Tax; // row 23
@@ -435,6 +440,8 @@ export interface Workings {
   ann1: {
     A: ValTax;
     nonGst: number;
+    /** Capital goods sold outside the P&L revenue (Annexure-5): value and output tax. */
+    CG: ValTax;
     B: ValTax;
     C: ValTax;
     D: ValTax;
@@ -446,7 +453,7 @@ export interface Workings {
     payDiff: Tax;
   };
 
-  ann2: Record<'A' | 'A1' | 'A2' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G1' | 'G2' | 'H' | 'I' | 'J', Tax>;
+  ann2: Record<'A' | 'A1' | 'A2' | 'A3' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G1' | 'G2' | 'H' | 'I' | 'J', Tax>;
 
   ann3: {
     clause9: Tax;
@@ -457,6 +464,8 @@ export interface Workings {
     excessItc: Tax;
     excessItcSuggested: Tax;
     other: Tax;
+    /** s.18(6) shortfall on capital goods sold not yet reversed in the year (Annexure-5). */
+    cg186: Tax;
     total: Tax; // signed, as the Excel's D46
     payable: Tax; // MAX(total, 0) per head
     excessPaid: Tax; // MIN(total, 0) per head, shown positive
@@ -474,7 +483,7 @@ export interface Workings {
   };
 
   gstr9c: {
-    t5: { A: number; P: number; Q: number; R: number; rows: Record<string, number> };
+    t5: { A: number; P: number; Q: number; R: number; rows: Record<string, number>; /** 5O: the part that is capital goods sold outside the P&L. */ OCg: number };
     t7: { A: number; B: number; C: number; D: number; D1: number; E: number; F: number; G: number };
     t9: {
       rows: Record<string, RateWiseRow>;
@@ -491,6 +500,8 @@ export interface Workings {
     /** The computed value of every "computed unless typed" 9C cell, whether or not it is overridden. */
     defaults: {
       t5A: number;
+      /** 5O's capital goods part when not typed: sale value outside the P&L (Annexure-5). */
+      t5OCg: number;
       t5Q: number;
       t7: { B: number; C: number; D: number; D1: number; F: number };
       t9: Record<string, RateWiseRow>;
@@ -510,6 +521,8 @@ export interface Workings {
   monthsPresent: Record<MonthKey, { any: boolean; out: boolean; itc: boolean }>;
   /** Quarter-end months whose quarterly GSTR-3B (QRMP) is compared with three months of books, per side. */
   quarterly: { out: MonthKey[]; itc: MonthKey[] };
+  /** Capital goods sold in the year — s.18(6) (Annexure-5, capitalGoods.ts). */
+  cg: CgYearSummary;
   diffs: DiffLine[];
   openCount: number;
   stepOpen: Record<StepKey, number>;
@@ -649,6 +662,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       salesBucket(r.category, false) === 'ecom' ? ECOM_95_RATE_KEY
         : typedRate !== null && STANDARD_RATES.includes(typedRate) ? String(typedRate) : snapRate(typedRate ?? implied);
     byRate[rateKey] = addV(byRate[rateKey] || val(), v);
+  });
+
+  // Capital goods sold (s.18(6), Annexure-5): a sale not in a Sales ledger is added to Table 4 (4B
+  // registered buyer, 4A otherwise) and to the 9C Table 9 rate rows. POSITION (§6 item 34).
+  const cg = summariseCgYear(ctx.capitalGoods ?? [], ctx.financialYear);
+  outwardBooks.b2b = addV(outwardBooks.b2b, cg.table4.b2b);
+  outwardBooks.b2c = addV(outwardBooks.b2c, cg.table4.b2c);
+  Object.entries(cg.byRate).forEach(([k, v]) => {
+    const r = k === 'unknown' ? null : Number(k);
+    const key = r !== null && STANDARD_RATES.includes(r) ? String(r) : snapRate(r);
+    byRate[key] = addV(byRate[key] || val(), v);
   });
 
   const natures: NonTaxNature[] = ['export_wo', 'sez_wo', 'rcm_outward', 'ecom_95', 'exempt', 'nil', 'non_gst', 'not_in_gstr9'];
@@ -800,7 +824,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const dtoSum = (k: keyof DtoMonthCalc) => sumMonths(byMonth((m) => dtoMonths[m][k]));
   const dtoTotals: DtoMonthCalc = { sales: dtoSum('sales'), cn: dtoSum('cn'), net: dtoSum('net'), asPer3B: dtoSum('asPer3B'), diff: dtoSum('diff') };
   const dtoAdj = addT(...DO.adjustments.map((a) => tin(a)));
-  const dtoAsPerPl = taxOf(partA); // I22 = PL-OUTPUT E33 (mapped by head, not column position)
+  // I22 = PL-OUTPUT E33 (mapped by head, not column position), plus the output tax on capital goods sold
+  // outside the P&L revenue: the Duties & Taxes output ledger carries it, the Sales ledgers do not.
+  const dtoAsPerPl = addT(taxOf(partA), cg.outTaxOutsidePl);
   const dtoPlDiff = subT(dtoAsPerPl, dtoTotals.net); // I24 = I22 − I20
   const dtiAdj = addT(...DI.adjustments.map((a) => tin(a)));
 
@@ -916,11 +942,15 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     { id: 'h1', description: G.t7.otherDesc || 'Other reversal', tax: reversals, computed: true }, // 7H1 = 9-INPUT D20 = D&T I+L
     ...G.t7.otherExtra.map((o) => ({ id: o.id, description: o.description, tax: tin(o), computed: false })),
   ];
+  // s.18(6): the shortfall on capital goods sold, unless it was paid as output tax on the invoice (then Table 4).
+  if (isNonZeroT(cg.reversal)) t7H.push({ id: 'cg186', description: 'Reversal u/s 18(6): capital goods sold (Annexure-5)', tax: cg.reversal, computed: true });
   const t7I = addT(...(Object.values(t7) as Tax[]), ...t7H.map((h) => h.tax));
   const t7J = subT(t6.O, t7I);
 
   // ------------------------------------------------------------ ITC reco (GSTR 9-INPUT) rows 25–28
-  const asPerBook = dtiNet; // POSITION: U26 (net of Last Year Effect) — the sheet reads U24
+  // POSITION: U26 (net of Last Year Effect) — the sheet reads U24. Less the s.18(6) shortfall in 7H that the
+  // books' ITC ledger does not carry yet (Annexure-5), so it is not taken for ITC to be claimed next year.
+  const asPerBook = subT(dtiNet, cg.notInBooks);
   const residual = subT(t7J, asPerBook);
   const t12Suggested = maxT0(residual); // D27 = IF(D23 − D25 > 0, …, 0)
   const t13Suggested = negT(minT0(residual)); // −D28
@@ -1008,7 +1038,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const ann1A = partA; // D8 = PL-OUTPUT D33
   const ann1NonGst = num(A.a1NonGstIncome); // D9
   const ann1B = A.a1SaleReturn; // D10
-  const ann1C = subV(addV(ann1A, val(ann1NonGst)), ann1B); // D11 = D8 + D9 − D10
+  // Capital goods sold outside the P&L revenue (Annexure-5): their value and output tax.
+  const ann1CG = withT(cg.valueOutsidePl, cg.outTaxOutsidePl);
+  const ann1C = subV(addV(ann1A, val(ann1NonGst), ann1CG), ann1B); // D11 = D8 + D9 − D10 (+ capital goods sold)
   const ann1D = rcmPartB; // D12 = RCM!D41
   const ann1E = addV(ann1C, ann1D); // D13
   const ann1F = addV(outwardPortalTotal, rcmPartA); // D14 = 'GSTR 9-OUTPUT'!I17 + RCM!D22
@@ -1022,8 +1054,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   ann2.A = dtiTotals.purchase; // D26 = D&T C22
   ann2.A1 = dtiRcmBooks; // D27 = D&T U23
   ann2.A2 = dtiTotals.dn; // D28 = D&T F22
+  ann2.A3 = cg.notInBooks; // s.18(6) shortfall in 7H not in the ITC ledger (Annexure-5)
   ann2.B = suspendedNet; // D29
-  ann2.C = subT(addT(ann2.A, ann2.A1), ann2.A2, ann2.B); // D30
+  ann2.C = subT(addT(ann2.A, ann2.A1), ann2.A2, ann2.A3, ann2.B); // D30
   ann2.D = residual; // D31 = 9-INPUT D27 + D28
   ann2.E = addT(ann2.C, ann2.D); // D32
   ann2.F = t6A; // D33 = GSTR-9 6A
@@ -1043,7 +1076,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const excessItcSuggested = t12;
   const excessItc = A.a3ExcessItc === null || A.a3ExcessItc === undefined ? excessItcSuggested : tin(A.a3ExcessItc);
   const a3Other = addT(...A.a3Other.map((o) => tin(o)));
-  const ann3Total = addT(ann1PayDiff, rcmToPay, excessItc, a3Other); // D46
+  const ann3Total = addT(ann1PayDiff, rcmToPay, excessItc, a3Other, cg.notDone); // D46 (+ s.18(6) not yet reversed)
   const ann3Payable = maxT0(ann3Total);
   const ann3Excess = negT(minT0(ann3Total));
   // Payables, output-wise and input-wise (Annexure-3 rows by nature), and their set-offs.
@@ -1070,6 +1103,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const payInput = payableSide('input', [
     { key: 'excessItc', label: 'Excess ITC claimed as per reconciliation (Annexure-3 row 3)', value: excessItc },
     { key: 'other', label: 'Other payments — input (Annexure-3 row 4)', value: otherOf('input') },
+    ...(isNonZeroT(cg.notDone)
+      ? [{ key: 'cg186', label: 'Capital goods sold u/s 18(6): shortfall not yet reversed (Annexure-5)', value: cg.notDone }]
+      : []),
   ]);
   const alreadyPaid = addT(payOutput.setOff, payInput.setOff);
 
@@ -1079,6 +1115,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t5A = C.t5A === null || C.t5A === undefined ? t5ADefault : num(C.t5A);
   const t5Rows: Record<string, number> = { A: t5A };
   GSTR9C_T5_KEYS.forEach((k) => { t5Rows[k] = num(C.t5[k]); });
+  // 5O "reasons not listed above" also carries capital goods sold outside the P&L revenue (Annexure-5),
+  // the register's figure unless typed (t5OCg). POSITION (§6 item 37).
+  const t5OCgDefault = cg.valueOutsidePl;
+  const t5OCg = C.t5OCg === null || C.t5OCg === undefined ? t5OCgDefault : num(C.t5OCg);
+  t5Rows.O += t5OCg;
   const t5P = GSTR9C_T5_KEYS.reduce((s, k) => s + (GSTR9C_T5_SUB.includes(k) ? -t5Rows[k] : t5Rows[k]), t5A);
   const t5Q = C.t5Q === null || C.t5Q === undefined ? totalTurnover.t : num(C.t5Q);
   const pick = (v: number | null | undefined, d: number) => (v === null || v === undefined ? d : num(v));
@@ -1376,6 +1417,15 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     direction: 'R − S', aLabel: 'Eligible ITC by head (R)', bLabel: 'Claimed in GSTR-9 (S)',
   });
 
+  // Capital goods sold that cannot be computed as typed (Annexure-5).
+  cg.assets.forEach((a) => {
+    const c = cg.calc[a.id];
+    if (!c || !c.issues.length) return;
+    push(`cg.${a.id}`, 'purchases', `Capital goods sold — ${a.description || 'asset'}: ${c.issues.join('; ')}`, val(num(a.disposalValue)), val(), {
+      direction: 'Incomplete', aLabel: 'Sale value', bLabel: 'Not computed', hasTaxable: true, hasTax: false,
+    });
+  });
+
   const stepOpen = {
     overview: 0, portal: 0, sales: 0, purchases: 0, duties: 0, rcm: 0, outward: 0, itc: 0,
     expense: 0, annexures: 0, gstr9: 0, gstr9c: 0, notice: 0, review: 0, payables: 0,
@@ -1410,7 +1460,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     itc: {
       inputs, inputServices, inputServicesBooks, importGoods, capitalGoods, rcm: rcmEligible, reclaim: reclaims,
       isd, t6N: t6.N, asPer3B: t6A2, total: withT(inputs.t + inputServices.t + importGoods.t + capitalGoods.t + rcmEligible.t, t6.O),
-      reversal7H1: reversals, s17_5: t7.E, otherReversals: subT(t7I, reversals, t7.E), total7J: t7J,
+      reversal7H1: reversals, cgNotInBooks: cg.notInBooks, asPerBookLedger: dtiNet, s17_5: t7.E, otherReversals: subT(t7I, reversals, t7.E), total7J: t7J,
       asPerBook, residual, t12Suggested, t13Suggested,
     },
     c14: { rows: c14, qTagged, qBalancing, check: c14Check, S: c14S, T: c14T },
@@ -1424,10 +1474,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       t18: (G.t18 || []).map((r) => ({ ...r, tax: rowTax(r) })),
       t19: G.t19,
     },
-    ann1: { A: ann1A, nonGst: ann1NonGst, B: ann1B, C: ann1C, D: ann1D, E: ann1E, F: ann1F, G: ann1G, payable: ann1Payable, paid: ann1Paid, payDiff: ann1PayDiff },
+    ann1: { A: ann1A, nonGst: ann1NonGst, CG: ann1CG, B: ann1B, C: ann1C, D: ann1D, E: ann1E, F: ann1F, G: ann1G, payable: ann1Payable, paid: ann1Paid, payDiff: ann1PayDiff },
     ann2,
     ann3: {
-      clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, rcmGap, excessItc, excessItcSuggested, other: a3Other,
+      clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, rcmGap, excessItc, excessItcSuggested, other: a3Other, cg186: cg.notDone,
       total: ann3Total, payable: ann3Payable, excessPaid: ann3Excess, alreadyPaid,
       balance: maxT0(subT(ann3Payable, alreadyPaid)),
     },
@@ -1441,16 +1491,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       },
     },
     gstr9c: {
-      t5: { A: t5A, P: t5P, Q: t5Q, R: t5Q - t5P, rows: t5Rows },
+      t5: { A: t5A, P: t5P, Q: t5Q, R: t5Q - t5P, rows: t5Rows, OCg: t5OCg },
       t7: c7,
       t9: { rows: c9rows, derived: c9derived, source: t9Source, P: c9P, Q: c9Q, R: c9R },
       t12: { A: c12A, B: c12B, C: c12C, D: c12D, E: c12E, F: c12F },
       t14: { rows: c14, R: c14.R, S: c14S, T: c14T },
-      defaults: { t5A: t5ADefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
+      defaults: { t5A: t5ADefault, t5OCg: t5OCgDefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },
     monthsPresent: byMonth((m) => ({ any: monthsPresent[m], out: outPresent[m], itc: itcPresent[m] })),
     quarterly: { out: qOut, itc: qItc },
+    cg,
     diffs,
     openCount: stepOpen.review,
     stepOpen,

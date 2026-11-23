@@ -21,7 +21,7 @@ export const LOCKED_FIELDS: Partial<Record<DocKey, readonly string[]>> = {
   portal: ['manual', 'f'],
   gstr9: ['t6A1', 't6G', 't7.s17_5', 't9Payable', 't12'],
   annexures: ['a3ExcessItc'],
-  gstr9c: ['t5A', 't5Q', 't7', 't7F', 't9', 't9Q', 't12A', 't12B', 't12C'],
+  gstr9c: ['t5A', 't5OCg', 't5Q', 't7', 't7F', 't9', 't9Q', 't12A', 't12B', 't12C'],
   notice: ['deemedSupplies', 'unreturnedGoods', 'pendingDemands', 'prevYear8C', 'ineligible4D', 'itcUsed4A5', 'reversed4B2'],
 };
 

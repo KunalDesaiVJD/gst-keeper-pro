@@ -69,11 +69,17 @@ const Annexure1: React.FC = () => {
       key: 'A+', code: '', label: 'Net non-GST income as per P/L', value: { t: a.nonGst }, indent: true,
       note: A.a1NonGstIncome ? <Entered /> : <span className="text-[11px] text-muted-foreground">only if included in Table 4</span>,
     },
+    ...(a.CG.t || totalTax(a.CG)
+      ? [{
+        key: 'A+cg', code: '', label: 'Capital goods sold outside the P/L revenue (Annexure-5)', value: a.CG, indent: true,
+        note: <span className="text-[11px] text-muted-foreground">Purchases · Capital goods sold</span>,
+      } as MatrixRow]
+      : []),
     {
       key: 'B', code: 'B', label: 'Sale return as per P/L', value: a.B,
       note: totalTax(sr) || sr.t ? <Entered /> : <span className="text-[11px] text-muted-foreground">only if not netted in Sales</span>,
     },
-    { key: 'C', code: 'C', label: 'Total income from P/L (A + non-GST − B)', value: a.C, total: true },
+    { key: 'C', code: 'C', label: a.CG.t || totalTax(a.CG) ? 'Total income from P/L (A + non-GST + capital goods sold − B)' : 'Total income from P/L (A + non-GST − B)', value: a.C, total: true },
     { key: 'D', code: 'D', label: 'Tax paid on RCM as per books', value: a.D, note: <span className="text-[11px] text-muted-foreground">RCM · Part B</span> },
     { key: 'E', code: 'E', label: 'Total as per books (C + D) — "total as per new GSTR-9"', value: a.E, total: true },
     {

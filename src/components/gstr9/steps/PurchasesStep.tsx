@@ -13,6 +13,7 @@ import { useWorkspace } from '../WorkspaceContext';
 import { HeadLanding } from '../purchases/HeadLanding';
 import { PurchaseSectionGrid } from '../purchases/PurchaseSectionGrid';
 import { PurchasesSummary } from '../purchases/PurchasesSummary';
+import { CapitalGoodsSold } from '../purchases/CapitalGoodsSold';
 import { fillFromRate, rateFlag, SECTION_META, SECTIONS } from '../purchases/purchaseRows';
 import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 
@@ -20,7 +21,7 @@ const HEAD_NAMES = { i: 'IGST', c: 'CGST', s: 'SGST', x: 'Cess' } as const;
 
 /** URL parameter that remembers the open part (the page keeps ?client= and ?step= alongside). */
 const TAB_PARAM = 'purchasestab';
-const TABS = [...SECTIONS, 'summary', 'heads'] as const;
+const TABS = [...SECTIONS, 'cgsold', 'summary', 'heads'] as const;
 type TabKey = (typeof TABS)[number];
 
 /** Short tab names for the three PL-INPUT sections. */
@@ -39,6 +40,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  */
 const PurchasesStep: React.FC = () => {
   const { docs, workings, update, readOnly } = useWorkspace();
+  const cg = workings.cg;
   const [params, setParams] = useSearchParams();
   const p = workings.purchases;
   const rows = docs.purchases.rows;
@@ -148,6 +150,22 @@ const PurchasesStep: React.FC = () => {
               </StepTab>
             );
           })}
+          <StepTab value="cgsold" title="Capital goods sold in the year: s.18(6), Rule 40(2), Rule 44(6)">
+            Capital goods sold
+            <TabSub>s.18(6)</TabSub>
+            {cg.assets.length > 0 && (
+              <Badge variant="secondary" className="h-4 min-w-4 justify-center rounded-full px-1.5 text-[10px] font-normal leading-none" title={plural(cg.assets.length, 'asset')}>
+                <span aria-hidden="true">{cg.assets.length}</span>
+                <span className="sr-only">{plural(cg.assets.length, 'asset')}</span>
+              </Badge>
+            )}
+            {cg.incomplete > 0 && (
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-normal text-foreground" title={`${plural(cg.incomplete, 'asset')} to complete`}>
+                <AlertTriangle className="h-3 w-3 text-warning" aria-hidden="true" />
+                {cg.incomplete} to complete
+              </span>
+            )}
+          </StepTab>
           <StepTab value="summary" title="PL-INPUT rows 71–81">
             ITC summary
             <TabSub>rows 71–81</TabSub>
@@ -170,6 +188,9 @@ const PurchasesStep: React.FC = () => {
             <PurchaseSectionGrid section={s} />
           </TabsContent>
         ))}
+        <TabsContent value="cgsold">
+          <CapitalGoodsSold />
+        </TabsContent>
         <TabsContent value="summary">
           <PurchasesSummary onGo={go} />
         </TabsContent>

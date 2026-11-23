@@ -500,6 +500,37 @@ screen where it applies.
     (`schemeSpans`); a year wholly under Composition / TDS / ISD is not
     applicable. The firm, 24 Oct 2026.
 
+34. **Capital goods sold u/s 18(6) (the firm, 23 Nov 2026).** Each asset sold
+    in the year pays the higher of (a) tax on the transaction value and (b)
+    the ITC taken less 5 percentage points for every quarter or part since the
+    purchase invoice (Rule 40(2), Rule 44(6)). "Higher of" is compared on the
+    total; the shortfall (b − a) is split over the heads of (b) in proportion
+    (IGST bought and CGST + SGST sold is common, so a head-by-head comparison
+    would be wrong). A sale not in a Sales ledger is added to Table 4 (4B for a
+    registered buyer, 4A otherwise), to the 9C Table 9 rate row and to the
+    Duties & Taxes "as per P&L" output tax.
+35. **The shortfall is an ITC reversal**, a computed Table 7H line, unless the
+    client paid it as extra output tax on the invoice (then it is in Table 4).
+    Not yet dealt with in the year, it is Annexure-3 row 5 and an input-side
+    payable. Not yet posted to the books' ITC ledger, it is taken off the book
+    figure of the ITC reco (row 25) and is Annexure-2 A3, so Tables 12/13 and
+    Annexure-2 J are not disturbed by it.
+36. **ITC taken is the credit availed**, before any Rule 42/43 reversal; the
+    figure after Rule 43 reversals to date is shown for information. TRAN-1
+    credit counts as ITC taken, from the original invoice date. ITC not taken
+    (blocked, never availed) and the scrap proviso (refractory bricks, moulds
+    and dies, jigs and fixtures) pay tax on the transaction value only.
+37. **GSTR-9C 5O** carries the sale value of capital goods sold outside the
+    P&L revenue (Annexure-5), added to what is typed in 5O, and overridable
+    (`t5OCg`, source-locked like the other filled-in 9C figures). Annexure-1
+    adds the same value and tax to the books side.
+38. **A quarter is three months from the invoice date**, not a calendar
+    quarter; a part counts in full, so a sale on the invoice date is quarter 1
+    and one on the same date three months later starts quarter 2; 20 quarters
+    reduce the credit to nil (`src/lib/gstr9/quarters.ts`, shared with Rule
+    43 and s.18(4)). Assets written off, lost or destroyed (s.17(5)(h)) are
+    recorded but not computed.
+
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
 rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
@@ -541,3 +572,25 @@ checks the version before starting it.
 | Steps | `components/gstr9/steps/*` + one folder per step |
 | Exports — working papers (Excel via ExcelJS, PDF via jsPDF), GSTR-9 PDF, Notice PDF | `export/papers.ts` builds one working-paper model (WP refs A1 Cover … F1 Revision history) that `export/excel.ts` and `export/pdf.ts` both render, so the two never disagree; `exportWorkbook.ts` / `exportPdf.ts` are the entry points. Every figure comes from `computeWorkings`; the paper layout keeps the firm's sheet names and row labels. ExcelJS and the renderers are lazy-loaded chunks. |
 | Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |
+
+## 9. Capital goods register and s.18(6)
+
+The client's capital goods are one client-level register,
+`capital_goods_register` (migration `20261123120000`), shared with the Rule
+42/43 working: purchase columns (invoice, supplier, ITC per head, put-to-use
+date, use class, with dated changes of use in `capital_goods_use_history`)
+and disposal columns (date, value, rate, output tax, buyer, the scrap proviso,
+related party, whether the sale is in a Sales ledger, how the shortfall was
+dealt with, whether it is in the ITC ledger). RLS is open to public; every
+change is in `gst_change_log`; a trigger refuses an edit in a locked year,
+judged by the year of the date it touches (a sale by its disposal year, a
+purchase change by its invoice year; a new asset by its disposal year only).
+
+The Purchases step's tab **Capital goods sold** shows the assets sold in the
+working's year (and sales still without a date) and computes each
+(`src/lib/gstr9/capitalGoods.ts`, `computeCgSale`, `summariseCgYear`); the
+engine reads the register through `WorkspaceContext.capitalGoods` and lands
+the figures as §6 items 34–37 say. **Annexure-5** (Annexures step, and paper
+C6 of the Excel / PDF working papers) is the per-asset computation schedule.
+Checks: `node --experimental-strip-types scripts/verify-capital-goods-sold.mjs`.
+

@@ -160,10 +160,19 @@ const WorkingCard: React.FC = () => {
     { key: 'rev', code: '7H1', label: 'ITC reversal — suspended ITC as per Duties & Taxes', value: I.reversal7H1 },
     { key: 's175', code: '7E', label: 'As per section 17(5)', value: I.s17_5, note: s175Src },
     { key: 'otherRev', code: '7A–7H', label: 'Other Table 7 reversals (entered below)', value: I.otherReversals },
+    ...(totalTax(workings.cg.reversal) > 0.005
+      ? [{ key: 'cg186', code: '7H', indent: true, label: <span className="text-muted-foreground">of which: reversal u/s 18(6), capital goods sold (Annexure-5)</span>, value: workings.cg.reversal }]
+      : []),
     { key: 't7J', code: '7J', label: 'TOTAL (should match 7(J) of GSTR-9)', value: I.total7J, total: true },
 
     { key: 'hb', heading: true, label: 'Against the books, and next year' },
-    { key: 'book', label: 'AS PER BOOK — Duties & Taxes net ITC, after last-year effect', value: I.asPerBook },
+    ...(totalTax(I.cgNotInBooks) > 0.005
+      ? [
+        { key: 'bookLedger', label: 'Duties & Taxes net ITC, after last-year effect', value: I.asPerBookLedger },
+        { key: 'cgBooks', indent: true, label: <span className="text-muted-foreground">Less: s.18(6) reversal not yet in the ITC ledger (Annexure-5)</span>, value: I.cgNotInBooks },
+      ]
+      : []),
+    { key: 'book', label: totalTax(I.cgNotInBooks) > 0.005 ? 'AS PER BOOK — after the s.18(6) reversal' : 'AS PER BOOK — Duties & Taxes net ITC, after last-year effect', value: I.asPerBook },
     { key: 'res', label: 'Difference: 7J − books', value: I.residual, diffKey: hasLine('itc.books') ? 'itc.books' : undefined, signed: true },
     { key: 't12s', code: '12', label: 'ITC to be reversed in the next year → Table 12', value: I.t12Suggested },
     { key: 't13s', code: '13', label: 'ITC to be claimed in the next year → Table 13 (suggestion)', value: I.t13Suggested },
