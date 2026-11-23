@@ -4,7 +4,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import type { PurchaseRowCalc } from '@/lib/gstr9/engine';
-import type { ExpenseHead, InputSection, PurchaseRow } from '@/lib/gstr9/types';
+import type { CreditUse, ExpenseHead, InputSection, PurchaseRow } from '@/lib/gstr9/types';
+import { CREDIT_USE_LABEL } from '@/lib/gstr9/rule42';
+
+const CREDIT_USE_OPTIONS = (Object.keys(CREDIT_USE_LABEL) as CreditUse[]).map((k) => ({ value: k, label: CREDIT_USE_LABEL[k] }));
 import { SheetGrid, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';
 import { moneyCol, taxFooter, taxInCols } from '../grid/columns';
 import { fmtRate } from '../grid/money';
@@ -25,7 +28,7 @@ import {
 } from './purchaseRows';
 
 /** PL-INPUT columns C–H (Head in books, Taxable value, IGST, CGST, SGST, Rate), then the rest — the paste order. */
-const PURCHASE_PASTE_ORDER = ['ledger', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'rate', 'tax.x', 'supply', 'head'];
+const PURCHASE_PASTE_ORDER = ['ledger', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'rate', 'tax.x', 'supply', 'head', 'use'];
 
 /**
  * The PL-INPUT entry grid for one section. Pasting follows the sheet
@@ -33,7 +36,7 @@ const PURCHASE_PASTE_ORDER = ['ledger', 'taxable', 'tax.i', 'tax.c', 'tax.s', 'r
  * from columns C–H pastes straight in; Cess, Supply and the 9C expense head
  * come after.
  */
-function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<PurchaseRow>[] {
+function buildColumns(calc: Record<string, PurchaseRowCalc>, section: InputSection): GridColumn<PurchaseRow>[] {
   const tax = taxInCols<PurchaseRow>(
     (r) => ({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess }),
     (r, t) => inferSupply({ ...r, igst: t.i, cgst: t.c, sgst: t.s, cess: t.x }),
@@ -127,9 +130,24 @@ function buildColumns(calc: Record<string, PurchaseRowCalc>): GridColumn<Purchas
     onEdit: (r, e) => ({ ...r, head: (e.text || null) as ExpenseHead | null }),
   };
 
-  // Paste order: Ledger, Taxable, IGST, CGST, SGST, Rate, Cess, Supply, Head (display columns are skipped).
+  // Rule 42 credit use (ITC reco › Rule 42/43). Capital goods are Rule 43's and carry no tag.
+  const use: GridColumn<PurchaseRow> = {
+    key: 'use',
+    header: 'Rule 42 use',
+    type: 'select',
+    width: 150,
+    options: CREDIT_USE_OPTIONS,
+    value: (r) => r.use ?? 'common',
+    title: () => 'Rule 42: Common (default), or credit used only for non-business (T1), only for exempt supplies (T2), blocked u/s 17(5) (T3), or only for taxable supplies incl. zero rated (T4)',
+    onEdit: (r, e) => {
+      const { use: _drop, ...rest } = r;
+      return e.text && e.text !== 'common' && e.text in CREDIT_USE_LABEL ? { ...rest, use: e.text as CreditUse } : rest;
+    },
+  };
+
+  // Paste order: Ledger, Taxable, IGST, CGST, SGST, Rate, Cess, Supply, Head, Rule 42 use (display columns are skipped).
   // Rate (and its check) right after the taxable value on screen; pastes keep the sheet's order (PURCHASE_PASTE_ORDER).
-  return [ledger, taxable, rate, implied, ...tax, cess, supply, head];
+  return section === 'capital_goods' ? [ledger, taxable, rate, implied, ...tax, cess, supply, head] : [ledger, taxable, rate, implied, ...tax, cess, supply, head, use];
 }
 
 export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ section }) => {
@@ -138,7 +156,7 @@ export const PurchaseSectionGrid: React.FC<{ section: InputSection }> = ({ secti
   const meta = SECTION_META[section];
   const rows = useMemo(() => docs.purchases.rows.filter((r) => r.section === section), [docs.purchases.rows, section]);
   const calc = workings.purchases.rows;
-  const columns = useMemo(() => buildColumns(calc), [calc]);
+  const columns = useMemo(() => buildColumns(calc, section), [calc, section]);
   const total = workings.purchases.sections[section];
   const flagged = useMemo(() => rows.filter((r) => rateFlag(r, calc[r.id])), [rows, calc]);
 

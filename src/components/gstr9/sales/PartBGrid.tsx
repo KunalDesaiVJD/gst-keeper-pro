@@ -1,5 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
-import type { NonTaxRow } from '@/lib/gstr9/types';
+import { R42_CLASS_DEFAULT, type NonTaxRow, type R42Class } from '@/lib/gstr9/types';
+import { R42_CLASS_LABEL } from '@/lib/gstr9/rule42';
+
+const R42_OPTIONS = (Object.keys(R42_CLASS_LABEL) as R42Class[]).map((k) => ({ value: k, label: R42_CLASS_LABEL[k] }));
 import { useWorkspace } from '../WorkspaceContext';
 import { SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
@@ -39,6 +42,33 @@ const PartBGrid: React.FC = () => {
         onEdit: (r, e) => {
           const nature = natureFromOption(e.text);
           return nature ? { ...r, nature } : r;
+        },
+      },
+      {
+        key: 'r42',
+        header: 'Rule 42 (E / F)',
+        type: 'select',
+        width: 230,
+        options: R42_OPTIONS,
+        value: (r) => r.r42 ?? R42_CLASS_DEFAULT[r.nature],
+        title: () => 'How the ledger counts in Rule 42/43: in E (exempt) and F (turnover), in F only, or in neither. Starts from the nature.',
+        onEdit: (r, e) => {
+          const { r42: _drop, ...rest } = r;
+          if (!e.text || !(e.text in R42_CLASS_LABEL) || e.text === R42_CLASS_DEFAULT[r.nature]) return rest;
+          return { ...rest, r42: e.text as R42Class };
+        },
+      },
+      {
+        key: 'r42Value',
+        header: 'Rule 42 value',
+        type: 'money',
+        width: 130,
+        value: (r) => (r.r42Value === null || r.r42Value === undefined ? null : r.r42Value),
+        placeholder: (r) => r.amount,
+        title: () => 'Only where the value for Rule 42 differs from the ledger: land at its stamp duty value. Securities are taken at 1% by themselves.',
+        onEdit: (r, e) => {
+          const { r42Value: _drop, ...rest } = r;
+          return e.num === null || e.num === undefined ? rest : { ...rest, r42Value: e.num };
         },
       },
       {

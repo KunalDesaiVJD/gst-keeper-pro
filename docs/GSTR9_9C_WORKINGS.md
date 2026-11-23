@@ -499,6 +499,44 @@ screen where it applies.
     marked "part year" in the register and on the workspace chip
     (`schemeSpans`); a year wholly under Composition / TDS / ISD is not
     applicable. The firm, 24 Oct 2026.
+34. **Rule 42 working** (ITC reco › Rule 42/43; `src/lib/gstr9/rule42.ts`,
+    checks `node scripts/verify-gstr9-rule42.mjs`; Kunal, 23 Nov 2026, the
+    roadmap's recommended options). Off until switched on per client and FY;
+    while off, 7C is as typed in Table 7. While on:
+    - per tax period (month, or quarter for QRMP), per head:
+      C1 = T − (T1 + T2 + T3), C2 = C1 − T4, D1 = E ÷ F × C2, D2 = 5% × C2;
+    - **T** is the as-filed GSTR-3B 4A total less the capital goods credit in
+      it (Rule 43's); **T1–T4** and the capital goods credit are the
+      Purchases / RCM credit-use tags for the year, spread over the periods by
+      their share of T unless typed for a period;
+    - **E and F per period** are the as-filed GSTR-3B 3.1 values
+      ((c) + (e), and (a) + (b) + (c) + (e)), kept by the parser from 23 Nov
+      2026 (re-import older months), typed over where the books differ. A
+      period with F nil takes the last period's E ÷ F; a period with no data
+      takes the year's;
+    - **E and F for the year** come from Sales: Part A is F; each Part B ledger
+      has a Rule 42 class (defaulted from its Table 5 nature): exempt, nil,
+      non-taxable, reverse charge outward, Schedule III para 5 and securities
+      (at 1%) are in E and F; zero rated and interest on loans / Entry 84 and
+      92A in F only; other non-supplies in neither. A typed "Rule 42 value"
+      replaces the amount (land at stamp duty value);
+    - **D2 is off** unless switched on with a reason;
+    - **7C = the final for the year** (superadmin override `r42.final7C`,
+      locked in the DB too, `20261123120000`); 7E keeps out of 4B(1) only the
+      Rule 42 part the GSTR-3Bs reversed (the typed "Reversed" per period);
+      Table 12 is not used for the true-up;
+    - **Payables (input side)**: final less reversed, and interest u/s 50 at
+      18% on the true-up from 1 April after the year, and on each short period
+      from its return's due date (20th, 22nd for QRMP), both to the due date of
+      the posting return (default 09 of the next year; a later one is warned).
+      A period marked "Not utilised" (rule 88B(3)) carries no interest and
+      needs a reason. A re-credit is shown, never netted;
+    - difference lines: F and E books vs Σ periods (reason needed), final vs
+      reversed (informational, settled in Payables);
+    - export paper **C2A RULE 42** (with ITC reco and the full set).
+    Not yet: Rule 43 (waits for the shared `capital_goods_register` of the
+    s.18(6) work, 7D stays typed), GSTR-9C Table 13 / 16 wording, reading the
+    approved Builder ITC Reversal working for a promoter's project credit.
 
 34. **Capital goods sold u/s 18(6) (the firm, 23 Nov 2026).** Each asset sold
     in the year pays the higher of (a) tax on the transaction value and (b)
@@ -572,6 +610,7 @@ checks the version before starting it.
 | Steps | `components/gstr9/steps/*` + one folder per step |
 | Exports — working papers (Excel via ExcelJS, PDF via jsPDF), GSTR-9 PDF, Notice PDF | `export/papers.ts` builds one working-paper model (WP refs A1 Cover … F1 Revision history) that `export/excel.ts` and `export/pdf.ts` both render, so the two never disagree; `exportWorkbook.ts` / `exportPdf.ts` are the entry points. Every figure comes from `computeWorkings`; the paper layout keeps the firm's sheet names and row labels. ExcelJS and the renderers are lazy-loaded chunks. |
 | Acceptance test | `scripts/verify-gstr9-engine.mjs` (needs the workbook path) |
+| GSTR-9C portal JSON (offline utility v2.9: shape, codes, checks) | `gstr9cJson.ts`, `components/gstr9/gstr9c/PortalJsonPart.tsx`, `scripts/verify-gstr9c-json.mjs`; read `docs/GSTR9C_PORTAL_JSON.md` (14T is S − R on the form) |
 
 ## 9. Capital goods register and s.18(6)
 

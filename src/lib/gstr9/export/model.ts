@@ -61,7 +61,7 @@ export const STEP_PAPERS: Partial<Record<StepKey, string[]>> = {
   duties: ['B3', 'B4'],
   rcm: ['B5'],
   outward: ['C1'],
-  itc: ['C2'],
+  itc: ['C2', 'C2A'],
   expense: ['C3'],
   annexures: ['C4', 'C6'],
   gstr9: ['D1'],

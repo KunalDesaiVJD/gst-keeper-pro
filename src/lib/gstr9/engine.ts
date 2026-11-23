@@ -38,7 +38,10 @@ import {
   TaxIn,
   ValTax,
   WorkspaceContext,
+  R42_CLASS_DEFAULT,
 } from './types';
+import { emptyRule42 } from './defaults';
+import { computeRule42, R42_CLASS_COUNTS, type R42Tag, type Rule42Result } from './rule42';
 import { summariseCgYear, type CgYearSummary } from './capitalGoods';
 
 // ---------------------------------------------------------------------------
@@ -271,6 +274,8 @@ export interface PayableSideWorking {
 }
 
 export interface Workings {
+  /** Rule 42 working (ITC reco › Rule 42/43); computed whether or not it is switched on. */
+  r42: Rule42Result & { tagged: Record<R42Tag, Tax>; books: { e: number; f: number } };
   ctx: WorkspaceContext;
   tolerance: number;
 
@@ -496,7 +501,7 @@ export interface Workings {
       R: Tax;
     };
     t12: { A: Tax; B: Tax; C: Tax; D: Tax; E: Tax; F: Tax };
-    t14: { rows: Record<string, ValTax>; R: ValTax; S: Tax; T: Tax };
+    t14: { rows: Record<string, ValTax>; R: ValTax; S: Tax; /** S − R, as the form reads (the firm's sheet `c14.T` is R − S). */ T: Tax };
     /** The computed value of every "computed unless typed" 9C cell, whether or not it is overridden. */
     defaults: {
       t5A: number;
@@ -928,13 +933,51 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   t6.O = addT(t6.I, t6.N);
 
   // ------------------------------------------------------------ Table 7
+  // ------------------------------------------------------------ Rule 42 (common credit, exempt supplies)
+  const R42 = G.r42 ?? emptyRule42();
+  const r42Tagged: Record<R42Tag, Tax> = { t1: tax(), t2: tax(), t3: tax(), t4: tax(), cg: tax() };
+  docs.purchases.rows.forEach((r) => {
+    const t = rowTax(r);
+    if (r.section === 'capital_goods') { r42Tagged.cg = addT(r42Tagged.cg, t); return; }
+    const u = r.use;
+    if (u === 't1' || u === 't2' || u === 't3' || u === 't4') r42Tagged[u] = addT(r42Tagged[u], t);
+  });
+  docs.rcm.categories.forEach((cat) => {
+    const tbl: RcmItcTable = cat.itcTable && cat.itcTable in byItcTable ? cat.itcTable : '6C';
+    if (tbl === 'none') return; // no credit taken, so none in T
+    const t = taxOf(rcmCats[cat.id].total);
+    if (cat.itcType === 'cg') { r42Tagged.cg = addT(r42Tagged.cg, t); return; }
+    const u = cat.use;
+    if (u === 't1' || u === 't2' || u === 't3' || u === 't4') r42Tagged[u] = addT(r42Tagged[u], t);
+  });
+  const r42Books = { e: 0, f: partA.t };
+  docs.sales.partB.forEach((r) => {
+    const cls = r.r42 ?? R42_CLASS_DEFAULT[r.nature] ?? 'non_taxable';
+    const k = R42_CLASS_COUNTS[cls] ?? R42_CLASS_COUNTS.non_taxable;
+    const v = (r.r42Value === null || r.r42Value === undefined ? num(r.amount) : num(r.r42Value)) * k.factor;
+    if (k.f) r42Books.f += v;
+    if (k.e) r42Books.e += v;
+  });
+  const r42 = computeRule42({
+    financialYear: ctx.financialYear,
+    quarterly: !!ctx.quarterly,
+    doc: R42,
+    months: byMonth((m) => ({ itc: P.months[m].itc4aTotal, turnover: P.months[m].turnover ?? null })),
+    tagged: r42Tagged,
+    books: r42Books,
+  });
+  const r42On = !!R42.enabled && !ctx.noItcBuilder;
+  // POSITION (Rule 42 working): 7C is the year's final figure; 7E keeps out only what the GSTR-3Bs reversed under Rule 42.
+  const t7C = r42On ? r42.t7C : tin(G.t7.r42);
+  const r42In4B1 = r42On ? r42.reversed : tin(G.t7.r42);
+
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
   // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
   // 4B(1) less what is typed in 7A2, 7C and 7D (never below nil), so they are not counted twice;
   // the sheet's 9-INPUT E21 takes all of 4B(1).
-  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), tin(G.t7.r42), tin(G.t7.r43)));
+  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), r42In4B1, tin(G.t7.r43)));
   const t7: Record<Table7Key, Tax> = {
-    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: tin(G.t7.r42), D: tin(G.t7.r43),
+    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: t7C, D: tin(G.t7.r43),
     E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? t7E4B1 : tin(G.t7.s17_5),
     F: tin(G.t7.tran1), G: tin(G.t7.tran2),
   };
@@ -1031,7 +1074,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   c14.R = addV(beforeQ, c14.Q); // D28
   const c14Check = subV(netItc, c14.R); // D30
   const c14S = t7J;
-  const c14T = subT(taxOf(c14.R), c14S);
+  const c14T = subT(taxOf(c14.R), c14S); // the firm's sheet: R − S
+  // The form (and the 9C offline utility, H25 = H24 − H23): 14T = S − R.
+  const t14FormT = subT(c14S, taxOf(c14.R));
 
   // ------------------------------------------------------------ Annexure-1 (income reco)
   const A = docs.annexures;
@@ -1103,6 +1148,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const payInput = payableSide('input', [
     { key: 'excessItc', label: 'Excess ITC claimed as per reconciliation (Annexure-3 row 3)', value: excessItc },
     { key: 'other', label: 'Other payments — input (Annexure-3 row 4)', value: otherOf('input') },
+    ...(r42On ? [
+      { key: 'r42', label: 'Rule 42 reversal still due: final for the year less reversed in the GSTR-3Bs', value: r42.payable },
+      { key: 'r42Interest', label: 'Interest u/s 50 on Rule 42 (true-up from 1 April, short months from their due dates)', value: r42.interest },
+    ] : []),
     ...(isNonZeroT(cg.notDone)
       ? [{ key: 'cg186', label: 'Capital goods sold u/s 18(6): shortfall not yet reversed (Annexure-5)', value: cg.notDone }]
       : []),
@@ -1244,7 +1293,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     label: string,
     a: ValTax,
     b: ValTax,
-    opts: { direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean },
+    opts: { direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean; legacyFlip?: boolean },
   ) => {
     const hasTaxable = opts.hasTaxable ?? false;
     const hasTax = opts.hasTax ?? true;
@@ -1255,8 +1304,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const j = J[key] || null;
     let stale = false;
     if (j && j.diffAt) {
-      const moved = subV(diff, { ...val(), ...j.diffAt });
-      stale = Math.max(hasTax ? maxAbs(moved) : 0, hasTaxable ? Math.abs(moved.t) : 0) > tol + 1e-9;
+      const at = { ...val(), ...j.diffAt };
+      const movedBy = (m: ValTax) => Math.max(hasTax ? maxAbs(m) : 0, hasTaxable ? Math.abs(m.t) : 0);
+      stale = movedBy(subV(diff, at)) > tol + 1e-9;
+      // A line whose direction was turned round: a reason recorded against the old sign still fits.
+      if (stale && opts.legacyFlip) stale = movedBy(addV(diff, at)) > tol + 1e-9;
     }
     const hasText = !!j && !!j.text && !!j.text.trim();
     diffs.push({
@@ -1276,6 +1328,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('purchases.dt', 'purchases', 'Net ITC: P&L vs Duties & Taxes (PL-INPUT row 81)', withT(0, taxOf(netItc)), withT(0, dtiNet), {
     direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net',
   });
+  if (r42On) {
+    push('itc.r42F', 'itc', 'Rule 42: total turnover F, books vs the periods', val(r42Books.f), val(r42.periodsF), {
+      direction: 'Books − periods', aLabel: 'Books (Sales)', bLabel: 'Σ periods (3B / typed)', hasTaxable: true, hasTax: false,
+    });
+    push('itc.r42E', 'itc', 'Rule 42: exempt supplies E, books vs the periods', val(r42Books.e), val(r42.periodsE), {
+      direction: 'Books − periods', aLabel: 'Books (Sales)', bLabel: 'Σ periods (3B / typed)', hasTaxable: true, hasTax: false,
+    });
+    push('itc.r42Net', 'itc', 'Rule 42: final for the year vs reversed in the GSTR-3Bs (settled in Payables)', withT(0, r42.annual.final), withT(0, r42.reversed), {
+      direction: 'Final − reversed', aLabel: 'Final (rule 42(2))', bLabel: 'Reversed in 4(B)(1)', informational: true,
+    });
+  }
   const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
     if (!months.length) return;
     push(key, step, `${what}: GSTR-3B not fetched for ${months.map((m) => MONTH_LABEL[m]).join(', ')}`, withT(0, books), val(), {
@@ -1413,8 +1476,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('gstr9c.12F', 'gstr9c', 'GSTR-9C 12F: un-reconciled ITC (E − D)', withT(0, c12E), withT(0, c12D), {
     direction: 'E − D', aLabel: 'Claimed in GSTR-9 (E)', bLabel: 'As per books (D)',
   });
-  push('gstr9c.14T', 'gstr9c', 'GSTR-9C 14T: un-reconciled ITC by expense head (R − S)', withT(0, taxOf(c14.R)), withT(0, c14S), {
-    direction: 'R − S', aLabel: 'Eligible ITC by head (R)', bLabel: 'Claimed in GSTR-9 (S)',
+  // 14T is S − R as the form and the 9C utility read it (it was R − S before 23 Nov 2026; a
+  // justification recorded against the old sign still stands, see `legacyFlip`).
+  push('gstr9c.14T', 'gstr9c', 'GSTR-9C 14T: un-reconciled ITC by expense head (S − R)', withT(0, c14S), withT(0, taxOf(c14.R)), {
+    direction: 'S − R', aLabel: 'Claimed in GSTR-9 (S)', bLabel: 'Eligible ITC by head (R)', legacyFlip: true,
   });
 
   // Capital goods sold that cannot be computed as typed (Annexure-5).
@@ -1435,6 +1500,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   return {
     ctx,
     tolerance: tol,
+    r42: { ...r42, enabled: r42On, tagged: r42Tagged, books: { e: Math.round(r42Books.e * 100) / 100, f: Math.round(r42Books.f * 100) / 100 } },
     sales: {
       rows: salesRows, partA, partATaxable: partA.t, partBTotal, partBByNature,
       total: salesTotal, auditReportTotal, auditDiff, byRate,
@@ -1495,7 +1561,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       t7: c7,
       t9: { rows: c9rows, derived: c9derived, source: t9Source, P: c9P, Q: c9Q, R: c9R },
       t12: { A: c12A, B: c12B, C: c12C, D: c12D, E: c12E, F: c12F },
-      t14: { rows: c14, R: c14.R, S: c14S, T: c14T },
+      t14: { rows: c14, R: c14.R, S: c14S, T: t14FormT },
       defaults: { t5A: t5ADefault, t5OCg: t5OCgDefault, t5Q: totalTurnover.t, t7: t7Default, t9: c9defaults, t9Q: c9QDefault, t12: c12Default },
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },

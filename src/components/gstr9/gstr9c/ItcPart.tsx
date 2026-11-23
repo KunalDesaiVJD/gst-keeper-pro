@@ -134,7 +134,7 @@ export const Table14Card: React.FC = () => {
     rows.push(
       { key: 'R', code: '14R', label: 'Total amount of eligible ITC availed', value: W.t14.R, total: true },
       { key: 'S', code: '14S', label: 'ITC claimed in annual return (GSTR-9)', value: W.t14.S, note: <span className="text-[10px] text-muted-foreground">= GSTR-9 7J</span> },
-      { key: 'T', code: '14T', label: 'Un-reconciled ITC (R − S)', value: W.t14.T, total: true, signed: true, diffKey: 'gstr9c.14T' },
+      { key: 'T', code: '14T', label: 'Un-reconciled ITC (S − R)', value: W.t14.T, total: true, signed: true, diffKey: 'gstr9c.14T' },
     );
     return rows;
   }, [W.t14]);
