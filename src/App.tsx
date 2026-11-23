@@ -1,4 +1,6 @@
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
+import { lazyWithReload as lazy } from "@/lib/chunkReload";
+import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -82,6 +84,7 @@ installDocLinkRewriter();
 const queryClient = new QueryClient();
 
 const App = () => (
+  <ErrorBoundary variant="app">
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <ConfirmProvider>
@@ -175,6 +178,7 @@ const App = () => (
       </ConfirmProvider>
     </TooltipProvider>
   </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

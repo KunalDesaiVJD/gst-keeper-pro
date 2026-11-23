@@ -1,5 +1,6 @@
 import React, { Suspense, useState } from 'react';
-import { Outlet, Navigate } from 'react-router-dom';
+import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
 import NotificationBell from '@/components/notices/NotificationBell';
@@ -14,6 +15,7 @@ import logo from '@/assets/logo.png';
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
+  const location = useLocation();
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -75,7 +77,10 @@ const MainLayout: React.FC = () => {
           {/* CAPTCHAs waiting for a person (portal autopilot), on every staff page. */}
           {isStaffRole() && <AutopilotBadge />}
           {/* The sidebar stays while the next page's code loads. */}
-          <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
+          {/* A page that fails shows a message here; the sidebar stays (never a blank screen). */}
+          <ErrorBoundary resetKey={location.pathname}>
+            <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
