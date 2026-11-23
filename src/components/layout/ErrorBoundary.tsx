@@ -5,8 +5,8 @@ import { isChunkLoadError, reloadOnceForNewBuild } from "@/lib/chunkReload";
 
 type Props = {
   children: React.ReactNode;
-  /** "page" keeps the sidebar and shows the message in the content area; "app" fills the screen; "silent" shows nothing (a side panel). */
-  variant?: "page" | "app" | "silent";
+  /** "page" keeps the sidebar and shows the message in the content area; "app" fills the screen. */
+  variant?: "page" | "app";
   /** A change (the route's path) clears the error, so the next page renders normally. */
   resetKey?: string;
 };
@@ -38,7 +38,6 @@ export class ErrorBoundary extends React.Component<Props, State> {
     const { error } = this.state;
     if (!error) return this.props.children;
 
-    if (this.props.variant === "silent") return null;
     const chunk = isChunkLoadError(error);
     const app = this.props.variant === "app";
 

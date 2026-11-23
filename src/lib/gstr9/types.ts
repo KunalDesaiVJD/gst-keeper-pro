@@ -485,6 +485,11 @@ export interface Rule42Doc {
   postingPeriod: string | null;
   /** 7C override (superadmin) — null = the working's final figure. */
   final7C: TaxIn | null;
+  /**
+   * The turnover method (E ÷ F) of Rules 42 and 43 — absent/true = on. A builder whose credit is all
+   * project credit (apportioned by carpet area in the approved Builder ITC Reversal working) turns it off.
+   */
+  turnover?: boolean;
   /** 7D override (superadmin) — null/absent = the Rule 43 working's Σ Te. */
   final7D?: TaxIn | null;
   months: Record<MonthKey, Rule42Month>;
@@ -781,4 +786,6 @@ export interface WorkspaceContext {
    * assets disposed of in this FY (s.18(6), capitalGoods.ts). None when omitted.
    */
   capitalGoods?: CapitalGoodsAsset[];
+  /** Builder clients: the approved Builder ITC Reversal workings (all years); the engine takes those posted in this FY. */
+  builderReversals?: import('./builderReversal').BuilderReversalWorking[];
 }

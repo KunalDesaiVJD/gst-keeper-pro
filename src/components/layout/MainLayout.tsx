@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
+import { lazyWithReload } from '@/lib/chunkReload';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
 import NotificationBell from '@/components/notices/NotificationBell';
@@ -12,11 +13,18 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
-import { lazyWithReload } from '@/lib/chunkReload';
-import { installBuildWatcher, newBuildAvailable } from '@/lib/buildVersion';
+import { checkForNewBuild, installBuildWatcher, newBuildAvailable } from '@/lib/buildVersion';
 
 // The GST Assistant, loaded once a staff page is up.
+// The assistant never takes the screen down with it: its own chunk reloads
+// like a page's after a deploy, and an error in it hides only the panel.
 const AssistantPanel = lazyWithReload(() => import('@/components/assistant/AssistantPanel'));
+class AssistantBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error('[GST Assistant]', error); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
@@ -31,6 +39,7 @@ const MainLayout: React.FC = () => {
   useEffect(() => {
     if (firstPath.current) { firstPath.current = false; return; }
     if (newBuildAvailable()) window.location.reload();
+    else void checkForNewBuild();
   }, [location.pathname]);
 
   if (isLoading) {
@@ -96,8 +105,7 @@ const MainLayout: React.FC = () => {
             <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
           </ErrorBoundary>
         </main>
-        {/* The assistant failing never takes the page with it. */}
-        {isStaffRole() && <ErrorBoundary variant="silent"><Suspense fallback={null}><AssistantPanel /></Suspense></ErrorBoundary>}
+        {isStaffRole() && <AssistantBoundary><Suspense fallback={null}><AssistantPanel /></Suspense></AssistantBoundary>}
       </div>
 
       {/* Ctrl K / ⌘K search over clients and notices - only for staff */}

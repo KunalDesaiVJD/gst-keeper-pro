@@ -2,7 +2,8 @@
 // pages and src/lib/permissionCatalog.ts. Do not edit: `npm run build` and
 // `npm run typecheck` write it again, so the GST Assistant knows every screen
 // as it is in the deploy.
-export interface AssistantScreen { route: string; menu: string | null; component: string | null; staffOnly: boolean; redirectsTo: string | null; title: string | null; subtitle: string | null; tabs: string[]; buttons: string[] }
+export interface AssistantScreen { route: string; menu: string | null; component: string | null; staffOnly: boolean; redirectsTo: string | null; title: string | null; subtitle: string | null; tabs: string[]; buttons: string[]; sections: AssistantSection[] }
+export interface AssistantSection { tab: string; component: string; title: string | null; tabs: string[]; buttons: string[] }
 export interface AssistantPermission { key: string; group: string; label: string; description: string }
 export const ASSISTANT_SCREENS: AssistantScreen[] = [
  {
@@ -15,8 +16,13 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
+   "Check code",
+   "Dispute",
+   "Confirm",
+   "Back",
    "Submit dispute"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/reset-password",
@@ -31,7 +37,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Send a new link",
    "Back to sign in",
    "Go to sign in"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/d/:id",
@@ -42,7 +49,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Log in again",
+   "Download again",
+   "Download"
+  ],
+  "sections": []
  },
  {
   "route": "/engagement/:token",
@@ -54,8 +66,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Read the full letter"
-  ]
+   "Read the full engagement letter",
+   "Read the full letter",
+   "Send to the firm",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/dashboard",
@@ -66,7 +82,13 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Task Reminder",
+   "Return-wise Breakdown",
+   "Open Clients",
+   "Download Portal"
+  ],
+  "sections": []
  },
  {
   "route": "/client-documents",
@@ -77,7 +99,11 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "Documents requested",
   "subtitle": "What your CA team needs from you to reply to GST notices",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Refresh",
+   "Try again"
+  ],
+  "sections": []
  },
  {
   "route": "/add-client",
@@ -88,7 +114,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "Add New Client",
   "subtitle": "Fill in the client details below",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Cancel",
+   "Use PAN as password",
+   "Download Template"
+  ],
+  "sections": []
  },
  {
   "route": "/edit-client/:clientId",
@@ -97,9 +128,17 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "staffOnly": true,
   "redirectsTo": null,
   "title": "Edit Client",
-  "subtitle": null,
+  "subtitle": "What the firm does for this client, in any combination. Each module lists only the clients ticked for it.",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Cancel",
+   "Save reminder settings",
+   "Add Year",
+   "Edit",
+   "Send alert",
+   "Reset app password"
+  ],
+  "sections": []
  },
  {
   "route": "/clients",
@@ -109,8 +148,23 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": "Clients",
   "subtitle": "Manage your client database",
-  "tabs": [],
-  "buttons": []
+  "tabs": [
+   "Clients",
+   "Services",
+   "Credentials"
+  ],
+  "buttons": [
+   "Add Client",
+   "Excel",
+   "PDF",
+   "Download Template",
+   "Liberal / Strict",
+   "Undo",
+   "Discard",
+   "E-mail reset link",
+   "Set password"
+  ],
+  "sections": []
  },
  {
   "route": "/2b-reconciliation",
@@ -122,9 +176,19 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
+   "Discard",
    "Import Excel",
-   "Export Excel"
-  ]
+   "Export Excel",
+   "Clear Data",
+   "View Versions",
+   "Reload",
+   "History",
+   "Cancel",
+   "View",
+   "Restore",
+   "Download"
+  ],
+  "sections": []
  },
  {
   "route": "/2b-and-rcm",
@@ -134,8 +198,75 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": "2B and RCM",
   "subtitle": "Import GSTR-2B, reconcile against books, track suspended & receivable items",
-  "tabs": [],
-  "buttons": []
+  "tabs": [
+   "Import 2B",
+   "2B Reconciliation",
+   "Suspended Reco"
+  ],
+  "buttons": [],
+  "sections": [
+   {
+    "tab": "2B Reconciliation",
+    "component": "TwoBReconciliationPage",
+    "title": "2B Reconciliation",
+    "tabs": [],
+    "buttons": [
+     "Discard",
+     "Import Excel",
+     "Export Excel",
+     "Clear Data",
+     "View Versions",
+     "Reload",
+     "History",
+     "Cancel",
+     "View",
+     "Restore",
+     "Download"
+    ]
+   },
+   {
+    "tab": "Suspended Reco",
+    "component": "SuspendedRecoPage",
+    "title": "Suspended Reconciliation",
+    "tabs": [],
+    "buttons": [
+     "Pull",
+     "Export Excel",
+     "Save Changes",
+     "Clear Data",
+     "Not Applicable",
+     "Upload",
+     "Override",
+     "Cancel",
+     "Revoke",
+     "Allow manual entry",
+     "Check again"
+    ]
+   },
+   {
+    "tab": "Import 2B",
+    "component": "Import2BTab",
+    "title": "Import 2B",
+    "tabs": [],
+    "buttons": [
+     "Pull from portal",
+     "Import file",
+     "Delete 2B",
+     "Bring the reconciliation up to date",
+     "Apply",
+     "Discard",
+     "Save changes",
+     "Add row",
+     "Expense out",
+     "Undo book entry",
+     "Undo",
+     "Cancel",
+     "Save",
+     "Email bills not in books",
+     "Download the Excel"
+    ]
+   }
+  ]
  },
  {
   "route": "/suspended-reco",
@@ -148,10 +279,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Pull",
+   "Export Excel",
    "Save Changes",
+   "Clear Data",
    "Not Applicable",
-   "Upload"
-  ]
+   "Upload",
+   "Override",
+   "History",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/itc-summary",
@@ -161,8 +298,43 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
-  "buttons": []
+  "tabs": [
+   "ITC Summary",
+   "GST Receivable Reco"
+  ],
+  "buttons": [],
+  "sections": [
+   {
+    "tab": "ITC Summary",
+    "component": "ITCSummaryPage",
+    "title": "ITC Summary",
+    "tabs": [],
+    "buttons": [
+     "Export PDF",
+     "Clear Data",
+     "Versions",
+     "Use project figures"
+    ]
+   },
+   {
+    "tab": "GST Receivable Reco",
+    "component": "GstReceivableRecoPage",
+    "title": "GST Receivable Reco",
+    "tabs": [],
+    "buttons": [
+     "Pull",
+     "Export Excel",
+     "Not Applicable",
+     "Upload",
+     "Override",
+     "History",
+     "Cancel",
+     "Revoke",
+     "Allow manual entry",
+     "Check again"
+    ]
+   }
+  ]
  },
  {
   "route": "/rcm-summary",
@@ -174,10 +346,23 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "Reverse Charge Mechanism, month by month",
   "tabs": [],
   "buttons": [
+   "History",
    "Export PDF",
    "Export Excel",
-   "Save changes"
-  ]
+   "Clear Data",
+   "Manage Masters",
+   "Save changes",
+   "Cancel",
+   "Add row",
+   "Save Master",
+   "GST",
+   "Open GST Portal",
+   "Open GST Portal Anyway",
+   "View",
+   "Restore",
+   "Download"
+  ],
+  "sections": []
  },
  {
   "route": "/manage-masters",
@@ -188,7 +373,11 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "Manage RCM Masters",
   "subtitle": "Add, edit, or delete expense masters",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Add Master",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/filing-status",
@@ -200,8 +389,15 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "GST return filing status for all clients",
   "tabs": [],
   "buttons": [
-   "Export PDF"
-  ]
+   "Export PDF",
+   "History",
+   "Send to superadmin",
+   "Approve",
+   "Reject",
+   "Cancel",
+   "Attach and mark Filed"
+  ],
+  "sections": []
  },
  {
   "route": "/reminders",
@@ -214,14 +410,72 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [
    "Reminder dates",
    "Send now",
-   "Outbox )` : ''}",
    "Clients",
    "E-mail wording",
    "Notice alerts"
   ],
   "buttons": [
    "Send queued now",
-   "Refresh"
+   "Refresh",
+   "Stop selected",
+   "Stop all queued shown",
+   "Save template"
+  ],
+  "sections": [
+   {
+    "tab": "Reminder dates",
+    "component": "ReminderDatesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Change",
+     "E-mail",
+     "Move several returns' reminders",
+     "Don't send",
+     "Earlier",
+     "Later",
+     "Cancel",
+     "Save for",
+     "Save return",
+     "Save standard dates",
+     "Write my own for",
+     "Use the template",
+     "Close"
+    ]
+   },
+   {
+    "tab": "Send now",
+    "component": "SendNowTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "The template",
+     "Write my own for this send",
+     "Show who gets it",
+     "Queue for client",
+     "Check today",
+     "Queue today's now"
+    ]
+   },
+   {
+    "tab": "Clients",
+    "component": "ReminderClientsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Turn on",
+     "Turn off"
+    ]
+   },
+   {
+    "tab": "Notice alerts",
+    "component": "NoticeAlertsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Run notice alerts"
+    ]
+   }
   ]
  },
  {
@@ -234,10 +488,15 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
+   "History",
+   "Export PDF",
    "Add row",
    "Save changes",
-   "Clear"
-  ]
+   "View",
+   "Restore",
+   "Download"
+  ],
+  "sections": []
  },
  {
   "route": "/gstr1-data",
@@ -252,7 +511,15 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Refresh errors",
    "Import Error Report",
    "Delete",
+   "Prepare in Builder Returns",
    "Import JSON",
+   "Upload to GST Portal",
+   "Push NIL return",
+   "Retry",
+   "View errors",
+   "Copy list",
+   "View error",
+   "Generate Summary",
    "Cancel",
    "Save",
    "Edit HSN Summary",
@@ -260,8 +527,10 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add Row",
    "Merge Duplicates",
    "Download JSON",
-   "Confirm &amp; Push NIL"
-  ]
+   "Download PDF",
+   "History"
+  ],
+  "sections": []
  },
  {
   "route": "/gstr3b",
@@ -274,8 +543,13 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "JSON",
-   "PDF"
-  ]
+   "PDF",
+   "Suspended Reco",
+   "GST Receivable Reco",
+   "Review",
+   "History"
+  ],
+  "sections": []
  },
  {
   "route": "/gstr3b-adjustments",
@@ -287,10 +561,23 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "GSTR-1A tracking and manual corrections that GSTR-1 / ITC Summary / RCM don",
   "tabs": [
    "Manual Adjustments",
-   "GSTR-1A"
+   "GSTR-1A",
+   "Other"
   ],
   "buttons": [
-   "Save"
+   "Add Adjustment",
+   "Save",
+   "Add adjustment for this GSTR-1A",
+   "Cancel"
+  ],
+  "sections": [
+   {
+    "tab": "Manual Adjustments",
+    "component": "Note",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   }
   ]
  },
  {
@@ -306,14 +593,39 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Register",
    "Set-off",
    "Projects",
-   "Approvals )}",
-   "}>All clients"
+   "All clients"
   ],
   "buttons": [
    "Write Table 11A to GSTR-1 draft",
+   "Add receipt",
    "Record set-off",
    "Write Table 11B to GSTR-1 draft",
-   "Refresh"
+   "Refresh",
+   "Cancel",
+   "Approve",
+   "Reject"
+  ],
+  "sections": [
+   {
+    "tab": "Ledger",
+    "component": "SectionCard",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Projects",
+    "component": "ContractProjectsPanel",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Working paper",
+     "New project",
+     "Edit",
+     "Add RA bill",
+     "Cancel"
+    ]
+   }
   ]
  },
  {
@@ -327,8 +639,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "All clients",
-   "History"
-  ]
+   "History",
+   "Retry",
+   "Load older changes",
+   "Excel"
+  ],
+  "sections": []
  },
  {
   "route": "/builder",
@@ -338,10 +654,64 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": "Builder",
   "subtitle": "GST on real estate projects",
-  "tabs": [],
+  "tabs": [
+   "Ledger",
+   "BU Working",
+   "TDR / FSI",
+   "ITC Reversal",
+   "Returns"
+  ],
   "buttons": [
    "Record receipts",
-   "Opening balances"
+   "Opening balances",
+   "Client setup",
+   "Open",
+   "Edit",
+   "Send confirmation",
+   "Save",
+   "Mark confirmation received",
+   "New project",
+   "Up to",
+   "register",
+   "Project",
+   "View in Adjustments",
+   "Delete selected",
+   "More actions for unit",
+   "Add joint holder",
+   "Clear dastavej date",
+   "Cancel",
+   "Book unit",
+   "Update unit value now",
+   "Record receipt",
+   "Raise invoice",
+   "New BU event",
+   "Post",
+   "Unpost",
+   "Prepare event",
+   "Prepare working",
+   "Commit",
+   "Request instruction",
+   "Record confirmation",
+   "Resend",
+   "Approve",
+   "Save working",
+   "Record",
+   "Start the working for BU",
+   "Submit for approval",
+   "Approve and post to GSTR-3B",
+   "Delete project",
+   "Save opening balance"
+  ],
+  "sections": [
+   {
+    "tab": "Returns",
+    "component": "BuilderReturnsPage",
+    "title": "Builder Returns Workpaper",
+    "tabs": [],
+    "buttons": [
+     "Open GSTR-1"
+    ]
+   }
   ]
  },
  {
@@ -350,14 +720,15 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderSettingsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "Builder Setup",
+  "subtitle": "Client-level GST elections for real estate projects, and the written confirmation trail",
   "tabs": [],
   "buttons": [
    "Send confirmation",
    "Save",
    "Mark confirmation received"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects",
@@ -365,12 +736,14 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderProjectsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "Builder Projects",
+  "subtitle": "RERA projects, their commercial mix, and the 15% RREP test",
   "tabs": [],
   "buttons": [
+   "Client setup",
    "New project"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId",
@@ -380,15 +753,21 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [
-   "Units ( )",
-   "s ( )"
-  ],
+  "tabs": [],
   "buttons": [
+   "Back",
+   "TDR / FSI",
+   "Adjustments",
+   "BU Events",
+   "Bookings & Receipts",
+   "Add many",
+   "Opening balances",
    "Add unit",
    "Add",
+   "Cancel",
    "Save"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/bookings",
@@ -396,17 +775,52 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderBookingsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)",
+  "subtitle": "Advances bear tax on receipt (Table 11A); milestone invoices absorb them (Table 11B)",
   "tabs": [],
   "buttons": [
+   "Up to",
+   "register",
+   "Project",
+   "Record receipts",
+   "View in Adjustments",
    "Delete selected",
    "More actions for unit",
+   "Add joint holder",
    "Clear dastavej date",
+   "Cancel",
+   "Book unit",
    "Save",
+   "Update unit value now",
    "Record receipt",
-   "Raise invoice"
-  ]
+   "Raise invoice",
+   "Back",
+   "TDR / FSI",
+   "Adjustments",
+   "BU Events",
+   "Bookings & Receipts",
+   "Add many",
+   "Opening balances",
+   "Add unit",
+   "Add",
+   "Re-check for re-rating",
+   "Schedule",
+   "Post",
+   "PDF",
+   "Excel",
+   "Mark filed",
+   "Reverse",
+   "Record conversion",
+   "Raise credit note",
+   "Show all units",
+   "Offset",
+   "Restate",
+   "Record payment",
+   "Confirm cancellation",
+   "Save schedule",
+   "Close"
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/bu-events",
@@ -414,12 +828,18 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderBuEventsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "The whole balance on every unit booked before its cut-off becomes taxable in the BU month",
+  "subtitle": "The whole balance on every unit booked before its cut-off becomes taxable in the BU month",
   "tabs": [],
   "buttons": [
+   "Project",
+   "New BU event",
+   "Post",
+   "Unpost",
+   "Cancel",
    "Prepare event"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/adjustments",
@@ -427,27 +847,34 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderAdjustmentsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
-  "tabs": [
-   "Re-rating }",
-   "Conversions ( )",
-   "Credit notes ( )",
-   "Bounce register }",
-   "Excess tax ( )",
-   "Cancellations ( )"
-  ],
+  "title": "Re-rating, conversions, credit notes, bounce reversals and excess tax",
+  "subtitle": "Re-rating, conversions, credit notes, bounce reversals and excess tax",
+  "tabs": [],
   "buttons": [
-   "Confirm cancellation",
-   "Record payment",
-   "Save schedule",
+   "Project",
+   "Re-check for re-rating",
+   "Schedule",
+   "Post",
+   "PDF",
+   "Excel",
+   "Mark filed",
    "Reverse",
+   "Record conversion",
+   "Raise credit note",
+   "Show all units",
+   "Offset",
+   "Restate",
+   "Record payment",
+   "Cancel",
+   "Confirm cancellation",
+   "Save schedule",
    "Save",
    "Add",
+   "Close",
    "Raise note",
-   "Record",
-   "Restate"
-  ]
+   "Record"
+  ],
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/fsi",
@@ -455,13 +882,22 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderFsiPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "Reverse charge on development rights, crystallising at each BU date",
+  "subtitle": "Reverse charge on development rights, crystallising at each BU date",
   "tabs": [],
   "buttons": [
+   "Project",
+   "Prepare working",
+   "Commit",
+   "Request instruction",
+   "Record confirmation",
+   "Resend",
+   "Approve",
+   "Cancel",
    "Save working",
    "Record"
-  ]
+  ],
+  "sections": []
  },
  {
   "route": "/builder-returns",
@@ -469,10 +905,13 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "component": "BuilderReturnsPage",
   "staffOnly": false,
   "redirectsTo": null,
-  "title": null,
-  "subtitle": null,
+  "title": "Builder Returns Workpaper",
+  "subtitle": "What the builder",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Open GSTR-1"
+  ],
+  "sections": []
  },
  {
   "route": "/builder-dastavej",
@@ -483,7 +922,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/builder-reports",
@@ -493,8 +933,14 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": "Builder Reports",
   "subtitle": "Audit-style working papers and client statements",
-  "tabs": [],
-  "buttons": []
+  "tabs": [
+   "All units"
+  ],
+  "buttons": [
+   "Excel",
+   "PDF"
+  ],
+  "sections": []
  },
  {
   "route": "/reports",
@@ -505,7 +951,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "Reports",
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Pull",
+   "Preview",
+   "Excel",
+   "PDF",
+   "This FY",
+   "Last FY",
+   "Clear filters"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-dashboard",
@@ -516,7 +971,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Retry",
+   "Connect extension",
+   "Check again",
+   "Update extension",
+   "Sync now",
+   "Add notice",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-company-list",
@@ -528,8 +992,10 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Export to Excel"
-  ]
+   "Export to Excel",
+   "Retry"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-portal-sync",
@@ -541,10 +1007,38 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [
    "By client",
-   "Sync log"
+   "Sync log",
+   "Nobody"
   ],
   "buttons": [
-   "Refresh"
+   "Refresh",
+   "Retry",
+   "Connect extension",
+   "Check again",
+   "Update extension",
+   "Sync now",
+   "Copy details",
+   "Change sync setting for",
+   "Report the error for",
+   "Sync",
+   "Fetch profile",
+   "Sync setting…",
+   "Cancel",
+   "Apply to",
+   "Delete client",
+   "Import portal IDs",
+   "Update"
+  ],
+  "sections": [
+   {
+    "tab": "Sync log",
+    "component": "SyncLogTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Export to Excel"
+    ]
+   }
   ]
  },
  {
@@ -557,10 +1051,19 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
+   "Retry",
    "Edit client",
    "Fetch profile",
-   "Sync this client"
-  ]
+   "Sync this client",
+   "Select",
+   "Close…",
+   "Stage",
+   "Priority",
+   "Assign",
+   "Cancel",
+   "Save"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-report",
@@ -570,11 +1073,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
+  "tabs": [
+   "By category",
+   "By stage"
+  ],
   "buttons": [
    "Export to Excel",
-   "Export to PDF"
-  ]
+   "Export to PDF",
+   "Retry"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-gstin-wise-count",
@@ -585,7 +1093,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/notices-case-folder/:clientId/:caseId",
@@ -596,7 +1105,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/notices-all",
@@ -608,8 +1118,17 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Export to Excel"
-  ]
+   "Export to Excel",
+   "Retry",
+   "Select",
+   "Close…",
+   "Stage",
+   "Priority",
+   "Assign",
+   "Add notice",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/notices/:id",
@@ -620,14 +1139,164 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [
-   ")} }"
+   "Issues",
+   "Evidence",
+   "Draft reply",
+   "AI assistant",
+   "Documents",
+   "Activity",
+   "Payments",
+   "Hearings",
+   "Deadlines"
   ],
   "buttons": [
+   "Retry",
    "All notices",
    "Open the appeal",
+   "Reopen",
    "Assign",
+   "Write the reply",
+   "Log order",
+   "Read and close",
+   "Mark triaged",
+   "Build evidence",
+   "List the issues",
+   "Write the draft",
+   "Log reply",
+   "Prepare hearing",
    "Open matter",
-   "More"
+   "Create appeal matter",
+   "Ask client",
+   "Extension",
+   "More",
+   "Cancel",
+   "Hide notice",
+   "Back",
+   "Close",
+   "Clear hearing",
+   "Save",
+   "Remove extension"
+  ],
+  "sections": [
+   {
+    "tab": "Issues",
+    "component": "IssuesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Confirm issue",
+     "Add the first issue",
+     "Edit issue",
+     "Remove issue",
+     "Add issue",
+     "Cancel",
+     "Save"
+    ]
+   },
+   {
+    "tab": "Evidence",
+    "component": "EvidenceTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Retry",
+     "Rebuild all",
+     "Rebuild",
+     "Save period",
+     "Cancel",
+     "Reset to automatic",
+     "Save",
+     "Upload evidence"
+    ]
+   },
+   {
+    "tab": "AI assistant",
+    "component": "AssistantTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Copy",
+     "Discard",
+     "Retry loading the answers"
+    ]
+   },
+   {
+    "tab": "Draft reply",
+    "component": "DraftTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Start a blank draft",
+     "Copy",
+     "Fill Part B from the annexure",
+     "Edit as v",
+     "Save as v",
+     "Send for partner review",
+     "Approve v",
+     "Ask for changes",
+     "Send back",
+     "Prepare again",
+     "Preview :",
+     "Use this reply :",
+     "Close",
+     "Use this reply"
+    ]
+   },
+   {
+    "tab": "Documents",
+    "component": "DocumentsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Received :",
+     "Mark received",
+     "Waive :",
+     "Re-open :",
+     "Ask the client",
+     "E-mail the client",
+     "Upload"
+    ]
+   },
+   {
+    "tab": "Activity",
+    "component": "ActivityTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Add note"
+    ]
+   },
+   {
+    "tab": "Payments",
+    "component": "PaymentsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Link",
+     "Record",
+     "Copy"
+    ]
+   },
+   {
+    "tab": "Hearings",
+    "component": "HearingsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Hearing pack",
+     "Change",
+     "Fix a hearing"
+    ]
+   },
+   {
+    "tab": "Deadlines",
+    "component": "DeadlinesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Save"
+    ]
+   }
   ]
  },
  {
@@ -639,7 +1308,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/notices-hearings",
@@ -650,7 +1320,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/notices-calendar",
@@ -661,7 +1332,10 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Today"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-autopilot",
@@ -671,8 +1345,112 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
-  "buttons": []
+  "tabs": [
+   "Scheduled Chrome",
+   "CAPTCHA wall",
+   "Queue",
+   "Runs to retry",
+   "Fetch a report",
+   "Portal e-mails",
+   "Acceptance",
+   "Settings"
+  ],
+  "buttons": [
+   "Connect extension",
+   "Check again",
+   "Update extension",
+   "Sync now"
+  ],
+  "sections": [
+   {
+    "tab": "Scheduled Chrome",
+    "component": "ChromeRunnerTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Change",
+     "Pause for 1 hour",
+     "Pause until 05:00",
+     "Resume now",
+     "Retry"
+    ]
+   },
+   {
+    "tab": "CAPTCHA wall",
+    "component": "CaptchaWall",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Send for",
+     "Can't read it :",
+     "Skip this client :",
+     "Switch on",
+     "Resume in Settings",
+     "Stop notifying me",
+     "Notify me on this PC"
+    ]
+   },
+   {
+    "tab": "Queue",
+    "component": "QueueTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Retry",
+     "Cancel",
+     "Refresh"
+    ]
+   },
+   {
+    "tab": "Runs to retry",
+    "component": "AttentionTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Run all again",
+     "Ask the client",
+     "Open the CAPTCHA wall",
+     "Run again",
+     "Mark inactive",
+     "Cancel",
+     "Save"
+    ]
+   },
+   {
+    "tab": "Fetch a report",
+    "component": "FetchReportTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Queue for",
+     "Clear the"
+    ]
+   },
+   {
+    "tab": "Portal e-mails",
+    "component": "EmailsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Acceptance",
+    "component": "AcceptanceTab",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Settings",
+    "component": "SettingsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Undo changes",
+     "Save"
+    ]
+   }
+  ]
  },
  {
   "route": "/notices-reply-factory",
@@ -682,9 +1460,112 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
+  "tabs": [
+   "Overview",
+   "Notice types",
+   "Reply templates",
+   "Reply rules",
+   "AI",
+   "Learning",
+   "Client consent"
+  ],
   "buttons": [
    "Refresh"
+  ],
+  "sections": [
+   {
+    "tab": "Overview",
+    "component": "OverviewTab",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Notice types",
+    "component": "NoticeTypesSettings",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Retry"
+    ]
+   },
+   {
+    "tab": "Reply templates",
+    "component": "TemplatesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "New template",
+     "Edit",
+     "Duplicate",
+     "Prepare again",
+     "Preview :",
+     "Use this reply :",
+     "Close",
+     "Use this reply",
+     "Close the list",
+     "Undo changes",
+     "Save the signature block",
+     "Cancel",
+     "Show more of"
+    ]
+   },
+   {
+    "tab": "Reply rules",
+    "component": "RulesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Edit",
+     "Request changes to",
+     "Approve",
+     "Cancel",
+     "Save"
+    ]
+   },
+   {
+    "tab": "AI",
+    "component": "AiReadingTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Run now",
+     "Undo",
+     "Save",
+     "Remove",
+     "Test connection"
+    ]
+   },
+   {
+    "tab": "Learning",
+    "component": "LearningTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Choose all clients shown",
+     "Leave them out"
+    ]
+   },
+   {
+    "tab": "Client consent",
+    "component": "ConsentTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Mark consent",
+     "Withdraw",
+     "Opt out",
+     "Send engagement letter",
+     "Clear the selection",
+     "Cancel",
+     "Send to clients",
+     "Close",
+     "Save",
+     "Save and publish",
+     "E-mail a new link",
+     "Send a new letter"
+    ]
+   }
   ]
  },
  {
@@ -697,8 +1578,15 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Change password"
-  ]
+   "Change password",
+   "Fixed",
+   "Handle",
+   "Switch off",
+   "Bring back",
+   "Add",
+   "Confirm"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-cases",
@@ -709,7 +1597,11 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Retry",
+   "Open case"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-case/:clientId/:caseKey",
@@ -721,8 +1613,22 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Refund page"
-  ]
+   "Refund page",
+   "Retry",
+   "Log the portal reply",
+   "Open on the portal",
+   "Close case",
+   "Reopen",
+   "Cancel",
+   "Link a case",
+   "Work on the appeal",
+   "Work on it",
+   "Unlink",
+   "Let the system decide",
+   "Link",
+   "Save"
+  ],
+  "sections": []
  },
  {
   "route": "/notices-open/:id",
@@ -733,7 +1639,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": null,
   "subtitle": null,
   "tabs": [],
-  "buttons": []
+  "buttons": [],
+  "sections": []
  },
  {
   "route": "/litigation",
@@ -745,8 +1652,14 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Export to Excel"
-  ]
+   "New matter",
+   "Export to Excel",
+   "Retry",
+   "Cancel",
+   "Create matter",
+   "Create matter for case"
+  ],
+  "sections": []
  },
  {
   "route": "/litigation/:id",
@@ -756,12 +1669,91 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
+  "tabs": [
+   "Notices",
+   "Hearings",
+   "Payments",
+   "Documents",
+   "Activity",
+   "Deadlines"
+  ],
   "buttons": [
+   "Retry",
    "All matters",
    "Assign",
    "Work on the reply",
-   "More"
+   "Fix a hearing",
+   "Record payment",
+   "More",
+   "Reopen",
+   "Back",
+   "Close",
+   "Cancel",
+   "Save outcome",
+   "Save",
+   "Record reply",
+   "Record order",
+   "Save demand"
+  ],
+  "sections": [
+   {
+    "tab": "Notices",
+    "component": "MatterNoticesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Cancel",
+     "Link notice"
+    ]
+   },
+   {
+    "tab": "Hearings",
+    "component": "MatterHearingsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Keep it",
+     "Cancel hearing",
+     "Change",
+     "Cancel",
+     "Fix a hearing"
+    ]
+   },
+   {
+    "tab": "Payments",
+    "component": "MatterPaymentsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Cancel",
+     "Record payment"
+    ]
+   },
+   {
+    "tab": "Documents",
+    "component": "MatterDocumentsTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Upload files"
+    ]
+   },
+   {
+    "tab": "Activity",
+    "component": "MatterActivityTab",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Add note"
+    ]
+   },
+   {
+    "tab": "Deadlines",
+    "component": "MatterDeadlinesTab",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   }
   ]
  },
  {
@@ -772,10 +1764,61 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "redirectsTo": null,
   "title": null,
   "subtitle": null,
-  "tabs": [],
+  "tabs": [
+   "Overview",
+   "By client",
+   "By forum & stage",
+   "Clocks & ageing",
+   "Per staff",
+   "Hearings"
+  ],
   "buttons": [
    "Refresh",
    "Retry"
+  ],
+  "sections": [
+   {
+    "tab": "Overview",
+    "component": "MisOverview",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "By client",
+    "component": "MisClients",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "By forum & stage",
+    "component": "MisBreakdown",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Clocks & ageing",
+    "component": "MisAgeing",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Per staff",
+    "component": "MisStaff",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   },
+   {
+    "tab": "Hearings",
+    "component": "MisHearings",
+    "title": null,
+    "tabs": [],
+    "buttons": []
+   }
   ]
  },
  {
@@ -788,8 +1831,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Export to Excel"
-  ]
+   "Export to Excel",
+   "Retry",
+   "Fetch applications ·",
+   "Fetch case folders ·"
+  ],
+  "sections": []
  },
  {
   "route": "/refunds/:clientId/:arn",
@@ -802,8 +1849,24 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Open",
-   "Details above"
-  ]
+   "Details above",
+   "Link a case",
+   "Work on the appeal",
+   "Work on it",
+   "Unlink",
+   "Let the system decide",
+   "Link",
+   "Open the order",
+   "Save",
+   "Cancel",
+   "Improve with AI",
+   "Mark final",
+   "Copy",
+   "Word",
+   "Show version",
+   "Type it myself"
+  ],
+  "sections": []
  },
  {
   "route": "/drc03-all",
@@ -816,8 +1879,11 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Export to Excel",
-   "Fetch DRC-03 details ·"
-  ]
+   "Retry",
+   "Fetch DRC-03 details ·",
+   "Link to"
+  ],
+  "sections": []
  },
  {
   "route": "/manage-employees",
@@ -829,8 +1895,10 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "Add, edit, or remove staff members",
   "tabs": [],
   "buttons": [
-   "Add Employee"
-  ]
+   "Add Employee",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/user-control",
@@ -841,7 +1909,13 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "User Control",
   "subtitle": "Each employee gets a role, plus any extra permissions you give them",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Add",
+   "Delete",
+   "Save",
+   "Cancel"
+  ],
+  "sections": []
  },
  {
   "route": "/settings",
@@ -859,7 +1933,80 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "GST Reminders",
    "AI Assistant"
   ],
-  "buttons": []
+  "buttons": [
+   "Reset"
+  ],
+  "sections": [
+   {
+    "tab": "AI Assistant",
+    "component": "AssistantSettings",
+    "title": null,
+    "tabs": [],
+    "buttons": [
+     "Excel",
+     "PDF"
+    ]
+   },
+   {
+    "tab": "User Control",
+    "component": "UserControlPage",
+    "title": "User Control",
+    "tabs": [],
+    "buttons": [
+     "Add",
+     "Delete",
+     "Save",
+     "Cancel"
+    ]
+   },
+   {
+    "tab": "Masters",
+    "component": "ManageMastersPage",
+    "title": "Manage RCM Masters",
+    "tabs": [],
+    "buttons": [
+     "Add Master",
+     "Cancel"
+    ]
+   },
+   {
+    "tab": "GST Reminders",
+    "component": "RemindersPage",
+    "title": "GST Reminders",
+    "tabs": [
+     "Reminder dates",
+     "Send now",
+     "Clients",
+     "E-mail wording",
+     "Notice alerts"
+    ],
+    "buttons": [
+     "Send queued now",
+     "Refresh",
+     "Change",
+     "E-mail",
+     "Move several returns' reminders",
+     "Don't send",
+     "Earlier",
+     "Later",
+     "Cancel",
+     "Save for",
+     "Save return",
+     "The template",
+     "Write my own for this send",
+     "Show who gets it",
+     "Queue for client",
+     "Check today",
+     "Queue today's now",
+     "Stop selected",
+     "Stop all queued shown",
+     "Turn on",
+     "Turn off",
+     "Run notice alerts",
+     "Save template"
+    ]
+   }
+  ]
  },
  {
   "route": "/change-history",
@@ -870,7 +2017,11 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "title": "Change history",
   "subtitle": "Who changed what, and when",
   "tabs": [],
-  "buttons": []
+  "buttons": [
+   "Refresh",
+   "Clear filters"
+  ],
+  "sections": []
  }
 ];
 export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [

@@ -18,6 +18,8 @@ const D = await load('src/lib/gstr9/defaults.ts');
 const R = await load('src/lib/gstr9/rule42.ts');
 const PP = await load('src/lib/gstr9/portalParser.ts');
 const R43 = await load('src/lib/gstr9/rule43.ts');
+const RS = await load('src/lib/gstr9/rule4243Reasons.ts');
+const J = await load('src/lib/gstr9/gstr9cJson.ts');
 
 const FY = '2024-25';
 const ctx = { clientName: 'Test', gstin: '27AAAAA0000A1Z5', financialYear: FY, noItcBuilder: false };
@@ -273,6 +275,42 @@ const asset = (o) => ({
   d.gstr9.t7.r43 = { i: 0, c: 77, s: null, x: 0 };
   w = E.computeWorkings(d, c2);
   eq('16 working off: 7D as typed', w.g9.t7.D.c, 77);
+}
+
+// 17. Builder: the approved carpet-area working posted in this FY adds to 7C / 7D and is kept out of 7E.
+{
+  const d = year();
+  M.forEach((m) => { d.portal.months[m].itc4b1 = { i: 0, c: 300, s: 300, x: 0 }; d.gstr9.r42.months[m].reversed = { i: 0, c: 100, s: null, x: 0 }; });
+  const bw = { id: 'b', project: 'Tower A', completionDate: '2024-11-20', postingPeriod: '01/2025', approvedAt: null,
+    r42: { i: 0, c: 1000, s: 1000, x: 0 }, r43: { i: 0, c: 200, s: 200, x: 0 }, interest: { i: 0, c: 0, s: 0, x: 0 } };
+  const other = { ...bw, id: 'o', postingPeriod: '01/2026' };
+  const c2 = { ...ctx, builderReversals: [bw, other] };
+  let w = E.computeWorkings(d, c2);
+  is('17 only the year’s working', w.builderRev.workings.length, 1);
+  eq('17 7C = final + builder', w.g9.t7.C.c, 1200 + 1000);
+  eq('17 7D = builder (no assets)', w.g9.t7.D.c, 200);
+  eq('17 7E keeps out builder and Rule 42 reversed', w.g9.t7.E.c, 3600 - 1200 - 1000 - 200);
+  d.gstr9.r42.turnover = false;
+  w = E.computeWorkings(d, c2);
+  eq('18 turnover off: 7C = builder only', w.g9.t7.C.c, 1000);
+  is('18 turnover off: no Rule 42 payable line', w.payables.input.components.some((x) => x.key === 'r42'), false);
+  w = E.computeWorkings(d, { ...c2, noItcBuilder: true });
+  is('18 no-ITC builder ignores it', w.builderRev.workings.length, 0);
+  const neg = E.computeWorkings(year(), { ...ctx, builderReversals: [{ ...bw, r42: { i: 0, c: -50, s: -50, x: 0 } }] });
+  eq('18 re-credit not netted into 7C', neg.builderRev.recredit.c, 50);
+}
+
+// 19. GSTR-9C Table 13 / 16 from the working: plain characters only, payable to 16.
+{
+  const d = year();
+  const w = E.computeWorkings(d, ctx);
+  const r = RS.rule4243Reason({ financialYear: FY, on: true, t7C: w.g9.t7.C, t7D: w.g9.t7.D, payable42: w.r42.payable, payable43: w.r43.payable,
+    interest42: w.r42.interest, interest43: w.r43.interest, postingPeriod: w.r42.postingPeriod, builderR42: { i: 0, c: 10, s: 10, x: 0 }, builderR43: { i: 0, c: 0, s: 0, x: 0 } });
+  is('19 reason lines', r.lines.length, 3);
+  is('19 every line in the utility charset', r.lines.every((l) => J.REASON_CHARS_REGEX.test(l)), true);
+  eq('19 16A = CGST still due', r.t16.A, w.r42.payable.c);
+  eq('19 16E = interest', r.t16.E, Math.round((w.r42.interest.i + w.r42.interest.c + w.r42.interest.s + w.r42.interest.x) * 100) / 100);
+  is('19 off: nothing', RS.rule4243Reason({ ...r, on: false, financialYear: FY, t7C: w.g9.t7.C, t7D: w.g9.t7.D, payable42: w.r42.payable, payable43: w.r43.payable, interest42: w.r42.interest, interest43: w.r43.interest, postingPeriod: '09/2025', builderR42: w.g9.t7.C, builderR43: w.g9.t7.D }).lines.length, 0);
 }
 
 console.log(failed ? `\n${failed} check(s) FAILED` : '\nall checks passed');

@@ -1,7 +1,7 @@
 // The guided walk of the GST Assistant (23 Nov 2026): one step at a time, the
 // step's button or field ringed on the user's own screen with a card that
 // says what to do there. A step on another screen offers to go there first.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MapPin, X } from 'lucide-react';
@@ -12,13 +12,26 @@ export interface GuideStep { route?: string; target?: string; instruction: strin
 
 const samePath = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
 
-const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; onClose: () => void }> = ({ title, steps, onClose }) => {
+const pathOf = (r: string) => r.split(/[?#]/)[0];
+
+const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; origin: string; onClose: () => void }> = ({ title, steps: given, origin, onClose }) => {
   const [i, setI] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  // A step with no screen of its own happens where the step before it did
+  // (the first one where the guide was asked), never on whatever screen the
+  // user is on when they reach it.
+  const steps = useMemo(() => {
+    let at = pathOf(origin);
+    return given.map((s) => {
+      if (s.route && !s.route.includes(':')) at = s.route;
+      return { ...s, route: at };
+    });
+  }, [given, origin]);
   const step = steps[i];
-  const elsewhere = !!step?.route && !step.route.includes(':') && !samePath(step.route, location.pathname);
+  const elRef = useRef<HTMLElement | null>(null);
+  const elsewhere = !!step?.route && !samePath(pathOf(step.route), location.pathname);
 
   useEffect(() => {
     if (!step || elsewhere) { setRect(null); return; }
@@ -28,6 +41,7 @@ const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; onClose: () =>
         el = findTarget(step.target);
         if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
+      elRef.current = el;
       setRect(el ? el.getBoundingClientRect() : null);
     };
     find();
@@ -36,6 +50,19 @@ const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; onClose: () =>
     window.addEventListener('resize', find);
     return () => { window.clearInterval(t); window.removeEventListener('scroll', find, true); window.removeEventListener('resize', find); };
   }, [step, elsewhere, location.pathname]);
+
+  // Using the ringed button or tab moves the walk on by itself.
+  useEffect(() => {
+    if (!step || elsewhere) return;
+    const onClick = (e: MouseEvent) => {
+      const el = elRef.current;
+      if (!el || !(e.target instanceof Node) || !el.contains(e.target)) return;
+      if (el.matches('input, textarea, select, [role="combobox"]')) return;
+      if (i < steps.length - 1) window.setTimeout(() => setI((n) => (n === i ? n + 1 : n)), 350);
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, [step, elsewhere, i, steps.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -47,7 +74,7 @@ const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; onClose: () =>
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const cardW = Math.min(340, vw - 32);
-  let top = vh - 200;
+  let top = vh - 230;
   let left = 16;
   if (rect) {
     top = rect.bottom + 12 + 170 < vh ? rect.bottom + 12 : Math.max(16, rect.top - 182);
@@ -72,7 +99,7 @@ const GuideOverlay: React.FC<{ title: string; steps: GuideStep[]; onClose: () =>
           <p className="mt-1 text-xs text-muted-foreground">Look for “{step.target}”: it is not visible on the screen right now (it may be in a menu, another tab or further down).</p>
         )}
         {elsewhere && (
-          <Button size="sm" variant="outline" className="mt-2 h-8 gap-1 text-xs" onClick={() => navigate(step.route!)}>
+          <Button size="sm" variant="outline" className="mt-2 h-8 gap-1 text-xs" onClick={() => navigate(step.route)}>
             <MapPin className="h-3.5 w-3.5" /> Go to this screen
           </Button>
         )}
