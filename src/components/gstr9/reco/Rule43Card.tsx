@@ -198,7 +198,7 @@ const Rule43Card: React.FC = () => {
 
       <div className="grid gap-2 sm:grid-cols-4">
         <KpiTile label="Assets in common use" value={W.commonCount} hint={`Tr ${fmtMoney(tot(W.tr))}`} />
-        <KpiTile label="Σ Te — 7D (all heads)" value={fmtMoney(tot(W.t7D))} hint={W.t7DSource === 'override' ? 'Typed over in Table 7' : 'From the working'} />
+        <KpiTile label="7D (all heads)" value={fmtMoney(tot(workings.g9.t7.D))} hint={W.t7DSource === 'override' ? 'Typed over in Table 7' : tot(workings.builderRev.r43) > 0.005 ? `Σ Te + builder ${fmtMoney(tot(workings.builderRev.r43))}` : 'Σ Te'} />
         <KpiTile label="Still to reverse" value={fmtMoney(tot(W.payable))} tone={tot(W.payable) > 0.5 ? 'warn' : 'ok'} hint={tot(W.recredit) > 0.5 ? `Reversed ${fmtMoney(tot(W.recredit))} more than Te` : 'Goes to Payables'} />
         <KpiTile label="Interest u/s 50" value={fmtMoney(tot(W.interest))} />
       </div>

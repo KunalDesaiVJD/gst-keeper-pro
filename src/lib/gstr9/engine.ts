@@ -45,6 +45,7 @@ import { computeRule42, R42_CLASS_COUNTS, type R42Tag, type Rule42Result } from 
 import { normalizeBuilderAdv, rollForward, type BuilderRollForward } from './builderAdvances';
 import { summariseCgYear, type CgYearSummary } from './capitalGoods';
 import { computeRule43, type Rule43Result } from './rule43';
+import { emptyBuilderReversal, summariseBuilderReversal, type BuilderReversalYear } from './builderReversal';
 
 // ---------------------------------------------------------------------------
 // Arithmetic helpers
@@ -280,6 +281,10 @@ export interface Workings {
   r42: Rule42Result & { tagged: Record<R42Tag, Tax>; books: { e: number; f: number } };
   /** Rule 43 working (capital goods in common use), on the same switch as Rule 42. */
   r43: Rule43Result;
+  /** Builder clients: the approved Builder ITC Reversal workings posted in this FY (7C / 7D with the working on). */
+  builderRev: BuilderReversalYear;
+  /** The turnover method (E ÷ F) of the working is used (off: builder project credit only). */
+  r42Turnover: boolean;
   ctx: WorkspaceContext;
   tolerance: number;
 
@@ -974,8 +979,14 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   });
   const r42On = !!R42.enabled && !ctx.noItcBuilder;
   // POSITION (Rule 42 working): 7C is the year's final figure; 7E keeps out only what the GSTR-3Bs reversed under Rule 42.
-  const t7C = r42On ? r42.t7C : tin(G.t7.r42);
-  const r42In4B1 = r42On ? r42.reversed : tin(G.t7.r42);
+  // POSITION (position 42): a builder's approved carpet-area reversal posted in this FY's GSTR-3B adds to 7C / 7D
+  // and is already in that 4(B)(1); the turnover method may be switched off when all credit is project credit.
+  const builderRev = ctx.noItcBuilder ? emptyBuilderReversal() : summariseBuilderReversal(ctx.builderReversals ?? [], ctx.financialYear);
+  const r42Turnover = R42.turnover !== false;
+  const t7C = r42On
+    ? (R42.final7C ? tin(R42.final7C) : addT(r42Turnover ? r42.annual.final : tax(), builderRev.r42))
+    : tin(G.t7.r42);
+  const r42In4B1 = r42On ? addT(r42.reversed, builderRev.r42) : tin(G.t7.r42);
   // ------------------------------------------------------------ Rule 43 (capital goods in common use)
   // POSITION (position 40): the register's common assets, Tc ÷ 60 a month for 60 months from the invoice,
   // Te at the Rule 42 period's E ÷ F; 7D is Σ Te (no annual re-computation), 7E keeps out what was reversed.
@@ -988,8 +999,10 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     postingPeriod: r42.postingPeriod,
     cgTagged: r42.annual.cg,
   });
-  const t7D = r42On ? r43.t7D : tin(G.t7.r43);
-  const r43In4B1 = r42On ? r43.reversed : tin(G.t7.r43);
+  const t7D = r42On
+    ? (R42.final7D ? tin(R42.final7D) : addT(r42Turnover ? r43.te : tax(), builderRev.r43))
+    : tin(G.t7.r43);
+  const r43In4B1 = r42On ? addT(r43.reversed, builderRev.r43) : tin(G.t7.r43);
 
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
   // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
@@ -1168,7 +1181,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const payInput = payableSide('input', [
     { key: 'excessItc', label: 'Excess ITC claimed as per reconciliation (Annexure-3 row 3)', value: excessItc },
     { key: 'other', label: 'Other payments — input (Annexure-3 row 4)', value: otherOf('input') },
-    ...(r42On ? [
+    ...(r42On && r42Turnover ? [
       { key: 'r42', label: 'Rule 42 reversal still due: final for the year less reversed in the GSTR-3Bs', value: r42.payable },
       { key: 'r42Interest', label: 'Interest u/s 50 on Rule 42 (true-up from 1 April, short months from their due dates)', value: r42.interest },
       { key: 'r43', label: 'Rule 43 reversal still due: Σ Te less reversed in the GSTR-3Bs', value: r43.payable },
@@ -1532,6 +1545,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     ctx,
     tolerance: tol,
     r43,
+    builderRev,
+    r42Turnover,
     r42: { ...r42, enabled: r42On, tagged: r42Tagged, books: { e: Math.round(r42Books.e * 100) / 100, f: Math.round(r42Books.f * 100) / 100 } },
     sales: {
       rows: salesRows, partA, partATaxable: partA.t, partBTotal, partBByNature,

@@ -798,7 +798,11 @@ function rule42Paper(c: Ctx): WorkingPaper {
   f.data('C2 COMMON CREDIT', ...taxCells(A.c2, heads), '');
   f.data('D1 = E ÷ F × C2', ...taxCells(A.d1, heads), '');
   f.data('D2 = 5% × C2', ...taxCells(A.d2, heads), R.periods.length && c.docs.gstr9.r42?.d2 ? c.docs.gstr9.r42.d2Reason : 'Not applied');
-  f.total('FINAL — GSTR-9 TABLE 7C', ...taxCells(R.t7C, heads), R.t7CSource === 'override' ? 'Typed over by a superadmin' : 'From this working');
+  const BR = w.builderRev;
+  if (!w.r42Turnover) f.data('TURNOVER METHOD', ...Array(n).fill(null), 'Switched off: builder project credit only');
+  BR.workings.forEach((b) => f.data(`BUILDER: ${b.project.toUpperCase()} (POSTED ${b.postingPeriod})`, ...taxCells(b.r42, heads), `Approved carpet-area working, completion ${b.completionDate.split('-').reverse().join('-')}`));
+  f.total('GSTR-9 TABLE 7C', ...taxCells(w.g9.t7.C, heads), R.t7CSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? (w.r42Turnover ? 'Final above + builder working' : 'Builder working') : 'From this working');
+  if (heads.some((h) => BR.recredit[h] > 0.005)) f.data('BUILDER RE-CREDIT IN 4(A)(5)', ...taxCells(BR.recredit, heads), 'Check GSTR-9 Table 6H');
   f.data('PROVISIONAL (Σ PERIODS)', ...taxCells(R.provisional, heads), '');
   f.sub('TRUE-UP: FINAL LESS PROVISIONAL', ...taxCells(R.trueUp, heads), `Post by ${R.latestPeriod}; chosen ${R.postingPeriod}`);
   f.data('REVERSED IN THE GSTR-3Bs', ...taxCells(R.reversed, heads), '');
@@ -833,7 +837,8 @@ function rule42Paper(c: Ctx): WorkingPaper {
   });
   pt.total('TOTAL', null, ...taxCells(Q.tr, heads), ...taxCells(Q.te, heads), ...taxCells(Q.reversed, heads), ...taxCells(Q.net, heads), ...taxCells(Q.interest, heads));
   const q = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1 });
-  q.total('GSTR-9 TABLE 7D', ...taxCells(Q.t7D, heads), Q.t7DSource === 'override' ? 'Typed over by a superadmin' : 'Σ Te, this working');
+  BR.workings.forEach((b) => q.data(`BUILDER: ${b.project.toUpperCase()} (POSTED ${b.postingPeriod})`, ...taxCells(b.r43, heads), 'Approved carpet-area working'));
+  q.total('GSTR-9 TABLE 7D', ...taxCells(w.g9.t7.D, heads), Q.t7DSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? 'Σ Te + builder working' : 'Σ Te, this working');
   q.data('REVERSED IN THE GSTR-3Bs', ...taxCells(Q.reversed, heads), '');
   q.total('STILL TO REVERSE (PAYABLES)', ...taxCells(Q.payable, heads), just('itc.r43Net'));
   q.data('REVERSED MORE THAN TE', ...taxCells(Q.recredit, heads), '');

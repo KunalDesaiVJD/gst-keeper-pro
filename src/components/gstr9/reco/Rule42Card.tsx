@@ -34,6 +34,7 @@ interface PRow {
   doc: Rule42Month;
 }
 
+const tot = (t: Tax) => t.i + t.c + t.s + t.x;
 const pct = (r: number) => `${(r * 100).toFixed(2)}%`;
 const RATIO_SOURCE: Record<Rule42Period['ratioSource'], string> = {
   typed: 'typed', portal: 'as-filed 3B', carried: 'last period with turnover', annual: "year's ratio (no 3B data)", none: 'no turnover',
@@ -43,6 +44,7 @@ const Rule42Card: React.FC = () => {
   const { docs, workings, update, readOnly } = useWorkspace();
   const R: Rule42Doc = docs.gstr9.r42 ?? emptyRule42();
   const W = workings.r42;
+  const B = workings.builderRev;
   const [head, setHead] = useState<Head>('c');
 
   const setR = (fn: (r: Rule42Doc) => Rule42Doc) => update('gstr9', (d) => ({ ...d, r42: fn(d.r42 ?? emptyRule42()) }));
@@ -190,15 +192,41 @@ const Rule42Card: React.FC = () => {
         7C is the final figure for the year; the part not yet reversed by a GSTR-3B goes to Payables with interest at 18% (true-up from 1 April after the year, short months from their due dates, unless the ledger never fell below). A re-credit is shown, never netted. Builder project credit keeps the carpet-area working of Builder › ITC Reversal.
       </Note>
       {W.warnings.map((w) => <Note key={w} tone="warn">{w}</Note>)}
+      {!workings.r42Turnover && (
+        <Note tone="info">The turnover method is off: 7C and 7D take only the approved Builder ITC Reversal working; the periods below are shown, not used.</Note>
+      )}
+      {B.workings.length > 0 && (
+        <div className="space-y-1 rounded border border-border bg-muted/30 p-2 text-xs">
+          <div className="font-semibold">Builder project credit — approved Builder › ITC Reversal working{B.workings.length > 1 ? 's' : ''} posted in this year</div>
+          {B.workings.map((b) => (
+            <div key={b.id} className="flex flex-wrap gap-x-4 tabular-nums">
+              <span className="min-w-40">{b.project}</span>
+              <span>Completion {b.completionDate.split('-').reverse().join('-')}</span>
+              <span>Posted in {b.postingPeriod}</span>
+              <span>Rule 42 {fmtMoney(tot(b.r42))}</span>
+              <span>Rule 43 {fmtMoney(tot(b.r43))}</span>
+            </div>
+          ))}
+          <div className="text-muted-foreground">
+            Into 7C {fmtMoney(tot(B.r42))} and 7D {fmtMoney(tot(B.r43))} (already in that GSTR-3B’s 4(B)(1), so kept out of 7E)
+            {tot(B.recredit) > 0.5 ? `; re-credit ${fmtMoney(tot(B.recredit))} in 4(A)(5), check it in Table 6H` : ''}.
+            Tag the project’s own credit T4 or T2 on Purchases so the turnover method covers only credit common to the whole business, or switch the turnover method off.
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-2 sm:grid-cols-4">
-        <KpiTile label="Final 7C (all heads)" value={fmtMoney(A.final.i + A.final.c + A.final.s + A.final.x)} />
+        <KpiTile label="7C (all heads)" value={fmtMoney(tot(workings.g9.t7.C))} hint={tot(B.r42) > 0.005 ? `incl. builder ${fmtMoney(tot(B.r42))}` : 'Final for the year'} />
         <KpiTile label="Reversed in 3B" value={fmtMoney(W.reversed.i + W.reversed.c + W.reversed.s + W.reversed.x)} />
         <KpiTile label="Still to reverse" value={fmtMoney(W.payable.i + W.payable.c + W.payable.s + W.payable.x)} tone={W.payable.i + W.payable.c + W.payable.x > 0.5 ? 'warn' : 'ok'} />
         <KpiTile label="Interest u/s 50" value={fmtMoney(W.interest.i + W.interest.c + W.interest.s + W.interest.x)} />
       </div>
 
       <div className="flex flex-wrap items-end gap-4 text-xs">
+        <label className="flex items-center gap-2">
+          <Switch checked={R.turnover !== false} disabled={readOnly} onCheckedChange={(v) => setR((r) => ({ ...r, turnover: v }))} />
+          Turnover method (E ÷ F)
+        </label>
         <label className="flex items-center gap-2">
           <Switch checked={!!R.d2} disabled={readOnly} onCheckedChange={(v) => setR((r) => ({ ...r, d2: v }))} />
           D2 — common credit also used for non-business (5%)
