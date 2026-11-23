@@ -345,7 +345,7 @@ set off only via an imported DRC-03 or a GSTR-3B effect with its copy
 
 Rule 42 (common credit, exempt supplies) is the working on ITC reco › Rule 42/43 (`src/lib/gstr9/rule42.ts`, §6 position 34, `node scripts/verify-gstr9-rule42.mjs`): off per client/FY until switched on, then 7C is its final figure and Payables carries what is still to reverse with interest.
 
-Builder clients' GSTR-9C Table 5 comes from the advance roll-forward on GSTR-9C › Advances (`src/lib/gstr9/builderAdvances.ts`, §6 position 35, `node scripts/verify-gstr9-builder-adv.mjs`): one open year per client, earlier years closed and read-only, held by the trigger of `20261123150000`.
+Builder clients' GSTR-9C Table 5 comes from the advance roll-forward on GSTR-9C › Advances (`src/lib/gstr9/builderAdvances.ts`, §6 position 39, `node scripts/verify-gstr9-builder-adv.mjs`): one open year per client, earlier years closed and read-only, held by the trigger of `20261123150000`.
 
 **Read `docs/GSTR9_9C_WORKINGS.md` before changing anything here.** Two
 rules are firm decisions: the workings never read the app's own GSTR-1 /
@@ -353,3 +353,7 @@ GSTR-3B data (portal figures come only from the extension's portal pulls,
 uploads or typing), and several figures deliberately depart from the
 workbook (§6 positions). After any engine change run
 `node scripts/verify-gstr9-engine.mjs /path/to/MASTER_PMS.xlsx` (275 figures).
+Capital goods sold (s.18(6), 23 Nov 2026): the client-level `capital_goods_register` (shared with Rule 43; `20261123120000`) feeds the Purchases step's "Capital goods sold" tab and Annexure-5; the higher of tax on value and ITC less 5 points a quarter or part (`src/lib/gstr9/quarters.ts`, `capitalGoods.ts`), the shortfall to 7H (§6 items 34–38, §9 of that doc); run `node --experimental-strip-types scripts/verify-capital-goods-sold.mjs`.
+The GSTR-9C step's Portal JSON tab writes the file the government's GSTR-9C offline utility
+(v2.9, FY 2025-26) writes, with its checks (`src/lib/gstr9/gstr9cJson.ts`; 14T is S − R as on the
+form); read `docs/GSTR9C_PORTAL_JSON.md` and run `node scripts/verify-gstr9c-json.mjs` after any 9C change.

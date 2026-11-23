@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { computeWorkings, Workings } from '@/lib/gstr9/engine';
 import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib/gstr9/types';
 import type { Drc03Filing, SetOff } from '@/lib/gstr9/payables';
+import type { CapitalGoodsAsset } from '@/lib/gstr9/capitalGoods';
+import { loadCapitalGoods, saveCapitalGoods } from '@/lib/gstr9/capitalGoodsStore';
 import {
   AnnualReturnPeriod,
   DocConflictError,
@@ -116,6 +118,11 @@ export interface WorkspaceValue {
   setOffs: SetOff[];
   drc03s: Drc03Filing[];
   reloadPayables: () => Promise<void>;
+  /** The client's capital goods register (every year; client-level, shared with Rule 43). */
+  capitalGoods: CapitalGoodsAsset[];
+  /** Replace the register as edited; the changed rows autosave. */
+  updateCapitalGoods: (next: CapitalGoodsAsset[]) => void;
+  capitalGoodsLoaded: boolean;
   reload: () => Promise<void>;
   /**
    * Save everything pending now (before an export, a lock, leaving the page).
@@ -152,6 +159,13 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [setOffs, setSetOffs] = useState<SetOff[]>([]);
   const [drc03s, setDrc03s] = useState<Drc03Filing[]>([]);
+  const [capitalGoods, setCapitalGoods] = useState<CapitalGoodsAsset[]>([]);
+  const [capitalGoodsLoaded, setCapitalGoodsLoaded] = useState(false);
+  const cgRef = useRef<CapitalGoodsAsset[]>([]);
+  /** The register as last saved (id → JSON), to save only what changed. */
+  const cgSaved = useRef<Map<string, string>>(new Map());
+  const cgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cgSaving = useRef<Promise<boolean> | null>(null);
   const role: string = user?.role ?? 'employee';
   const canVerify = role === 'superadmin' || role === 'gst_manager';
   const me = useSignoffActor();
@@ -173,8 +187,8 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const quarterly = client.registration_type === 'IFF';
   const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs }),
-    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs, capitalGoods }),
+    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs, capitalGoods],
   );
   const applyPeriod = useCallback((p: AnnualReturnPeriod | null) => {
     periodRef.current = p;
@@ -189,9 +203,53 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     if (drc.status === 'fulfilled') setDrc03s(drc.value);
   }, [client.id, financialYear]);
 
+  /** The capital goods register. A failure here never blocks the working itself. */
+  const reloadCapitalGoods = useCallback(async () => {
+    try {
+      const list = await loadCapitalGoods(client.id);
+      cgRef.current = list;
+      cgSaved.current = new Map(list.map((a) => [a.id, JSON.stringify(a)]));
+      setCapitalGoods(list);
+      setCapitalGoodsLoaded(true);
+    } catch (e) {
+      toast.error('Could not load the capital goods register: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }, [client.id]);
+
+  /** Save the changed and removed assets; true when the register is saved as the user left it. */
+  const saveCapitalGoodsNow = useCallback(async (): Promise<boolean> => {
+    while (cgSaving.current) await cgSaving.current;
+    const run = async (): Promise<boolean> => {
+      const list = cgRef.current;
+      const ids = new Set(list.map((a) => a.id));
+      const changed = list
+        .map((asset, sortOrder) => ({ asset, sortOrder, json: JSON.stringify(asset) }))
+        .filter((x) => cgSaved.current.get(x.asset.id) !== x.json);
+      const deleted = [...cgSaved.current.keys()].filter((id) => !ids.has(id));
+      if (!changed.length && !deleted.length) return true;
+      try {
+        await saveCapitalGoods(client.id, changed, deleted, userName);
+        changed.forEach((x) => cgSaved.current.set(x.asset.id, x.json));
+        deleted.forEach((id) => cgSaved.current.delete(id));
+        setLastSavedAt(new Date());
+        return true;
+      } catch (e) {
+        toast.error(e instanceof YearLockedError
+          ? 'The capital goods register was not saved: the year of that sale or purchase is locked.'
+          : 'The capital goods register was not saved: ' + (e instanceof Error ? e.message : String(e)));
+        await reloadCapitalGoods();
+        return false;
+      }
+    };
+    const p = run();
+    cgSaving.current = p;
+    try { return await p; } finally { cgSaving.current = null; }
+  }, [client.id, userName, reloadCapitalGoods]);
+
   const reload = useCallback(async () => {
     setLoading(true);
     void reloadPayables();
+    void reloadCapitalGoods();
     try {
       const [ws, p] = await Promise.all([loadWorkspace(client.id, financialYear), loadPeriod(client.id, financialYear)]);
       versions.current = ws.versions;
@@ -208,7 +266,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     } finally {
       setLoading(false);
     }
-  }, [client.id, financialYear, applyPeriod, reloadPayables]);
+  }, [client.id, financialYear, applyPeriod, reloadPayables, reloadCapitalGoods]);
 
   useEffect(() => {
     scope.current = `${client.id}|${financialYear}`;
@@ -316,16 +374,19 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
 
   const flush = useCallback(async (): Promise<FlushResult> => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-    const ok = await saveDirty();
+    if (cgTimer.current) { clearTimeout(cgTimer.current); cgTimer.current = null; }
+    const cgOk = await saveCapitalGoodsNow();
+    const ok = (await saveDirty()) && cgOk;
     const d = docsRef.current;
     return { ok, docs: d, workings: d ? compute(d) : null, period: periodRef.current };
-  }, [saveDirty, compute]);
+  }, [saveDirty, compute, saveCapitalGoodsNow]);
 
   // Save whatever is pending when switching client/FY or leaving the page.
   useEffect(() => () => { if (dirty.current.size) void saveDirty(); }, [saveDirty]);
   // …and at once when the tab is hidden, the window closes or the laptop sleeps, not after the autosave delay.
   useEffect(() => {
     const now = () => {
+      if (cgTimer.current) { clearTimeout(cgTimer.current); cgTimer.current = null; void saveCapitalGoodsNow(); }
       if (!dirty.current.size) return;
       if (timer.current) { clearTimeout(timer.current); timer.current = null; }
       void saveDirty();
@@ -337,7 +398,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', now);
     };
-  }, [saveDirty]);
+  }, [saveDirty, saveCapitalGoodsNow]);
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (dirty.current.size > 0 || saving.current) {
@@ -373,6 +434,18 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     }
     schedule();
   }, [readOnly, canEditSource, schedule]);
+
+  const updateCapitalGoods = useCallback<WorkspaceValue['updateCapitalGoods']>((next) => {
+    if (readOnly) return;
+    cgRef.current = next;
+    setCapitalGoods(next);
+    if (cgTimer.current) clearTimeout(cgTimer.current);
+    setSaveState('pending');
+    cgTimer.current = setTimeout(() => {
+      cgTimer.current = null;
+      void saveCapitalGoodsNow().then((ok) => setSaveState(ok ? 'saved' : 'error'));
+    }, SAVE_DELAY_MS);
+  }, [readOnly, saveCapitalGoodsNow]);
 
   const justify = useCallback<WorkspaceValue['justify']>((lineKey, text, diffAt) => {
     update('justifications', (j) => {
@@ -515,6 +588,9 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     setOffs,
     drc03s,
     reloadPayables,
+    capitalGoods,
+    updateCapitalGoods,
+    capitalGoodsLoaded,
     reload,
     flush,
     userName,

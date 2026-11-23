@@ -8,6 +8,7 @@ import Annexure1 from '../annexures/Annexure1';
 import Annexure2 from '../annexures/Annexure2';
 import Annexure3 from '../annexures/Annexure3';
 import Annexure4 from '../annexures/Annexure4';
+import Annexure5 from '../annexures/Annexure5';
 import { ANNEX_TAB_PARAM } from '../annexures/taxRows';
 
 const TABS = [
@@ -15,6 +16,7 @@ const TABS = [
   { key: 'a2', title: 'Annexure-2', sub: 'ITC reco', diffPrefix: 'ann2.' },
   { key: 'a3', title: 'Annexure-3', sub: 'DRC-03', diffPrefix: null },
   { key: 'a4', title: 'Annexure-4', sub: 'Previous-year GSTR-9', diffPrefix: 'ann4.' },
+  { key: 'a5', title: 'Annexure-5', sub: 'Capital goods sold', diffPrefix: 'cg.' },
 ] as const;
 
 type TabKey = (typeof TABS)[number]['key'];
@@ -48,6 +50,7 @@ const AnnexuresStep: React.FC = () => {
         <TabsContent value="a2" className="mt-0"><Annexure2 /></TabsContent>
         <TabsContent value="a3" className="mt-0"><Annexure3 /></TabsContent>
         <TabsContent value="a4" className="mt-0"><Annexure4 /></TabsContent>
+        <TabsContent value="a5" className="mt-0"><Annexure5 /></TabsContent>
       </Tabs>
     </div>
   );

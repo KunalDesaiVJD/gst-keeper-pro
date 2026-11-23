@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { Note, OpenDifferences } from '../ui';
@@ -12,6 +12,8 @@ import { Table11Card, Table9Card } from '../gstr9c/TaxPaidPart';
 import { NoItcNote, Table12Card, Table14Card, Table16Card } from '../gstr9c/ItcPart';
 import AdditionalLiabilityPart from '../gstr9c/AdditionalLiabilityPart';
 import CertificationPart from '../gstr9c/CertificationPart';
+import PortalJsonPart from '../gstr9c/PortalJsonPart';
+import { buildGstr9cPortalJson } from '@/lib/gstr9/gstr9cJson';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 
 interface TableDef {
@@ -19,7 +21,7 @@ interface TableDef {
   /** Trigger text: the table number, or a word for the untabled parts. */
   text: string;
   name: string;
-  component: React.FC;
+  component: React.FC<{ onOpenTable?: (tab: string) => void }>;
   /** The difference line the table carries. */
   diff?: string;
   itc?: boolean;
@@ -27,7 +29,7 @@ interface TableDef {
   builder?: boolean;
 }
 
-/** The statement's tables, one tab each, grouped by Part (row keys follow GSTR_9C_Offline_Utility.xlsm v2.8). */
+/** The statement's tables, one tab each, grouped by Part (row keys follow GSTR_9C_Offline_Utility.xlsm v2.9, FY 2025-26). */
 const PARTS: Array<{ part: string | null; short: string; title: string; tables: TableDef[] }> = [
   {
     part: 'II',
@@ -70,6 +72,12 @@ const PARTS: Array<{ part: string | null; short: string; title: string; tables: 
     title: 'Verification',
     tables: [{ key: 'certification', text: 'Verification', name: 'Verification — signatory and address', component: CertificationPart }],
   },
+  {
+    part: null,
+    short: '',
+    title: 'Portal JSON',
+    tables: [{ key: 'json', text: 'Portal JSON', name: 'GSTR-9C JSON for upload on the GST portal, with the offline utility’s checks', component: PortalJsonPart }],
+  },
 ];
 
 const TABLES = PARTS.flatMap((p) => p.tables);
@@ -94,7 +102,7 @@ const OLD_TAB: Record<string, string> = { turnover: '5', tax: '9', itc: '12', li
  * justification. One tab per table, so each opens in one screen.
  */
 const Gstr9cStep: React.FC = () => {
-  const { workings, client, financialYear } = useWorkspace();
+  const { workings, client, financialYear, docs } = useWorkspace();
   const { result: app, entry } = useApplicability(client, financialYear);
   const turnover = entry?.aggregate_turnover ?? null;
   const [params, setParams] = useSearchParams();
@@ -113,6 +121,11 @@ const Gstr9cStep: React.FC = () => {
   // needed for an open line that has no tile.
   const openElsewhere = workings.diffs.some((d) => d.step === 'gstr9c' && d.open && !KPI_LINES.some((k) => k.key === d.key));
   const current = shownTables.find((t) => t.key === tab);
+  // Errors that stop the portal JSON, counted on its tab.
+  const jsonErrors = useMemo(
+    () => buildGstr9cPortalJson({ gstin: client.gstin, financialYear, workings, doc: docs.gstr9c, tolerance: docs.settings?.tolerance ?? 0 }).errors,
+    [client.gstin, financialYear, workings, docs.gstr9c, docs.settings?.tolerance],
+  );
 
   return (
     <div className="space-y-3">
@@ -144,7 +157,7 @@ const Gstr9cStep: React.FC = () => {
                 <StepTab key={t.key} value={t.key} title={/^\d/.test(t.text) ? `Table ${t.text} — ${t.name}` : t.name} className="gap-1 px-2 tabular-nums">
                   {/^\d/.test(t.text) && <span className="sr-only">{p.part ? `Part ${p.part}, ` : ''}Table </span>}
                   {t.text}
-                  <OpenBadge n={isOpen(t.diff) ? 1 : 0} showOk={false} />
+                  <OpenBadge n={t.key === 'json' ? jsonErrors : isOpen(t.diff) ? 1 : 0} showOk={false} />
                 </StepTab>
               ))}
             </React.Fragment>
@@ -155,7 +168,7 @@ const Gstr9cStep: React.FC = () => {
           const C = t.component;
           return (
             <TabsContent key={t.key} value={t.key} className="mt-0">
-              <C />
+              <C onOpenTable={setTab} />
             </TabsContent>
           );
         })}

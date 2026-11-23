@@ -46,6 +46,8 @@ export type MonthKey = (typeof FY_MONTHS)[number];
 /** Original "=a+b" expressions staff typed, keyed by field name — shown back on edit, like Excel. */
 export type Formulas = Record<string, string>;
 
+import type { CapitalGoodsAsset } from './capitalGoods';
+
 // ---------------------------------------------------------------------------
 // Step: Sales (PL-OUTPUT)
 // ---------------------------------------------------------------------------
@@ -210,9 +212,36 @@ export interface AdjustmentRow {
   f?: Formulas;
 }
 
+/**
+ * One rate line of a month's optional rate-wise breakup (Duties & Taxes).
+ * When a month's group (sales, credit note, purchase, debit note) holds lines,
+ * the group's figure is their sum (rollUpRateLines), written into the group's
+ * TaxIn on every change, so the engine and every export read the same figures
+ * whether the month was entered rate-wise or as one books figure.
+ */
+export interface DtRateLine {
+  id: string;
+  /** GST rate in percent (18 = 18%); null while not chosen. */
+  rate: number | null;
+  supplyType: SupplyType;
+  taxable: number;
+  igst: number;
+  cgst: number;
+  /** Always mirrors CGST (null), as everywhere in the Annual Return workings. */
+  sgst: number | null;
+  cess: number;
+  /** Expressions typed into this line ("taxable", "rate", "tax.c" …). */
+  f?: Formulas;
+}
+
+/** The rate-wise breakup of a month's typed groups; a group without lines is entered directly. */
+export type DtRateWise<K extends string> = Partial<Record<K, DtRateLine[]>>;
+
 export interface DtoMonth {
   sales: TaxIn;
   creditNote: TaxIn;
+  /** Optional rate-wise breakup of Sales / Credit note (the group figure is its sum). */
+  rateWise?: DtRateWise<'sales' | 'creditNote'>;
   f?: Formulas;
 }
 
@@ -229,6 +258,8 @@ export interface DtiMonth {
   suspRev180: TaxIn;
   suspReclaim: TaxIn;
   suspReclaim180: TaxIn;
+  /** Optional rate-wise breakup of Purchase / Debit note (the group figure is its sum). */
+  rateWise?: DtRateWise<'purchase' | 'debitNote'>;
   f?: Formulas;
 }
 
@@ -571,7 +602,7 @@ export interface AnnexuresDoc {
 /** Value + tax row of the 9C rate-wise tables (Tables 9, 11 and Part V). */
 export type RateWiseRow = ValTax;
 
-// Row keys follow GSTR_9C_Offline_Utility.xlsm v2.8 (verified 27 Aug 2026).
+// Row keys follow GSTR_9C_Offline_Utility.xlsm v2.8 (verified 27 Aug 2026), unchanged in v2.9 (FY 2025-26, verified 23 Nov 2026).
 export const GSTR9C_T5_KEYS = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O'] as const;
 export type Gstr9cT5Key = (typeof GSTR9C_T5_KEYS)[number];
 /** Table 5 rows that are subtracted to reach P (the rest are added): =A+B+C+D-E+F-G-H-I+J-K-L+M+N+O. */
@@ -597,6 +628,8 @@ export interface Gstr9cDoc {
   t5A: number | null;
   /** 5B..5O adjustments, typed as positive amounts; GSTR9C_T5_SUB rows are subtracted. M/N/O may be negative. */
   t5: Record<Gstr9cT5Key, number>;
+  /** The capital goods part of 5O (sale value outside the P&L revenue) — null/absent = from the register (Annexure-5). */
+  t5OCg?: number | null;
   /** 5Q override — null = GSTR-9 total turnover (5N + 10 − 11). */
   t5Q: number | null;
   /**
@@ -627,6 +660,8 @@ export interface Gstr9cDoc {
   t15Reasons: string;
   t16: Record<Gstr9cT16Key, number>;
   partV: Record<Gstr9cPartVKey, RateWiseRow>;
+  /** Home sheet of the 9C utility: "Name of Act, if you are liable to audit under any Act" (at most 30 characters; JSON `act_name`). */
+  actName: string;
   certification: Record<
     | 'place'
     | 'signatory_name'
@@ -737,5 +772,9 @@ export interface WorkspaceContext {
   /** QRMP client (registration type IFF): GSTR-3B is filed quarterly. */
   quarterly?: boolean;
   /** Live set-offs from the payable register (payables.ts); none when omitted. */
-  setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;
+  setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;  /**
+   * The client's capital goods register (capital_goods_register, all years); the engine takes the
+   * assets disposed of in this FY (s.18(6), capitalGoods.ts). None when omitted.
+   */
+  capitalGoods?: CapitalGoodsAsset[];
 }
