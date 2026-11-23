@@ -52,9 +52,14 @@ export function labelOf(el: Element): string {
   if (wrap && text(wrap)) return text(wrap);
   if (h.placeholder) return h.placeholder;
   // A label written just before the control in the same group.
-  const prev = el.parentElement?.querySelector('label');
-  if (prev && text(prev)) return text(prev);
-  const cell = el.closest('td');
+  // Only when the group holds this one control, and the label is not another's.
+  const group = el.parentElement;
+  const prev = group?.querySelector('label');
+  const controls = group?.querySelectorAll('input:not([type="hidden"]), textarea, select, [role="combobox"], [role="switch"], [role="checkbox"]').length ?? 0;
+  if (prev && text(prev) && controls === 1 && (!prev.htmlFor || prev.htmlFor === h.id)) return text(prev);
+  // A cell's own row label: the first cell of the row, with the column heading.
+  const cell0 = el.closest('td');
+  const cell = cell0;
   if (cell) {
     const table = cell.closest('table');
     const idx = (cell as HTMLTableCellElement).cellIndex;

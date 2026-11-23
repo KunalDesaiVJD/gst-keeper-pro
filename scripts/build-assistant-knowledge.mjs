@@ -47,15 +47,64 @@ function buildScreens() {
   const navLabel = new Map();
   for (const m of sidebar.matchAll(/label:\s*'([^']+)',\s*\n?\s*path:\s*'([^']+)'/g)) if (!navLabel.has(m[2])) navLabel.set(m[2], m[1]);
 
-  const pageFacts = (file) => {
-    if (!file || !exists(file)) return { title: null, subtitle: null, tabs: [], buttons: [] };
+  // A JSX opening tag whose attributes may hold {…} groups (arrow functions included).
+  const OPEN = (tag) => new RegExp(`<${tag}\\b(?:[^>{]|\\{(?:[^{}]|\\{(?:[^{}]|\\{[^{}]*\\})*\\})*\\})*>([\\s\\S]*?)<\\/${tag}>`, 'g');
+  const label = (t) => /[A-Za-z]{2}/.test(t) && t.length > 1 && t.length < 45 && !/[(){}=<>;]/.test(t);
+  // The app's own components a file imports (not the ui kit or the shell).
+  const localImports = (s, from) => {
+    const out = new Map();
+    for (const m of s.matchAll(/import\s+(?:(\w+)\s*,?\s*)?(?:\{([^}]*)\})?\s*from\s+['"]((?:\.{1,2}|@)\/[^'"]+)['"]/g)) {
+      const spec = m[3];
+      if (/\/ui\/|\/layout\/|\/integrations\/|\/contexts\/|\/hooks\/|\/lib\/|\/utils\//.test(spec)) continue;
+      const base = spec.startsWith('@/') ? path.join('src', spec.slice(2)) : path.join(path.dirname(from), spec);
+      const file = [`${base}.tsx`, `${base}/index.tsx`, `${base}.ts`].find(exists);
+      if (!file) continue;
+      const names = [m[1], ...(m[2] ? m[2].split(',').map((x) => x.trim().split(/\s+as\s+/).pop()) : [])].filter((n) => n && /^[A-Z]/.test(n));
+      for (const n of names) out.set(n, file);
+    }
+    return out;
+  };
+  const ownFacts = (file) => {
     const s = read(file);
-    const title = s.match(/<PageHeader[\s\S]{0,400}?title=["']([^"']+)["']/)?.[1]
-      ?? s.match(/<NoticesShell[\s\S]{0,400}?title=["']([^"']+)["']/)?.[1] ?? null;
-    const subtitle = s.match(/<PageHeader[\s\S]{0,600}?subtitle=["']([^"']+)["']/)?.[1] ?? null;
-    const tabs = uniq([...s.matchAll(/<TabsTrigger[^>]*>([\s\S]*?)<\/TabsTrigger>/g)].map((m) => clean(m[1])).filter((t) => t.length > 1 && t.length < 50));
-    const buttons = uniq([...s.matchAll(/<Button\b[^>]*>([\s\S]*?)<\/Button>/g)].map((m) => clean(m[1])).filter((t) => /[A-Za-z]{2}/.test(t) && t.length < 45 && !/[(){}=<>]/.test(t))).slice(0, 40);
-    return { title, subtitle, tabs, buttons };
+    const title = s.match(/<(?:PageHeader|NoticesShell|BuilderSectionHeader)[\s\S]{0,400}?title=["']([^"']+)["']/)?.[1]
+      ?? s.match(/<h1[^>]*>([^<{]+)<\/h1>/)?.[1]?.trim() ?? null;
+    const subtitle = s.match(/<(?:PageHeader|BuilderSectionHeader)[\s\S]{0,600}?(?:subtitle|description)=["']([^"']+)["']/)?.[1] ?? null;
+    const trig = [...s.matchAll(OPEN('TabsTrigger'))].map((m) => clean(m[1]));
+    // Tabs drawn from a list ({ id, label }) and rendered with role="tab".
+    const listed = /role="tab"|TabsTrigger/.test(s) ? [...s.matchAll(/\{\s*(?:id|value|key):\s*'([^']+)',\s*label:\s*'([^']+)'/g)].map((m) => m[2]) : [];
+    const tabs = uniq([...trig, ...listed].filter(label));
+    const buttons = uniq([...s.matchAll(OPEN('Button'))].map((m) => clean(m[1])).filter(label)).slice(0, 40);
+    // Which component each tab shows: value / id → label, then → <Component.
+    const keyLabel = new Map();
+    for (const m of s.matchAll(/<TabsTrigger\b[^>]*?value=["']([^"']+)["'][^>]*>([\s\S]*?)<\/TabsTrigger>/g)) keyLabel.set(m[1], clean(m[2]));
+    for (const m of s.matchAll(/\{\s*(?:id|value|key):\s*'([^']+)',\s*label:\s*'([^']+)'/g)) if (!keyLabel.has(m[1])) keyLabel.set(m[1], m[2]);
+    const tabComp = new Map();
+    for (const m of s.matchAll(/<TabsContent\b[^>]*?value=["']([^"']+)["'][^>]*>\s*(?:\{[^}]*\}\s*)?<([A-Z]\w+)/g)) tabComp.set(m[1], m[2]);
+    for (const m of s.matchAll(/===\s*'([^']+)'\s*&&\s*(?:\(\s*)?<([A-Z]\w+)/g)) if (!tabComp.has(m[1])) tabComp.set(m[1], m[2]);
+    return { s, title, subtitle, tabs, buttons, keyLabel, tabComp };
+  };
+  const pageFacts = (file) => {
+    if (!file || !exists(file)) return { title: null, subtitle: null, tabs: [], buttons: [], sections: [] };
+    const own = ownFacts(file);
+    const imports = localImports(own.s, file);
+    const sections = [];
+    const seen = new Set([file]);
+    const sectionOf = (tab, comp, depth) => {
+      const f = imports.get(comp);
+      if (!f || seen.has(f)) return null;
+      seen.add(f);
+      const c = ownFacts(f);
+      // One level further: a tab's own tabs and the buttons of what it shows.
+      const more = depth > 0 ? [...localImports(c.s, f).values()].filter((x) => !seen.has(x)).slice(0, 12).flatMap((x) => { seen.add(x); return ownFacts(x).buttons; }) : [];
+      return { tab, component: comp, title: c.title, tabs: c.tabs, buttons: uniq([...c.buttons, ...more]).slice(0, 30) };
+    };
+    for (const [key, comp] of own.tabComp) {
+      const sec = sectionOf(own.keyLabel.get(key) ?? key, comp, 1);
+      if (sec) sections.push(sec);
+    }
+    // Parts shown without a tab (a page built from panels): their buttons count as the page's.
+    const extra = [...imports.entries()].filter(([, f]) => !seen.has(f)).slice(0, 15).flatMap(([, f]) => { seen.add(f); return ownFacts(f).buttons; });
+    return { title: own.title, subtitle: own.subtitle, tabs: own.tabs, buttons: uniq([...own.buttons, ...extra]).slice(0, 40), sections };
   };
 
   const screens = [];
@@ -139,7 +188,8 @@ try {
 // pages and src/lib/permissionCatalog.ts. Do not edit: \`npm run build\` and
 // \`npm run typecheck\` write it again, so the GST Assistant knows every screen
 // as it is in the deploy.
-export interface AssistantScreen { route: string; menu: string | null; component: string | null; staffOnly: boolean; redirectsTo: string | null; title: string | null; subtitle: string | null; tabs: string[]; buttons: string[] }
+export interface AssistantScreen { route: string; menu: string | null; component: string | null; staffOnly: boolean; redirectsTo: string | null; title: string | null; subtitle: string | null; tabs: string[]; buttons: string[]; sections: AssistantSection[] }
+export interface AssistantSection { tab: string; component: string; title: string | null; tabs: string[]; buttons: string[] }
 export interface AssistantPermission { key: string; group: string; label: string; description: string }
 export const ASSISTANT_SCREENS: AssistantScreen[] = ${JSON.stringify(screens, null, 1)};
 export const ASSISTANT_PERMISSIONS: AssistantPermission[] = ${JSON.stringify(permissions, null, 1)};
