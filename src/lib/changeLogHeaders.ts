@@ -41,6 +41,24 @@ function shortId(): string {
   }
 }
 
+// A tag put before the page in x-gst-request while the GST Assistant applies a
+// change the user approved ("assistant /itc-summary 1a2b3c4d"), so Change
+// History shows which saves went through the assistant. The person is still
+// the tab's own user and the source still 'app' (gst_change_log.actor_source).
+let pageTag: string | null = null;
+let pageTagUntil = 0;
+
+/** Tags this tab's requests for `ms` milliseconds (null clears it). */
+export function setChangeLogPageTag(tag: string | null, ms = 20_000): void {
+  pageTag = tag ? tag.replace(/[^\x20-\x7e]/g, '').slice(0, 20) : null;
+  pageTagUntil = tag ? Date.now() + ms : 0;
+}
+
+function taggedPage(page: string | null): string | null {
+  if (!pageTag || Date.now() > pageTagUntil) return page;
+  return `${pageTag} ${page ?? ''}`.trim();
+}
+
 /** The headers for one request. Header values must be plain ASCII. */
 export function changeLogHeaders(actorId: string | null, page: string | null): Record<string, string> {
   const h: Record<string, string> = { 'x-gst-source': 'app' };
@@ -61,7 +79,7 @@ export function withChangeLogHeaders(input: RequestInfo | URL, init?: RequestIni
   page: string | null = typeof location === 'undefined' ? null : location.pathname): RequestInit | undefined {
   if (!urlOf(input).includes('/rest/v1/')) return init;
   const headers = new Headers(init?.headers ?? (typeof Request !== 'undefined' && input instanceof Request ? input.headers : undefined));
-  for (const [k, v] of Object.entries(changeLogHeaders(actorId, page))) headers.set(k, v);
+  for (const [k, v] of Object.entries(changeLogHeaders(actorId, taggedPage(page)))) headers.set(k, v);
   return { ...init, headers };
 }
 
