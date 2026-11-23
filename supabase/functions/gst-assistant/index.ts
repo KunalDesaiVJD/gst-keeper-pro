@@ -355,7 +355,7 @@ Deno.serve(async (req) => {
             title: String(u.input.title ?? u.input.reason ?? '').slice(0, 200), proposal: u.input,
           }).select('id').maybeSingle();
           actions.push({ id: row?.id ?? crypto.randomUUID(), kind, ...u.input, ...(kind === 'guide' && route ? { origin: route } : {}) });
-          results.push({ type: 'tool_result', tool_use_id: u.id, content: kind === 'fill' ? 'Shown to the user as a card with Apply. Nothing is saved until they apply it on the screen. Mention it in one short sentence.' : 'Shown to the user as a card. Mention it in one short sentence.' });
+          results.push({ type: 'tool_result', tool_use_id: u.id, content: kind === 'fill' ? 'Shown to the user as a card under your answer, with Apply. Nothing is saved until they apply it on the screen. Mention it in one short sentence.' : 'Shown to the user as a card under your answer. Mention it in one short sentence.' });
         } else {
           let out: string;
           try { out = await runServerTool(u.name, u.input ?? {}); } catch (e) { out = `The tool failed: ${scrub(String((e as Error)?.message ?? e)).slice(0, 300)}`; }

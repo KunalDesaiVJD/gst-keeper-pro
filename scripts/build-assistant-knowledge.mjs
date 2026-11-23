@@ -49,7 +49,8 @@ function buildScreens() {
 
   // A JSX opening tag whose attributes may hold {…} groups (arrow functions included).
   const OPEN = (tag) => new RegExp(`<${tag}\\b(?:[^>{]|\\{(?:[^{}]|\\{(?:[^{}]|\\{[^{}]*\\})*\\})*\\})*>([\\s\\S]*?)<\\/${tag}>`, 'g');
-  const label = (t) => /[A-Za-z]{2}/.test(t) && t.length > 1 && t.length < 45 && !/[(){}=<>;]/.test(t);
+  const SHARED = new Set(['Clear', 'Save reason']);
+  const label = (t) => !SHARED.has(t) && /[A-Za-z]{2}/.test(t) && t.length > 1 && t.length < 45 && !/[(){}=<>;]/.test(t);
   // The app's own components a file imports (not the ui kit or the shell).
   const localImports = (s, from) => {
     const out = new Map();
@@ -99,7 +100,10 @@ function buildScreens() {
       return { tab, component: comp, title: c.title, tabs: c.tabs, buttons: uniq([...c.buttons, ...more]).slice(0, 30) };
     };
     for (const [key, comp] of own.tabComp) {
-      const sec = sectionOf(own.keyLabel.get(key) ?? key, comp, 1);
+      // Only a tab the screen names; a mode or status value is no tab.
+      const tab = own.keyLabel.get(key);
+      if (!tab || !label(tab)) continue;
+      const sec = sectionOf(tab, comp, 1);
       if (sec) sections.push(sec);
     }
     // Parts shown without a tab (a page built from panels): their buttons count as the page's.
