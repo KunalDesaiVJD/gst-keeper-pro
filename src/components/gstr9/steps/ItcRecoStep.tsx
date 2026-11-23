@@ -15,6 +15,7 @@ import { fmtMoney } from '../grid/money';
 import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 import Rule42Card from '../reco/Rule42Card';
+import Rule43Card from '../reco/Rule43Card';
 import {
   anyTax,
   DESC_MAX,
@@ -334,6 +335,10 @@ const Table7Card: React.FC = () => {
         const v = G.r42?.final7C ?? null;
         return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? workings.r42.annual.final : null };
       }
+      if (r.id === 'r43' && r42On) {
+        const v = G.r42?.final7D ?? null;
+        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? workings.r43.te : null };
+      }
       const v = G.t7[r.id];
       return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: r.id === 's17_5' && v == null ? g9.t7EPortal : null };
     }),
@@ -359,13 +364,16 @@ const Table7Card: React.FC = () => {
             (r.v == null ? <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge> : <SmallBadge variant="outline">Typed</SmallBadge>)}
           {r.id === 'r42' && r42On &&
             (r.v == null ? <SmallBadge title="Final for the year from ITC reco › Rule 42/43">Rule 42 working</SmallBadge> : <SmallBadge variant="outline">Typed over</SmallBadge>)}
+          {r.id === 'r43' && r42On &&
+            (r.v == null ? <SmallBadge title="Σ Te of the periods from ITC reco › Rule 42/43">Rule 43 working</SmallBadge> : <SmallBadge variant="outline">Typed over</SmallBadge>)}
         </span>
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
     },
-    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => (r.id === 's17_5' || (r.id === 'r42' && r42On)) && !canEditSource, computedHint: (r) =>
+    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => (r.id === 's17_5' || ((r.id === 'r42' || r.id === 'r43') && r42On)) && !canEditSource, computedHint: (r) =>
         r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there'
           : r.id === 'r42' ? 'Final for the year from the Rule 42 working — a superadmin may type over it'
+            : r.id === 'r43' ? 'Σ Te from the Rule 43 working — a superadmin may type over it'
             : 'As-filed GSTR-3B 4B(1) less 7A2, 7C and 7D — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
@@ -373,14 +381,20 @@ const Table7Card: React.FC = () => {
     update('gstr9', (d) => {
       const t7 = { ...d.t7 };
       let r42Override: TaxIn | null | undefined;
+      let r43Override: TaxIn | null | undefined;
       next.forEach((r) => {
         const field = r.field;
         if (field === 'otherDesc') t7.otherDesc = r.label;
         else if (field === 's17_5') t7.s17_5 = withFormulas(r.v, r.f);
         else if (field === 'r42' && r42On) r42Override = withFormulas(r.v, r.f);
+        else if (field === 'r43' && r42On) r43Override = withFormulas(r.v, r.f);
         else t7[field] = withFormulas(r.v ?? zIn(), r.f);
       });
-      return r42Override === undefined ? { ...d, t7 } : { ...d, t7, r42: { ...(d.r42 ?? emptyRule42()), final7C: r42Override } };
+      if (r42Override === undefined && r43Override === undefined) return { ...d, t7 };
+      const r42 = { ...(d.r42 ?? emptyRule42()) };
+      if (r42Override !== undefined) r42.final7C = r42Override;
+      if (r43Override !== undefined) r42.final7D = r43Override;
+      return { ...d, t7, r42 };
     });
 
   const reset7E = () => {
@@ -606,7 +620,10 @@ const ItcRecoStep: React.FC = () => {
           <NextYearCard />
         </TabsContent>
         <TabsContent value="rule42" className="mt-0">
-          <Rule42Card />
+          <div className="space-y-4">
+            <Rule42Card />
+            <Rule43Card />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

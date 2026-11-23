@@ -471,6 +471,8 @@ export interface Rule42Month {
   /** Rule 88B(3): the credit ledger never fell below the short reversal, so no interest. */
   notUtilised: boolean;
   notUtilisedReason: string;
+  /** The Rule 43 part of the month's 4(B)(1) — Te actually reversed. null/absent = nil. */
+  reversed43?: TaxIn | null;
 }
 
 export interface Rule42Doc {
@@ -483,6 +485,8 @@ export interface Rule42Doc {
   postingPeriod: string | null;
   /** 7C override (superadmin) — null = the working's final figure. */
   final7C: TaxIn | null;
+  /** 7D override (superadmin) — null/absent = the Rule 43 working's Σ Te. */
+  final7D?: TaxIn | null;
   months: Record<MonthKey, Rule42Month>;
   note: string;
 }

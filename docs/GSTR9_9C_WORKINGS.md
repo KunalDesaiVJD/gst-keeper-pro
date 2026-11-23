@@ -499,7 +499,38 @@ screen where it applies.
     marked "part year" in the register and on the workspace chip
     (`schemeSpans`); a year wholly under Composition / TDS / ISD is not
     applicable. The firm, 24 Oct 2026.
-34. **Rule 42 working** (ITC reco › Rule 42/43; `src/lib/gstr9/rule42.ts`,
+34. **Capital goods sold u/s 18(6) (the firm, 23 Nov 2026).** Each asset sold
+    in the year pays the higher of (a) tax on the transaction value and (b)
+    the ITC taken less 5 percentage points for every quarter or part since the
+    purchase invoice (Rule 40(2), Rule 44(6)). "Higher of" is compared on the
+    total; the shortfall (b − a) is split over the heads of (b) in proportion
+    (IGST bought and CGST + SGST sold is common, so a head-by-head comparison
+    would be wrong). A sale not in a Sales ledger is added to Table 4 (4B for a
+    registered buyer, 4A otherwise), to the 9C Table 9 rate row and to the
+    Duties & Taxes "as per P&L" output tax.
+35. **The shortfall is an ITC reversal**, a computed Table 7H line, unless the
+    client paid it as extra output tax on the invoice (then it is in Table 4).
+    Not yet dealt with in the year, it is Annexure-3 row 5 and an input-side
+    payable. Not yet posted to the books' ITC ledger, it is taken off the book
+    figure of the ITC reco (row 25) and is Annexure-2 A3, so Tables 12/13 and
+    Annexure-2 J are not disturbed by it.
+36. **ITC taken is the credit availed**, before any Rule 42/43 reversal; the
+    figure after Rule 43 reversals to date is shown for information. TRAN-1
+    credit counts as ITC taken, from the original invoice date. ITC not taken
+    (blocked, never availed) and the scrap proviso (refractory bricks, moulds
+    and dies, jigs and fixtures) pay tax on the transaction value only.
+37. **GSTR-9C 5O** carries the sale value of capital goods sold outside the
+    P&L revenue (Annexure-5), added to what is typed in 5O, and overridable
+    (`t5OCg`, source-locked like the other filled-in 9C figures). Annexure-1
+    adds the same value and tax to the books side.
+38. **A quarter is three months from the invoice date**, not a calendar
+    quarter; a part counts in full, so a sale on the invoice date is quarter 1
+    and one on the same date three months later starts quarter 2; 20 quarters
+    reduce the credit to nil (`src/lib/gstr9/quarters.ts`, shared with Rule
+    43 and s.18(4)). Assets written off, lost or destroyed (s.17(5)(h)) are
+    recorded but not computed.
+
+39. **Rule 42 working** (ITC reco › Rule 42/43; `src/lib/gstr9/rule42.ts`,
     checks `node scripts/verify-gstr9-rule42.mjs`; Kunal, 23 Nov 2026, the
     roadmap's recommended options). Off until switched on per client and FY;
     while off, 7C is as typed in Table 7. While on:
@@ -533,41 +564,36 @@ screen where it applies.
       needs a reason. A re-credit is shown, never netted;
     - difference lines: F and E books vs Σ periods (reason needed), final vs
       reversed (informational, settled in Payables);
-    - export paper **C2A RULE 42** (with ITC reco and the full set).
-    Not yet: Rule 43 (waits for the shared `capital_goods_register` of the
-    s.18(6) work, 7D stays typed), GSTR-9C Table 13 / 16 wording, reading the
-    approved Builder ITC Reversal working for a promoter's project credit.
+    - export paper **C2A RULE 42-43** (with ITC reco and the full set).
+    Not yet: GSTR-9C Table 13 / 16 wording, reading the approved Builder ITC
+    Reversal working for a promoter's project credit.
 
-34. **Capital goods sold u/s 18(6) (the firm, 23 Nov 2026).** Each asset sold
-    in the year pays the higher of (a) tax on the transaction value and (b)
-    the ITC taken less 5 percentage points for every quarter or part since the
-    purchase invoice (Rule 40(2), Rule 44(6)). "Higher of" is compared on the
-    total; the shortfall (b − a) is split over the heads of (b) in proportion
-    (IGST bought and CGST + SGST sold is common, so a head-by-head comparison
-    would be wrong). A sale not in a Sales ledger is added to Table 4 (4B for a
-    registered buyer, 4A otherwise), to the 9C Table 9 rate row and to the
-    Duties & Taxes "as per P&L" output tax.
-35. **The shortfall is an ITC reversal**, a computed Table 7H line, unless the
-    client paid it as extra output tax on the invoice (then it is in Table 4).
-    Not yet dealt with in the year, it is Annexure-3 row 5 and an input-side
-    payable. Not yet posted to the books' ITC ledger, it is taken off the book
-    figure of the ITC reco (row 25) and is Annexure-2 A3, so Tables 12/13 and
-    Annexure-2 J are not disturbed by it.
-36. **ITC taken is the credit availed**, before any Rule 42/43 reversal; the
-    figure after Rule 43 reversals to date is shown for information. TRAN-1
-    credit counts as ITC taken, from the original invoice date. ITC not taken
-    (blocked, never availed) and the scrap proviso (refractory bricks, moulds
-    and dies, jigs and fixtures) pay tax on the transaction value only.
-37. **GSTR-9C 5O** carries the sale value of capital goods sold outside the
-    P&L revenue (Annexure-5), added to what is typed in 5O, and overridable
-    (`t5OCg`, source-locked like the other filled-in 9C figures). Annexure-1
-    adds the same value and tax to the books side.
-38. **A quarter is three months from the invoice date**, not a calendar
-    quarter; a part counts in full, so a sale on the invoice date is quarter 1
-    and one on the same date three months later starts quarter 2; 20 quarters
-    reduce the credit to nil (`src/lib/gstr9/quarters.ts`, shared with Rule
-    43 and s.18(4)). Assets written off, lost or destroyed (s.17(5)(h)) are
-    recorded but not computed.
+40. **Rule 43 working** (same sub-tab and switch as Rule 42;
+    `src/lib/gstr9/rule43.ts`, checks in `scripts/verify-gstr9-rule42.mjs`;
+    Kunal, 23 Nov 2026). It reads the client's `capital_goods_register` (§9)
+    and its dated changes of use (`capital_goods_use_history`, written from the
+    Rule 43 grid's "Use now / Since / Use before"):
+    - an asset is in **Tr** for each month of the 60 from its invoice month
+      while it is in common use on the month's last day, not from the month
+      it is disposed of (the sale is s.18(6)'s, position 34), and only when
+      credit was taken (`itc_route` not `not_taken`);
+    - **Tc** is the register's ITC; an asset that came into common use from
+      exempt-only / non-business use counts that credit less 5 points for every
+      quarter or part from the invoice to the change (`quarters.ts`, the
+      helper s.18(6) uses); one that came from taxable-only use keeps it whole;
+    - **Tm = Tc ÷ 60** (rounded to the paisa), **Te = E ÷ F × Tr** per tax
+      period at the Rule 42 working's E ÷ F for that period (so a QRMP quarter
+      and a period without turnover follow Rule 42's carry);
+    - **no annual re-computation**: 7D = Σ Te (superadmin override
+      `r42.final7D`, locked in the DB too, `20261123150000`); 7E keeps out of
+      4B(1) the Rule 43 part the GSTR-3Bs reversed (typed per period);
+    - **Payables (input side)**: Σ Te less reversed, and interest u/s 50 at 18%
+      on each short period from its return's due date to the due date of the
+      Rule 42 posting return; "Not utilised" on the Rule 42 grid covers both;
+    - an asset leaving common use in the year is flagged for review (rule 43
+      has no re-computation; s.17(2)); capital goods credit tagged in the year
+      with no common asset in the register is warned;
+    - with the working off, 7D and 7E are as before (typed in Table 7).
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"

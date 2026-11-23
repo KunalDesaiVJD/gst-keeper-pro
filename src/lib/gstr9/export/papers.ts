@@ -808,9 +808,40 @@ function rule42Paper(c: Ctx): WorkingPaper {
   f.data('INTEREST ON SHORT PERIODS', ...taxCells(R.interestShort, heads), '');
   f.total('INTEREST U/S 50 (PAYABLES)', ...taxCells(R.interest, heads), '');
   R.warnings.forEach((x) => p.note(x));
+
+  // Rule 43: capital goods in common use (same switch, same E ÷ F).
+  const Q = w.r43;
+  const tsum = (x: Tax) => heads.reduce((a, h) => a + x[h], 0);
+  p.h1('RULE 43 — CAPITAL GOODS USED FOR TAXABLE AND EXEMPT SUPPLIES');
+  p.note('Tm = Tc ÷ 60 for each month of the 60 from the invoice while the asset is in common use; Tr = Σ Tm of the period; Te = E ÷ F × Tr (the period’s Rule 42 ratio). Exempt-only to common: Tc less 5 points for every quarter or part from the invoice. No annual re-computation: 7D = Σ Te.');
+  const ar = p.table([['ASSET', 'INVOICE DATE', 'USE', 'TC', 'TM', 'MONTHS IN YEAR', 'LIFE USED (OF 60)', 'TR', 'TE', 'STATUS']], { freeze: true, keyCols: 1 });
+  const cgById = new Map((w.ctx.capitalGoods ?? []).map((a) => [a.id, a]));
+  Q.assets.filter((a) => a.monthsInYear > 0 || a.issues.length).forEach((a) => {
+    const inv = a.invoiceDate ? a.invoiceDate.split('-').reverse().join('-') : '';
+    ar.data(a.description || cgById.get(a.id)?.invoiceNo || 'Asset', inv, a.useClass === 'common' ? 'Common' : a.useClass === 'taxable' ? 'Taxable only' : 'Exempt / non-business',
+      tsum(a.tc), tsum(a.tm), a.monthsInYear, a.lifeUsed, tsum(a.tr), tsum(a.te),
+      [a.quarters ? `Tc less ${a.quarters * 5} points` : '', ...a.issues].filter(Boolean).join('; ') || (a.excluded ?? 'In Tr'));
+  });
+  ar.total('TOTAL', null, null, null, null, null, null, tsum(Q.tr), tsum(Q.te), `${Q.commonCount} in common use`);
+  const g43 = ['TR = Σ TM', 'TE = E ÷ F × TR', 'REVERSED IN 3B 4(B)(1)', 'SHORT (EXCESS)', 'INTEREST U/S 50'];
+  const pt = p.table([
+    [{ v: 'PERIOD', rowSpan: 2 }, { v: 'E ÷ F', rowSpan: 2 }, ...g43.map((g) => ({ v: g, span: n, align: 'center' as const }))],
+    [null, null, ...g43.flatMap(() => headRow(heads))],
+  ], { freeze: true, groups: groupCols(g43.length, n, 0).map((g) => g.map((x) => x + 1)) });
+  Q.periods.forEach((x) => {
+    pt.data(x.label, `${(x.ratio * 100).toFixed(2)}%`, ...taxCells(x.tr, heads), ...taxCells(x.te, heads), ...taxCells(x.reversed, heads), ...taxCells(x.short, heads), ...taxCells(x.interest, heads));
+  });
+  pt.total('TOTAL', null, ...taxCells(Q.tr, heads), ...taxCells(Q.te, heads), ...taxCells(Q.reversed, heads), ...taxCells(Q.net, heads), ...taxCells(Q.interest, heads));
+  const q = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1 });
+  q.total('GSTR-9 TABLE 7D', ...taxCells(Q.t7D, heads), Q.t7DSource === 'override' ? 'Typed over by a superadmin' : 'Σ Te, this working');
+  q.data('REVERSED IN THE GSTR-3Bs', ...taxCells(Q.reversed, heads), '');
+  q.total('STILL TO REVERSE (PAYABLES)', ...taxCells(Q.payable, heads), just('itc.r43Net'));
+  q.data('REVERSED MORE THAN TE', ...taxCells(Q.recredit, heads), '');
+  q.total('INTEREST U/S 50 (PAYABLES)', ...taxCells(Q.interest, heads), `To the GSTR-3B of ${R.postingPeriod}`);
+  Q.warnings.forEach((x) => p.note(x));
   return paper(c, {
-    ref: 'C2A', title: 'RULE 42 — Common credit for exempt supplies', sheet: 'C2A RULE 42', phase: 'reconcile', master: 'RULE 42',
-    source: 'Source: as-filed GSTR-3B 4A and 3.1 by period; T1 to T4 from the Purchases / RCM credit-use tags; E and F for the year from Sales Part A and B — Rule 42 working of the Annual Return',
+    ref: 'C2A', title: 'RULE 42 / 43 — Common credit and capital goods for exempt supplies', sheet: 'C2A RULE 42-43', phase: 'reconcile', master: 'RULE 42',
+    source: 'Source: as-filed GSTR-3B 4A and 3.1 by period; T1 to T4 from the Purchases / RCM credit-use tags; E and F for the year from Sales Part A and B; Rule 43 from the client’s capital goods register — Rule 42/43 working of the Annual Return',
     widths: [16, 16, 16, 10, ...Array(groups.length * n).fill(13)], freezeCols: 1,
   }, p);
 }

@@ -75,6 +75,18 @@ export interface CapitalGoodsAsset {
   /** The shortfall is posted to the books' ITC ledger (else the ITC reco shows it as a reconciling item). */
   postedInBooks: boolean;
   note: string;
+  /**
+   * Changes of use (capital_goods_use_history), each class from its date on.
+   * Before the first entry the asset is in the first entry's class; empty =
+   * `useClass` throughout. Read by the Rule 43 working.
+   */
+  useHistory?: UseChange[];
+}
+
+export interface UseChange {
+  /** "YYYY-MM-DD" */
+  fromDate: string;
+  useClass: UseClass;
 }
 
 export type CgBasis = 'sec18_6' | 'tv_no_itc' | 'tv_scrap' | 'written_off' | 'not_disposed';
@@ -307,5 +319,5 @@ export const newCgAsset = (id: string): CapitalGoodsAsset => ({
   id, description: '', hsn: '', invoiceNo: '', invoiceDate: null, supplierGstin: '', putToUseDate: null, useClass: 'taxable',
   itc: tax(), itcRoute: 'normal', rule43Reversed: tax(),
   disposalType: 'sale', disposalDate: null, disposalInvoiceNo: '', buyerType: 'b2b', supplyType: 'intra', rate: 18, disposalValue: 0,
-  outTax: null, scrapProviso: false, relatedParty: false, inSalesLedger: false, shortfallRoute: 'not_done', postedInBooks: false, note: '',
+  outTax: null, scrapProviso: false, relatedParty: false, inSalesLedger: false, shortfallRoute: 'not_done', postedInBooks: false, note: '', useHistory: [],
 });

@@ -224,7 +224,12 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       const ids = new Set(list.map((a) => a.id));
       const changed = list
         .map((asset, sortOrder) => ({ asset, sortOrder, json: JSON.stringify(asset) }))
-        .filter((x) => cgSaved.current.get(x.asset.id) !== x.json);
+        .filter((x) => cgSaved.current.get(x.asset.id) !== x.json)
+        .map((x) => {
+          const prev = cgSaved.current.get(x.asset.id);
+          const before = prev ? JSON.stringify((JSON.parse(prev) as CapitalGoodsAsset).useHistory ?? []) : '[]';
+          return { ...x, historyChanged: before !== JSON.stringify(x.asset.useHistory ?? []) };
+        });
       const deleted = [...cgSaved.current.keys()].filter((id) => !ids.has(id));
       if (!changed.length && !deleted.length) return true;
       try {

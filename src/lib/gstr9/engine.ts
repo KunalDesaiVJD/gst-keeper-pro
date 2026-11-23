@@ -44,6 +44,7 @@ import { emptyRule42 } from './defaults';
 import { computeRule42, R42_CLASS_COUNTS, type R42Tag, type Rule42Result } from './rule42';
 import { normalizeBuilderAdv, rollForward, type BuilderRollForward } from './builderAdvances';
 import { summariseCgYear, type CgYearSummary } from './capitalGoods';
+import { computeRule43, type Rule43Result } from './rule43';
 
 // ---------------------------------------------------------------------------
 // Arithmetic helpers
@@ -277,6 +278,8 @@ export interface PayableSideWorking {
 export interface Workings {
   /** Rule 42 working (ITC reco › Rule 42/43); computed whether or not it is switched on. */
   r42: Rule42Result & { tagged: Record<R42Tag, Tax>; books: { e: number; f: number } };
+  /** Rule 43 working (capital goods in common use), on the same switch as Rule 42. */
+  r43: Rule43Result;
   ctx: WorkspaceContext;
   tolerance: number;
 
@@ -973,14 +976,28 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   // POSITION (Rule 42 working): 7C is the year's final figure; 7E keeps out only what the GSTR-3Bs reversed under Rule 42.
   const t7C = r42On ? r42.t7C : tin(G.t7.r42);
   const r42In4B1 = r42On ? r42.reversed : tin(G.t7.r42);
+  // ------------------------------------------------------------ Rule 43 (capital goods in common use)
+  // POSITION (position 40): the register's common assets, Tc ÷ 60 a month for 60 months from the invoice,
+  // Te at the Rule 42 period's E ÷ F; 7D is Σ Te (no annual re-computation), 7E keeps out what was reversed.
+  const r43 = computeRule43({
+    financialYear: ctx.financialYear,
+    quarterly: !!ctx.quarterly,
+    doc: R42,
+    assets: ctx.capitalGoods ?? [],
+    periods: r42.periods.map((p) => ({ key: p.key, label: p.label, months: p.months, period: p.period, ratio: p.ratio })),
+    postingPeriod: r42.postingPeriod,
+    cgTagged: r42.annual.cg,
+  });
+  const t7D = r42On ? r43.t7D : tin(G.t7.r43);
+  const r43In4B1 = r42On ? r43.reversed : tin(G.t7.r43);
 
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
   // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
   // 4B(1) less what is typed in 7A2, 7C and 7D (never below nil), so they are not counted twice;
   // the sheet's 9-INPUT E21 takes all of 4B(1).
-  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), r42In4B1, tin(G.t7.r43)));
+  const t7E4B1 = maxT0(subT(monthly4B1, tin(G.t7.r38), r42In4B1, r43In4B1));
   const t7: Record<Table7Key, Tax> = {
-    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: t7C, D: tin(G.t7.r43),
+    A: tin(G.t7.r37), A1: tin(G.t7.r37A), A2: tin(G.t7.r38), B: tin(G.t7.r39), C: t7C, D: t7D,
     E: G.t7.s17_5 === null || G.t7.s17_5 === undefined ? t7E4B1 : tin(G.t7.s17_5),
     F: tin(G.t7.tran1), G: tin(G.t7.tran2),
   };
@@ -1154,6 +1171,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     ...(r42On ? [
       { key: 'r42', label: 'Rule 42 reversal still due: final for the year less reversed in the GSTR-3Bs', value: r42.payable },
       { key: 'r42Interest', label: 'Interest u/s 50 on Rule 42 (true-up from 1 April, short months from their due dates)', value: r42.interest },
+      { key: 'r43', label: 'Rule 43 reversal still due: Σ Te less reversed in the GSTR-3Bs', value: r43.payable },
+      { key: 'r43Interest', label: 'Interest u/s 50 on Rule 43 (each period from its due date)', value: r43.interest },
     ] : []),
     ...(isNonZeroT(cg.notDone)
       ? [{ key: 'cg186', label: 'Capital goods sold u/s 18(6): shortfall not yet reversed (Annexure-5)', value: cg.notDone }]
@@ -1347,6 +1366,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     push('itc.r42Net', 'itc', 'Rule 42: final for the year vs reversed in the GSTR-3Bs (settled in Payables)', withT(0, r42.annual.final), withT(0, r42.reversed), {
       direction: 'Final − reversed', aLabel: 'Final (rule 42(2))', bLabel: 'Reversed in 4(B)(1)', informational: true,
     });
+    push('itc.r43Net', 'itc', 'Rule 43: Σ Te vs reversed in the GSTR-3Bs (settled in Payables)', withT(0, r43.te), withT(0, r43.reversed), {
+      direction: 'Te − reversed', aLabel: 'Σ Te (rule 43)', bLabel: 'Reversed in 4(B)(1)', informational: true,
+    });
   }
   const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
     if (!months.length) return;
@@ -1509,6 +1531,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   return {
     ctx,
     tolerance: tol,
+    r43,
     r42: { ...r42, enabled: r42On, tagged: r42Tagged, books: { e: Math.round(r42Books.e * 100) / 100, f: Math.round(r42Books.f * 100) / 100 } },
     sales: {
       rows: salesRows, partA, partATaxable: partA.t, partBTotal, partBByNature,
