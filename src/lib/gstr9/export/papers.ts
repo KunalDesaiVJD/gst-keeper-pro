@@ -1026,7 +1026,7 @@ function gstr9Form(c: Ctx): WorkingPaper {
   }, p);
 }
 
-// GSTR-9C (official tables) — labels as the GSTR-9C step shows them (GSTR_9C_Offline_Utility.xlsm v2.8).
+// GSTR-9C (official tables) — labels as the GSTR-9C step shows them (GSTR_9C_Offline_Utility.xlsm v2.9).
 const T5_LABEL: Record<string, string> = {
   A: 'Turnover (including exports) as per audited financial statement',
   B: 'Unbilled revenue at the beginning of the FY',
@@ -1195,7 +1195,7 @@ function gstr9c(c: Ctx): WorkingPaper {
   T14_ROWS.forEach((r) => t14.row(r.k === 'A2' ? 'subtotal' : 'data', [`14${r.k}`, r.label, ...vt(W.t14.rows[r.k])]));
   t14.total('14R', 'Total amount of eligible ITC availed', ...vt(W.t14.R));
   t14.data('14S', 'ITC claimed in annual return (GSTR-9)', ...vt(W.t14.S, undefined, false));
-  t14.total('14T', 'Un-reconciled ITC (R − S)', ...vt(W.t14.T, undefined, false), just('gstr9c.14T'));
+  t14.total('14T', 'Un-reconciled ITC (S − R)', ...vt(W.t14.T, undefined, false), just('gstr9c.14T'));
   reasons('15', 'Reasons for un-reconciled difference in ITC', C.t15Reasons, 'gstr9c.14T');
 
   p.h3('Tax payable on un-reconciled difference in ITC (due to reasons specified in Tables 13 and 15 above)', '16');

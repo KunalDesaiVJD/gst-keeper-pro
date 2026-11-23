@@ -349,3 +349,6 @@ GSTR-3B data (portal figures come only from the extension's portal pulls,
 uploads or typing), and several figures deliberately depart from the
 workbook (§6 positions). After any engine change run
 `node scripts/verify-gstr9-engine.mjs /path/to/MASTER_PMS.xlsx` (275 figures).
+The GSTR-9C step's Portal JSON tab writes the file the government's GSTR-9C offline utility
+(v2.9, FY 2025-26) writes, with its checks (`src/lib/gstr9/gstr9cJson.ts`; 14T is S − R as on the
+form); read `docs/GSTR9C_PORTAL_JSON.md` and run `node scripts/verify-gstr9c-json.mjs` after any 9C change.

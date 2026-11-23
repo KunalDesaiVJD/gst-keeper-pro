@@ -170,6 +170,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
     t15Reasons: '',
     t16: recordOf(GSTR9C_T16_KEYS, () => 0),
     partV: recordOf(GSTR9C_PARTV_KEYS, zRate),
+    actName: '',
     certification: {
       place: '',
       signatory_name: '',

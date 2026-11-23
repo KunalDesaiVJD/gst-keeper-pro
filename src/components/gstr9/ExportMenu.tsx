@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookOpenCheck, ChevronDown, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
+import { BookOpenCheck, ChevronDown, Download, FileJson, FileSpreadsheet, FileText, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,16 +20,17 @@ import { STEP_META } from './overview/steps';
 import { loadFullChangeLog } from '@/lib/gstr9/store';
 import { useWorkspace } from './WorkspaceContext';
 
-export type ExportKind = 'excel' | 'wppdf' | 'gstr9pdf' | 'noticepdf';
+export type ExportKind = 'excel' | 'wppdf' | 'gstr9pdf' | 'noticepdf' | 'gstr9cjson';
 
 const KINDS: Record<ExportKind, { label: string; hint: string; icon: React.ReactNode }> = {
   excel: { label: 'Working papers — Excel', hint: 'Every sheet of the firm’s workbook as WP-referenced papers, with sign-off, payables and revision history', icon: <FileSpreadsheet className="h-4 w-4" /> },
   wppdf: { label: 'Working papers — PDF', hint: 'The same papers, A4 landscape, with contents and page numbers', icon: <BookOpenCheck className="h-4 w-4" /> },
   gstr9pdf: { label: 'GSTR-9 (form) — PDF', hint: 'Form GSTR-9, Tables 4–19', icon: <FileText className="h-4 w-4" /> },
   noticepdf: { label: 'Notice format — PDF', hint: 'Outward and inward summary', icon: <FileText className="h-4 w-4" /> },
+  gstr9cjson: { label: 'GSTR-9C JSON — portal upload', hint: 'The file the GSTR-9C offline utility (v2.9) writes, with its checks', icon: <FileJson className="h-4 w-4" /> },
 };
 
-const ORDER: ExportKind[] = ['excel', 'wppdf', 'gstr9pdf', 'noticepdf'];
+const ORDER: ExportKind[] = ['excel', 'wppdf', 'gstr9pdf', 'noticepdf', 'gstr9cjson'];
 
 /** Steps 1–14: each can be exported on its own (its papers, with the cover and index). */
 const TAB_STEPS = STEP_META.filter((s) => STEP_PAPERS[s.key]);
@@ -84,6 +85,15 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
           const { exportWorkingPapersPdf } = await import('@/lib/gstr9/exportPdf');
           file = exportWorkingPapersPdf(input);
         }
+      } else if (kind === 'gstr9cjson') {
+        const [{ buildGstr9cPortalJson }, { downloadBlob }] = await Promise.all([import('@/lib/gstr9/gstr9cJson'), import('@/lib/gstr9/export/download')]);
+        const b = buildGstr9cPortalJson({ gstin: client.gstin, financialYear, workings, doc: docs.gstr9c, tolerance: docs.settings?.tolerance ?? 0 });
+        if (!b.text) {
+          toast.error(`The GSTR-9C JSON was not generated: ${b.errors} check${b.errors === 1 ? '' : 's'} of the offline utility stop it. See GSTR-9C → Portal JSON.`, { id: progress });
+          return;
+        }
+        downloadBlob(new Blob([b.text], { type: 'application/json' }), b.fileName);
+        file = b.fileName;
       } else {
         const { exportGstr9Pdf, exportNoticePdf } = await import('@/lib/gstr9/exportPdf');
         file = kind === 'gstr9pdf' ? exportGstr9Pdf(workings, meta) : exportNoticePdf(workings, meta);

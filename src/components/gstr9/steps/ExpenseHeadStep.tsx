@@ -157,9 +157,10 @@ const ExpenseHeadStep: React.FC = () => {
       key: 'T',
       code: 'T',
       kind: 'total',
-      label: 'Un-reconciled ITC (R − S)',
-      values: figs(C.T, false),
-      tones: Object.fromEntries(['i', 'c', 's', 'x', 'tot'].map((h) => [h, diffTone(figs(C.T, false)[h] ?? 0, tol)])),
+      // The form's 14T (S − R), the figure the reason and the portal JSON carry.
+      label: 'Un-reconciled ITC (S − R)',
+      values: figs(workings.gstr9c.t14.T, false),
+      tones: Object.fromEntries(['i', 'c', 's', 'x', 'tot'].map((h) => [h, diffTone(figs(workings.gstr9c.t14.T, false)[h] ?? 0, tol)])),
       status: workings.diffs.some((d) => d.key === 'gstr9c.14T') ? <JustifyControl lineKey="gstr9c.14T" /> : undefined,
     },
   ];
@@ -200,9 +201,9 @@ const ExpenseHeadStep: React.FC = () => {
         <KpiTile label="R · Eligible ITC by head (total tax)" value={fmtMoney(totalTax(C.rows.R ?? { i: 0, c: 0, s: 0, x: 0 }))} />
         <KpiTile label="S · ITC claimed in GSTR-9, 7J (total tax)" value={fmtMoney(totalTax(C.S))} />
         <KpiTile
-          label="T · Un-reconciled (R − S)"
-          value={fmtMoney(totalTax(C.T))}
-          hint={`IGST ${fmtMoney(C.T.i)} · CGST ${fmtMoney(C.T.c)} · SGST ${fmtMoney(C.T.s)}`}
+          label="T · Un-reconciled (S − R)"
+          value={fmtMoney(totalTax(workings.gstr9c.t14.T))}
+          hint={`IGST ${fmtMoney(workings.gstr9c.t14.T.i)} · CGST ${fmtMoney(workings.gstr9c.t14.T.c)} · SGST ${fmtMoney(workings.gstr9c.t14.T.s)}`}
           tone={tFlag ? 'error' : 'ok'}
         />
       </div>
