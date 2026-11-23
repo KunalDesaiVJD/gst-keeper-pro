@@ -544,6 +544,31 @@ rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
 category is set to 6D/6F, inputs / capital goods, or No ITC (positions 24–25);
 interest/FD income is Non-GST (5F).
 
+
+35. **Builder advance roll-forward** (GSTR-9C › Advances, Builder clients only;
+    `src/lib/gstr9/builderAdvances.ts`, data `builderAdvancesData.ts`, card
+    `gstr9c/BuilderAdvancePart.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
+    approved 23 Nov 2026; `node scripts/verify-gstr9-builder-adv.mjs`). Stored in
+    the year's gstr9c doc as `builderAdv` (null = off). Advance received in the FY =
+    closing advance − opening advance + revenue recognised; received and sales to
+    date roll on; unadjusted at end = received to date − sales to date. While on it
+    fills 5B (opening unbilled), 5C (closing advance), 5H (closing unbilled), 5I
+    (opening advance), and 5J / 5O from its listed adjustments; the typed values of
+    those six rows are not used. Positions taken (the plan's recommended options):
+    an advance refunded to a cancelled member is **5O (+)** with its reason (5J only
+    where a credit note was raised in the books); Builder receipts and refunds are a
+    **tie-out only**, never a source of Table 5 (keeps §5); back years are entered
+    once and **closed** by a GST Manager / superadmin; revenue recognised is typed
+    and warned when it differs from 5A. **One open year per client**, held by the
+    trigger `annual_return_docs_builder_adv` (`20261123150000`): a year's roll-forward
+    changes only while it is open, the year before (when it holds one) is closed and
+    no later year is closed, and its openings equal what the year before carries
+    forward (typed only for the chain's first year). A year is closed by its Annual
+    Return lock or by `annual_return_builder_close_year` (`annual_return_builder_closes`,
+    select-only, a reopen stamps the row); only the superadmin reopens
+    (`annual_return_builder_reopen_year`, with a reason, never while a later year is
+    closed or the year's sign-off lock stands).
+
 ## 7. Portal fetch (browser extension)
 
 Extension 0.3.3 or later is needed for the GSTR-9 pull; the Portal step

@@ -171,6 +171,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
     t5A: null,
     t5: recordOf(GSTR9C_T5_KEYS, () => 0),
     t5Q: null,
+    builderAdv: null,
     t6Reasons: '',
     t7: { B: null, C: null, D: null, D1: null },
     t7F: null,

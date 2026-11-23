@@ -7,6 +7,7 @@ import { croreText } from '@/lib/gstr9/applicability';
 import { useWorkspace } from '../WorkspaceContext';
 import { DiffKpi } from '../gstr9c/bits';
 import { Table5Card, Table7Card } from '../gstr9c/TurnoverPart';
+import BuilderAdvanceCard from '../gstr9c/BuilderAdvancePart';
 import { Table11Card, Table9Card } from '../gstr9c/TaxPaidPart';
 import { NoItcNote, Table12Card, Table14Card, Table16Card } from '../gstr9c/ItcPart';
 import AdditionalLiabilityPart from '../gstr9c/AdditionalLiabilityPart';
@@ -22,6 +23,8 @@ interface TableDef {
   /** The difference line the table carries. */
   diff?: string;
   itc?: boolean;
+  /** Builder clients only. */
+  builder?: boolean;
 }
 
 /** The statement's tables, one tab each, grouped by Part (row keys follow GSTR_9C_Offline_Utility.xlsm v2.8). */
@@ -31,6 +34,7 @@ const PARTS: Array<{ part: string | null; short: string; title: string; tables: 
     short: 'Turnover',
     title: 'Reconciliation of turnover declared in audited annual financial statement with turnover declared in annual return (GSTR-9)',
     tables: [
+      { key: 'advances', text: 'Advances', name: 'Builder advance roll-forward (fills Table 5)', component: BuilderAdvanceCard, builder: true },
       { key: '5', text: '5', name: 'Reconciliation of gross turnover (with Table 6 reasons)', component: Table5Card, diff: 'gstr9c.5R' },
       { key: '7', text: '7', name: 'Reconciliation of taxable turnover (with Table 8 reasons)', component: Table7Card, diff: 'gstr9c.7G' },
     ],
@@ -95,7 +99,9 @@ const Gstr9cStep: React.FC = () => {
   const turnover = entry?.aggregate_turnover ?? null;
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get(TAB_PARAM) ?? OLD_TAB[params.get(OLD_TAB_PARAM) ?? ''] ?? null;
-  const tab = TABLES.some((t) => t.key === fromUrl) ? (fromUrl as string) : TABLES[0].key;
+  const isBuilder = client.regular_sub_type === 'Builder';
+  const shownTables = TABLES.filter((t) => !t.builder || isBuilder);
+  const tab = shownTables.some((t) => t.key === fromUrl) ? (fromUrl as string) : shownTables[0].key;
   const setTab = (v: string) => {
     const next = new URLSearchParams(params);
     next.set(TAB_PARAM, v);
@@ -106,7 +112,7 @@ const Gstr9cStep: React.FC = () => {
   // The tiles carry every 9C difference line with its reason editor; the banner is only
   // needed for an open line that has no tile.
   const openElsewhere = workings.diffs.some((d) => d.step === 'gstr9c' && d.open && !KPI_LINES.some((k) => k.key === d.key));
-  const current = TABLES.find((t) => t.key === tab);
+  const current = shownTables.find((t) => t.key === tab);
 
   return (
     <div className="space-y-3">
@@ -134,7 +140,7 @@ const Gstr9cStep: React.FC = () => {
                   {p.short && <span className="hidden font-medium normal-case tracking-normal xl:inline"> · {p.short}</span>}
                 </span>
               )}
-              {p.tables.map((t) => (
+              {p.tables.filter((t) => !t.builder || isBuilder).map((t) => (
                 <StepTab key={t.key} value={t.key} title={/^\d/.test(t.text) ? `Table ${t.text} — ${t.name}` : t.name} className="gap-1 px-2 tabular-nums">
                   {/^\d/.test(t.text) && <span className="sr-only">{p.part ? `Part ${p.part}, ` : ''}Table </span>}
                   {t.text}
@@ -145,7 +151,7 @@ const Gstr9cStep: React.FC = () => {
           ))}
         </StepTabsList>
         {current?.itc && <NoItcNote />}
-        {TABLES.map((t) => {
+        {shownTables.map((t) => {
           const C = t.component;
           return (
             <TabsContent key={t.key} value={t.key} className="mt-0">

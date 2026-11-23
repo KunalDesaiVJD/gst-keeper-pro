@@ -30,6 +30,9 @@ const T5_LABEL: Record<'A' | Gstr9cT5Key | 'P' | 'Q' | 'R', string> = {
   R: 'Un-reconciled turnover',
 };
 
+/** Rows the Builder advance roll-forward fills while it is on (builderAdvances.ts). */
+const BUILDER_ROWS: Gstr9cT5Key[] = ['B', 'C', 'H', 'I', 'J', 'O'];
+
 /** Rows the offline utility lets go either way. */
 const T5_EITHER: Gstr9cT5Key[] = ['M', 'N', 'O'];
 const signOf = (k: Gstr9cT5Key): string => (T5_EITHER.includes(k) ? '(+/−)' : GSTR9C_T5_SUB.includes(k) ? '(−)' : '(+)');
@@ -58,6 +61,7 @@ export const Table5Card: React.FC = () => {
   const go = useGoToStep();
   const C = docs.gstr9c;
   const W = workings.gstr9c;
+  const BA = W.builderAdv;
   const def = W.defaults;
   const auditMissing = workings.sales.auditReportTotal === null;
   const notInG9 = workings.sales.partBByNature.not_in_gstr9;
@@ -83,6 +87,20 @@ export const Table5Card: React.FC = () => {
     ];
     GSTR9C_T5_KEYS.forEach((k) => {
       const sub = GSTR9C_T5_SUB.includes(k);
+      if (BA && BUILDER_ROWS.includes(k)) {
+        lines.push({
+          id: k,
+          code: `5${k}`,
+          label: T5_LABEL[k],
+          hint: signOf(k),
+          mode: 'computed',
+          heads: ['t'],
+          shown: { t: n0(W.t5.rows[k]) },
+          source: 'Advances',
+          sourceTitle: 'From the Builder advance roll-forward (the Advances tab)',
+        });
+        return;
+      }
       lines.push({
         id: k,
         code: `5${k}`,
@@ -133,7 +151,7 @@ export const Table5Card: React.FC = () => {
       },
     );
     return lines;
-  }, [C.t5A, C.t5, C.t5Q, def.t5A, def.t5Q, W.t5.P, W.t5.R, auditMissing]);
+  }, [C.t5A, C.t5, C.t5Q, def.t5A, def.t5Q, W.t5.P, W.t5.R, W.t5.rows, BA, auditMissing]);
 
   return (
     <SectionCard

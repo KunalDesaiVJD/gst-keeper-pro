@@ -194,6 +194,8 @@ export async function saveDoc<K extends DocKey>(
     if (error.message?.includes('ANNUAL_RETURN_VERSION_CONFLICT')) throw new DocConflictError(key);
     if (error.message?.includes('ANNUAL_RETURN_SOURCE_LOCKED')) throw new SourceLockedError(key);
     if (error.message?.includes('ANNUAL_RETURN_LOCKED')) throw new YearLockedError();
+    const b = /BUILDER_ADV_[A-Z_]+:\s*(.*)$/.exec(error.message ?? '');
+    if (b) throw new Error(b[1]);
     throw error;
   }
   return Number(version);
