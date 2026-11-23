@@ -138,18 +138,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Send alert",
    "Reset app password"
   ],
-  "sections": [
-   {
-    "tab": "Regular",
-    "component": "SectionCard",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/clients",
@@ -168,8 +157,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add Client",
    "Excel",
    "PDF",
-   "Clear",
-   "Save reason",
    "Download Template",
    "Liberal / Strict",
    "Undo",
@@ -199,9 +186,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Cancel",
    "View",
    "Restore",
-   "Download",
-   "Clear",
-   "Save reason"
+   "Download"
   ],
   "sections": []
  },
@@ -236,9 +221,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel",
      "View",
      "Restore",
-     "Download",
-     "Clear",
-     "Save reason"
+     "Download"
     ]
    },
    {
@@ -277,7 +260,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Expense out",
      "Undo book entry",
      "Undo",
-     "Clear",
      "Cancel",
      "Save",
      "Email bills not in books",
@@ -304,9 +286,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Upload",
    "Override",
    "History",
-   "Cancel",
-   "Clear",
-   "Save reason"
+   "Cancel"
   ],
   "sections": []
  },
@@ -333,9 +313,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Export PDF",
      "Clear Data",
      "Versions",
-     "Use project figures",
-     "Clear",
-     "Save reason"
+     "Use project figures"
     ]
    },
    {
@@ -374,8 +352,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Clear Data",
    "Manage Masters",
    "Save changes",
-   "Clear",
-   "Save reason",
    "Cancel",
    "Add row",
    "Save Master",
@@ -399,9 +375,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Add Master",
-   "Cancel",
-   "Clear",
-   "Save reason"
+   "Cancel"
   ],
   "sections": []
  },
@@ -416,8 +390,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Export PDF",
-   "Clear",
-   "Save reason",
    "History",
    "Send to superadmin",
    "Approve",
@@ -445,6 +417,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Send queued now",
    "Refresh",
+   "Stop selected",
+   "Stop all queued shown",
    "Save template"
   ],
   "sections": [
@@ -463,8 +437,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel",
      "Save for",
      "Save return",
-     "Clear",
-     "Save reason",
      "Save standard dates",
      "Write my own for",
      "Use the template",
@@ -483,22 +455,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Queue for client",
      "Check today",
      "Queue today's now"
-    ]
-   },
-   {
-    "tab": "Outbox )` : ''}",
-    "component": "OutboxTab",
-    "title": null,
-    "tabs": [
-     "All e-mails",
-     "Reminders",
-     "Filing confirmations",
-     "Notice alerts",
-     "Other"
-    ],
-    "buttons": [
-     "Stop selected",
-     "Stop all queued shown"
     ]
    },
    {
@@ -536,8 +492,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export PDF",
    "Add row",
    "Save changes",
-   "Clear",
-   "Save reason",
    "View",
    "Restore",
    "Download"
@@ -574,9 +528,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Merge Duplicates",
    "Download JSON",
    "Download PDF",
-   "History",
-   "Clear",
-   "Save reason"
+   "History"
   ],
   "sections": []
  },
@@ -595,9 +547,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Suspended Reco",
    "GST Receivable Reco",
    "Review",
-   "History",
-   "Clear",
-   "Save reason"
+   "History"
   ],
   "sections": []
  },
@@ -626,10 +576,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "Note",
     "title": null,
     "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
+    "buttons": []
    }
   ]
  },
@@ -654,7 +601,9 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Record set-off",
    "Write Table 11B to GSTR-1 draft",
    "Refresh",
-   "Cancel"
+   "Cancel",
+   "Approve",
+   "Reject"
   ],
   "sections": [
    {
@@ -662,10 +611,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "SectionCard",
     "title": null,
     "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
+    "buttons": []
    },
    {
     "tab": "Projects",
@@ -678,17 +624,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Edit",
      "Add RA bill",
      "Cancel"
-    ]
-   },
-   {
-    "tab": "Approvals )}",
-    "component": "OverrideApprovalsPanel",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Refresh",
-     "Approve",
-     "Reject"
     ]
    }
   ]
@@ -740,7 +675,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "register",
    "Project",
    "View in Adjustments",
-   "Clear",
    "Delete selected",
    "More actions for unit",
    "Add joint holder",
@@ -775,9 +709,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": "Builder Returns Workpaper",
     "tabs": [],
     "buttons": [
-     "Open GSTR-1",
-     "Clear",
-     "Save reason"
+     "Open GSTR-1"
     ]
    }
   ]
@@ -796,18 +728,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Save",
    "Mark confirmation received"
   ],
-  "sections": [
-   {
-    "tab": "IGNORE",
-    "component": "Note",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/builder-projects",
@@ -820,9 +741,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Client setup",
-   "New project",
-   "Clear",
-   "Save reason"
+   "New project"
   ],
   "sections": []
  },
@@ -846,23 +765,9 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add unit",
    "Add",
    "Cancel",
-   "Save",
-   "Download template",
-   "Choose file",
-   "Save opening balance"
+   "Save"
   ],
-  "sections": [
-   {
-    "tab": "Units ( )",
-    "component": "SectionCard",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/bookings",
@@ -879,7 +784,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Project",
    "Record receipts",
    "View in Adjustments",
-   "Clear",
    "Delete selected",
    "More actions for unit",
    "Add joint holder",
@@ -889,82 +793,34 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Save",
    "Update unit value now",
    "Record receipt",
-   "Raise invoice"
+   "Raise invoice",
+   "Back",
+   "TDR / FSI",
+   "Adjustments",
+   "BU Events",
+   "Bookings & Receipts",
+   "Add many",
+   "Opening balances",
+   "Add unit",
+   "Add",
+   "Re-check for re-rating",
+   "Schedule",
+   "Post",
+   "PDF",
+   "Excel",
+   "Mark filed",
+   "Reverse",
+   "Record conversion",
+   "Raise credit note",
+   "Show all units",
+   "Offset",
+   "Restate",
+   "Record payment",
+   "Confirm cancellation",
+   "Save schedule",
+   "Close"
   ],
-  "sections": [
-   {
-    "tab": "CLOSED_PRE_ONBOARDING",
-    "component": "Badge",
-    "title": null,
-    "tabs": [],
-    "buttons": []
-   },
-   {
-    "tab": "masters",
-    "component": "BuilderProjectDetailPage",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Back",
-     "TDR / FSI",
-     "Adjustments",
-     "BU Events",
-     "Bookings & Receipts",
-     "Add many",
-     "Opening balances",
-     "Add unit",
-     "Add",
-     "Cancel",
-     "Save",
-     "Clear",
-     "Save reason"
-    ]
-   },
-   {
-    "tab": "corrections",
-    "component": "BuilderAdjustmentsPage",
-    "title": "Re-rating, conversions, credit notes, bounce reversals and excess tax",
-    "tabs": [],
-    "buttons": [
-     "Project",
-     "Re-check for re-rating",
-     "Schedule",
-     "Post",
-     "PDF",
-     "Excel",
-     "Mark filed",
-     "Reverse",
-     "Record conversion",
-     "Raise credit note",
-     "Show all units",
-     "Offset",
-     "Restate",
-     "Record payment",
-     "Cancel",
-     "Confirm cancellation",
-     "Save schedule",
-     "Save",
-     "Add",
-     "Close",
-     "Raise note",
-     "Record"
-    ]
-   },
-   {
-    "tab": "dastavej",
-    "component": "BuilderDastavejPage",
-    "title": "Dastavej Reconciliation",
-    "tabs": [],
-    "buttons": [
-     "Clear date",
-     "Cancel",
-     "Save",
-     "Save working paper",
-     "Mark as paid",
-     "Close"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/bu-events",
@@ -983,24 +839,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Cancel",
    "Prepare event"
   ],
-  "sections": [
-   {
-    "tab": "dastavej",
-    "component": "BuilderDastavejPage",
-    "title": "Dastavej Reconciliation",
-    "tabs": [],
-    "buttons": [
-     "Clear date",
-     "Cancel",
-     "Save",
-     "Save working paper",
-     "Mark as paid",
-     "Close",
-     "Clear",
-     "Save reason"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/builder-projects/:projectId/adjustments",
@@ -1033,9 +872,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add",
    "Close",
    "Raise note",
-   "Record",
-   "Clear",
-   "Save reason"
+   "Record"
   ],
   "sections": []
  },
@@ -1060,18 +897,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Save working",
    "Record"
   ],
-  "sections": [
-   {
-    "tab": "IGNORE",
-    "component": "Note",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/builder-returns",
@@ -1083,9 +909,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "What the builder",
   "tabs": [],
   "buttons": [
-   "Open GSTR-1",
-   "Clear",
-   "Save reason"
+   "Open GSTR-1"
   ],
   "sections": []
  },
@@ -1114,9 +938,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   ],
   "buttons": [
    "Excel",
-   "PDF",
-   "Clear",
-   "Save reason"
+   "PDF"
   ],
   "sections": []
  },
@@ -1151,8 +973,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Retry",
-   "Clear",
-   "Save reason",
    "Connect extension",
    "Check again",
    "Update extension",
@@ -1173,9 +993,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Export to Excel",
-   "Retry",
-   "Clear",
-   "Save reason"
+   "Retry"
   ],
   "sections": []
  },
@@ -1205,7 +1023,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Sync",
    "Fetch profile",
    "Sync setting…",
-   "Clear",
    "Cancel",
    "Apply to",
    "Delete client",
@@ -1219,9 +1036,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
-     "Export to Excel",
-     "Clear",
-     "Save reason"
+     "Export to Excel"
     ]
    }
   ]
@@ -1240,8 +1055,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Edit client",
    "Fetch profile",
    "Sync this client",
-   "Clear",
-   "Save reason",
    "Select",
    "Close…",
    "Stage",
@@ -1267,9 +1080,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Export to Excel",
    "Export to PDF",
-   "Retry",
-   "Clear",
-   "Save reason"
+   "Retry"
   ],
   "sections": []
  },
@@ -1309,8 +1120,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Export to Excel",
    "Retry",
-   "Clear",
-   "Save reason",
    "Select",
    "Close…",
    "Stage",
@@ -1381,9 +1190,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Remove issue",
      "Add issue",
      "Cancel",
-     "Save",
-     "Clear",
-     "Save reason"
+     "Save"
     ]
    },
    {
@@ -1526,9 +1333,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Today",
-   "Clear",
-   "Save reason"
+   "Today"
   ],
   "sections": []
  },
@@ -1564,8 +1369,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "tabs": [],
     "buttons": [
      "Change",
-     "Clear",
-     "Save reason",
      "Pause for 1 hour",
      "Pause until 05:00",
      "Resume now",
@@ -1683,8 +1486,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
-     "Clear",
-     "Save reason",
      "Retry"
     ]
    },
@@ -1827,36 +1628,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Link",
    "Save"
   ],
-  "sections": [
-   {
-    "tab": "refund",
-    "component": "RefundWhenChip",
-    "title": null,
-    "tabs": [],
-    "buttons": []
-   },
-   {
-    "tab": "appeal",
-    "component": "AppealWorkspace",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Open the order",
-     "Save",
-     "Cancel",
-     "Improve with AI",
-     "Mark final",
-     "Copy",
-     "Word",
-     "Show version",
-     "Type it myself",
-     "Clear",
-     "Save reason",
-     "Use in the grounds",
-     "Copy grounds"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/notices-open/:id",
@@ -1883,8 +1655,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "New matter",
    "Export to Excel",
    "Retry",
-   "Clear",
-   "Save reason",
    "Cancel",
    "Create matter",
    "Create matter for case"
@@ -1946,9 +1716,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel hearing",
      "Change",
      "Cancel",
-     "Fix a hearing",
-     "Clear",
-     "Save reason"
+     "Fix a hearing"
     ]
    },
    {
@@ -2028,10 +1796,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "MisBreakdown",
     "title": null,
     "tabs": [],
-    "buttons": [
-     "Clear",
-     "Save reason"
-    ]
+    "buttons": []
    },
    {
     "tab": "Clocks & ageing",
@@ -2069,9 +1834,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export to Excel",
    "Retry",
    "Fetch applications ·",
-   "Fetch case folders ·",
-   "Clear",
-   "Save reason"
+   "Fetch case folders ·"
   ],
   "sections": []
  },
@@ -2092,31 +1855,18 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Work on it",
    "Unlink",
    "Let the system decide",
-   "Link"
+   "Link",
+   "Open the order",
+   "Save",
+   "Cancel",
+   "Improve with AI",
+   "Mark final",
+   "Copy",
+   "Word",
+   "Show version",
+   "Type it myself"
   ],
-  "sections": [
-   {
-    "tab": "appeal",
-    "component": "AppealWorkspace",
-    "title": null,
-    "tabs": [],
-    "buttons": [
-     "Open the order",
-     "Save",
-     "Cancel",
-     "Improve with AI",
-     "Mark final",
-     "Copy",
-     "Word",
-     "Show version",
-     "Type it myself",
-     "Clear",
-     "Save reason",
-     "Use in the grounds",
-     "Copy grounds"
-    ]
-   }
-  ]
+  "sections": []
  },
  {
   "route": "/drc03-all",
@@ -2131,8 +1881,6 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export to Excel",
    "Retry",
    "Fetch DRC-03 details ·",
-   "Clear",
-   "Save reason",
    "Link to"
   ],
   "sections": []
@@ -2165,9 +1913,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add",
    "Delete",
    "Save",
-   "Cancel",
-   "Clear",
-   "Save reason"
+   "Cancel"
   ],
   "sections": []
  },
@@ -2198,9 +1944,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "tabs": [],
     "buttons": [
      "Excel",
-     "PDF",
-     "Clear",
-     "Save reason"
+     "PDF"
     ]
    },
    {
