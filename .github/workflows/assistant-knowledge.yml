@@ -60,4 +60,4 @@ jobs:
           version: latest
       - name: Deploy gst-assistant
         if: steps.secret.outputs.ok == 'true' && steps.fn.outputs.changed == 'true'
-        run: supabase functions deploy gst-assistant --project-ref "$PROJECT"
+        run: supabase functions deploy gst-assistant --project-ref "$PROJECT" --yes
