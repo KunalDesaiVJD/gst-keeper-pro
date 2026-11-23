@@ -104,7 +104,7 @@ order). Every entry grid behaves like the Excel sheet:
 | 1 | Portal data | "AS PER 3B", "AS PER GST PORTAL", "AUTO POPULATE FROM 9" cells | fetch / upload / type |
 | 2 | Sales | PL-OUTPUT | Part A, Part B, audit-report total |
 | 3 | Purchases & ITC | PL-INPUT | sections A/B/C, 9C expense head, row 75 |
-| 4 | Duties & Taxes | DUTIES & TAXES-OUTPUT / -INPUT | monthly ledgers, LYE, other adjustments |
+| 4 | Duties & Taxes | DUTIES & TAXES-OUTPUT / -INPUT | monthly ledgers (typed directly, or rate-wise per month: Sales / Credit note / Purchase / Debit note become the sum of their rate lines, `rateWise` on the month, `src/lib/gstr9/rateWise.ts`; the engine reads only the summed group), LYE, other adjustments |
 | 5 | RCM | RCM | Part B expense categories × month |
 | 6 | Outward reco | GSTR 9-OUTPUT | category tags (from step 2), justifications |
 | 7 | ITC reco | GSTR 9-INPUT + GSTR-9 Table 7 | Table 7, 12, 13, 6A1 |

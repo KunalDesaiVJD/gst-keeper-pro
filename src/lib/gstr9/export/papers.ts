@@ -25,6 +25,7 @@ import {
 import { drc03MatchesFY, METHOD_LABEL, SIDE_LABEL, type Drc03Filing, type SetOff } from '../payables';
 import { BASIS_LABEL, DISPOSAL_LABEL, SHORTFALL_ROUTE_LABEL } from '../capitalGoods';
 import { ITC_ROWS, MONTH_FIELDS, monthTitle, T5_ROWS, T9_ROWS } from '../portalImport';
+import { hasRateLines, rateLinesByRate, rateLinesTotal } from '../rateWise';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
 import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
@@ -39,6 +40,7 @@ import {
   GSTR9C_T9_RATE_KEYS,
   type AdjustmentRow,
   type AnnualReturnDocs,
+  type DtRateLine,
   type ExpenseHead,
   type Formulas,
   type InputSection,
@@ -484,6 +486,34 @@ function adjustmentBlock(c: Ctx, p: PaperBuilder, title: string, rows: Adjustmen
   t.total(grand[0], ...taxCells(grand[1], heads));
 }
 
+/**
+ * The rate-wise breakup of the months entered rate by rate (Duties & Taxes),
+ * one line per month, side, rate and supply. Months typed directly are not
+ * listed: their books figure is the month table's own.
+ */
+function rateWiseBlock(c: Ctx, p: PaperBuilder, title: string, sides: Array<[string, (m: MonthKey) => DtRateLine[] | undefined]>): void {
+  const { heads } = c;
+  const months = FY_MONTHS.filter((m) => sides.some(([, get]) => hasRateLines(get(m))));
+  if (!months.length) return;
+  p.h2(title);
+  const t = p.table([['MONTH', 'SIDE', 'RATE', 'SUPPLY', 'TAXABLE VALUE', ...headRow(heads)]]);
+  sides.forEach(([label, get]) => {
+    const used = months.filter((m) => hasRateLines(get(m)));
+    if (!used.length) return;
+    t.band(label.toUpperCase());
+    used.forEach((m) => {
+      rateLinesByRate(get(m)).forEach((g) => {
+        t.data(MONTH_SHORT[m], label.toUpperCase(), rate(g.rate, 'typed'), g.supply === 'inter' ? 'Inter-state' : 'Intra-state', src(g.total.t, 'typed'), ...srcTax(g.total, heads, () => 'typed'));
+      });
+    });
+    const tot = used.reduce((a, m) => {
+      const x = rateLinesTotal(get(m));
+      return { t: a.t + x.t, i: a.i + x.i, c: a.c + x.c, s: a.s + x.s, x: a.x + x.x };
+    }, { t: 0, i: 0, c: 0, s: 0, x: 0 });
+    t.sub(lbl(`TOTAL ${label.toUpperCase()} (${used.map((m) => MONTH_SHORT[m]).join(', ')})`, 4), round2(tot.t), ...heads.map((h) => round2(tot[h])));
+  });
+}
+
 /** Column groups of a "MONTH | group × heads … | JUSTIFICATION" table. */
 const groupCols = (groups: number, n: number, trailing: number): number[][] => {
   const out: number[][] = [];
@@ -521,6 +551,10 @@ function dto(c: Ctx): WorkingPaper {
   t.data(lbl('AS PER P & L (PL-OUTPUT PART A)', 1 + 2 * n), ...taxCells(w.dto.asPerPl, heads));
   t.sub(lbl('DIFF WITH REASON? (P&L - NET SALES)', 1 + 2 * n), ...taxCells(w.dto.plDiff, heads), ...Array(2 * n).fill(null), just('dto.pl'));
   adjustmentBlock(c, p, 'OTHER ADJUSTMENTS IN CR SIDE', docs.duties_output.adjustments, w.dto.adjustments, 'REASON OF ADJ.', ['TOTAL CR SIDE', w.dto.totalCrSide]);
+  rateWiseBlock(c, p, 'RATE-WISE BREAKUP OF BOOKS FIGURES', [
+    ['Sales', (m) => docs.duties_output.months[m].rateWise?.sales],
+    ['Credit note', (m) => docs.duties_output.months[m].rateWise?.creditNote],
+  ]);
   return paper(c, {
     ref: 'B3', title: 'DUTIES & TAXES-OUTPUT — Output tax by month', sheet: 'B3 DUTIES & TAXES-OUTPUT', phase: 'collect', master: 'DUTIES & TAXES-OUTPUT',
     source: 'Source: books Duties & Taxes output ledgers by month; AS PER 3B from the as-filed GSTR-3B 3.1(a)+(b) — DUTIES & TAXES-OUTPUT of MASTER_PMS',
@@ -560,6 +594,10 @@ function dti(c: Ctx): WorkingPaper {
   t.data(lbl('AS PER P&L (PL-INPUT NET ITC)', 1 + 6 * n), ...taxCells(w.dti.asPerPl, heads));
   t.sub(lbl('DIFF (P&L - NET)', 1 + 6 * n), ...taxCells(w.dti.plDiff, heads), ...pad(2), just('dti.pl'));
   adjustmentBlock(c, p, 'OTHER ADJUSTMENTS IN DR SIDE', docs.duties_input.adjustments, w.dti.adjustments, 'REASON OF ADJ.', ['TOTAL DR', w.dti.totalDr]);
+  rateWiseBlock(c, p, 'RATE-WISE BREAKUP OF BOOKS FIGURES', [
+    ['Purchase', (m) => docs.duties_input.months[m].rateWise?.purchase],
+    ['Debit note', (m) => docs.duties_input.months[m].rateWise?.debitNote],
+  ]);
   return paper(c, {
     ref: 'B4', title: 'DUTIES & TAXES-INPUT — Input tax credit by month', sheet: 'B4 DUTIES & TAXES-INPUT', phase: 'collect', master: 'DUTIES & TAXES-INPUT',
     source: 'Source: books Duties & Taxes input ledgers by month; AS PER 3B from the as-filed GSTR-3B 4A(1)+4A(4)+4A(5) − 4B(1) − 4B(2) — DUTIES & TAXES-INPUT of MASTER_PMS',
