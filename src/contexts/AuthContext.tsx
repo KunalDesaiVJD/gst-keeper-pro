@@ -545,6 +545,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(async () => {
     localStorage.removeItem(FALLBACK_AUTH_KEY);
+    // The tab's chosen client and period (ClientContext, MonthContext) go with the session.
+    try { sessionStorage.removeItem('gstk_selected_client'); sessionStorage.removeItem('gstk_selected_month'); } catch { /* storage unavailable */ }
     await supabase.auth.signOut();
     setSession(null);
     setUser(null);

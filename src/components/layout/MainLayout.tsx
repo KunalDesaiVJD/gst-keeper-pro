@@ -1,4 +1,4 @@
-import React, { Suspense, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
 import { lazyWithReload } from '@/lib/chunkReload';
@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
+import { checkForNewBuild, installBuildWatcher, newBuildAvailable } from '@/lib/buildVersion';
 
 // The GST Assistant, loaded once a staff page is up.
 // The assistant never takes the screen down with it: its own chunk reloads
@@ -30,6 +31,16 @@ const MainLayout: React.FC = () => {
   const location = useLocation();
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+
+  // A newer build was deployed while this tab was open: its old page files are
+  // gone, so the next page change loads the new build in full (buildVersion.ts).
+  useEffect(() => { installBuildWatcher(); }, []);
+  const firstPath = useRef(true);
+  useEffect(() => {
+    if (firstPath.current) { firstPath.current = false; return; }
+    if (newBuildAvailable()) window.location.reload();
+    else void checkForNewBuild();
+  }, [location.pathname]);
 
   if (isLoading) {
     return (
