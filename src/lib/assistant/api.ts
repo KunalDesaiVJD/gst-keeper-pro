@@ -6,7 +6,7 @@ import type { PageSnapshot } from './pageSnapshot';
 
 export type AssistantAction =
   | { id: string; kind: 'navigate'; route: string; client_id?: string; period?: string; tab?: string; reason: string }
-  | { id: string; kind: 'guide'; title: string; steps: { route?: string; target?: string; instruction: string }[] }
+  | { id: string; kind: 'guide'; title: string; origin?: string; steps: { route?: string; target?: string; instruction: string }[] }
   | { id: string; kind: 'fill'; title: string; summary: string; fields: { target: string; value: string; row?: string; current?: string }[]; save_button?: string };
 
 export interface AssistantAnswer {
@@ -28,6 +28,8 @@ const SCREENS = ASSISTANT_SCREENS.filter((s) => !s.redirectsTo).map((s) => {
   if (s.subtitle) o.about = s.subtitle;
   if (s.tabs.length) o.tabs = s.tabs;
   if (s.buttons.length) o.buttons = s.buttons.slice(0, 20);
+  // A screen in tabs: each tab with what it shows, so a step names the tab first.
+  if (s.sections.length) o.sections = s.sections.map((x) => ({ tab: x.tab, ...(x.tabs.length ? { tabs: x.tabs } : {}), buttons: x.buttons.slice(0, 16) }));
   if (s.staffOnly) o.staffOnly = true;
   return o;
 });

@@ -74,7 +74,7 @@ const AssistantPanel: React.FC = () => {
   const [state, setState] = useState(load);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [guide, setGuide] = useState<{ title: string; steps: GuideStep[] } | null>(null);
+  const [guide, setGuide] = useState<{ title: string; steps: GuideStep[]; origin: string } | null>(null);
   const [shots, setShots] = useState<Record<string, { url: string; found: number[] } | 'none' | 'taking'>>({});
   const [done, setDone] = useState<Record<string, string>>({});
   const { selectedMonth, setSelectedMonth } = useMonth();
@@ -153,7 +153,7 @@ const AssistantPanel: React.FC = () => {
   };
 
   const startGuide = (a: Extract<AssistantAction, { kind: 'guide' }>) => {
-    setGuide({ title: a.title, steps: a.steps });
+    setGuide({ title: a.title, steps: a.steps, origin: a.origin ?? location.pathname });
     setOpen(false);
     void markAction(a.id, 'applied', 'guide started');
   };
@@ -174,7 +174,7 @@ const AssistantPanel: React.FC = () => {
     if (failed.length || !res.saved) {
       // Point at what is left for the person.
       const target = failed[0]?.field.target ?? a.save_button;
-      if (target) setGuide({ title: a.title, steps: [{ target, instruction: failed[0] ? `Fill “${failed[0].field.target}” with ${failed[0].field.value} by hand.` : `Check the figures, then press ${a.save_button}.` }] });
+      if (target) setGuide({ title: a.title, origin: location.pathname, steps: [{ target, instruction: failed[0] ? `Fill “${failed[0].field.target}” with ${failed[0].field.value} by hand.` : `Check the figures, then press ${a.save_button}.` }] });
     }
   };
 
@@ -316,6 +316,7 @@ const AssistantPanel: React.FC = () => {
         <GuideOverlay
           title={guide.title}
           steps={guide.steps}
+          origin={guide.origin}
           onClose={() => { setGuide(null); }}
         />
       )}
