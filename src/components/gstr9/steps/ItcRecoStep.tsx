@@ -333,11 +333,11 @@ const Table7Card: React.FC = () => {
     ...T7_ROWS.map((r): T7Row => {
       if (r.id === 'r42' && r42On) {
         const v = G.r42?.final7C ?? null;
-        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? workings.r42.annual.final : null };
+        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? g9.t7.C : null };
       }
       if (r.id === 'r43' && r42On) {
         const v = G.r42?.final7D ?? null;
-        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? workings.r43.te : null };
+        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? g9.t7.D : null };
       }
       const v = G.t7[r.id];
       return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: r.id === 's17_5' && v == null ? g9.t7EPortal : null };

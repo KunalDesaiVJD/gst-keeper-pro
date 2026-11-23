@@ -7,6 +7,9 @@ import { MatrixRow, MatrixTable, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox, RefStrip } from './bits';
 import { FormGrid } from './FormGrid';
+import { rule4243Reason } from '@/lib/gstr9/rule4243Reasons';
+import type { Gstr9cDoc } from '@/lib/gstr9/types';
+import type { Workings } from '@/lib/gstr9/engine';
 import { C9_MATRIX_SCROLL, figs, FormLine, headsText, n0, TAX_HEADS, toTax, useGoToStep } from './formLines';
 
 const T12_LABEL = {
@@ -113,7 +116,38 @@ export const Table12Card: React.FC = () => {
         suggestion), because the residual is often an unexplained difference rather than ITC availed next year.
       </Note>
       <ReasonsBox field="t13Reasons" code="13" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.12F" />
+      <div className="flex justify-end"><Rule4243ReasonButton field="t13Reasons" /></div>
     </SectionCard>
+  );
+};
+
+const reasonOf = (w: Workings) => rule4243Reason({
+  financialYear: w.ctx.financialYear,
+  on: w.r42.enabled,
+  t7C: w.g9.t7.C,
+  t7D: w.g9.t7.D,
+  payable42: w.r42Turnover ? w.r42.payable : { i: 0, c: 0, s: 0, x: 0 },
+  payable43: w.r42Turnover ? w.r43.payable : { i: 0, c: 0, s: 0, x: 0 },
+  interest42: w.r42Turnover ? w.r42.interest : { i: 0, c: 0, s: 0, x: 0 },
+  interest43: w.r42Turnover ? w.r43.interest : { i: 0, c: 0, s: 0, x: 0 },
+  postingPeriod: w.r42.postingPeriod,
+  builderR42: w.builderRev.r42,
+  builderR43: w.builderRev.r43,
+});
+
+/** "Add the Rule 42/43 reason" for a reasons table: appends the working's lines not already there. */
+const Rule4243ReasonButton: React.FC<{ field: 't13Reasons' | 't15Reasons' }> = ({ field }) => {
+  const { workings, docs, update, readOnly } = useWorkspace();
+  const r = useMemo(() => reasonOf(workings), [workings]);
+  const cur = docs.gstr9c[field] ?? '';
+  const missing = r.lines.filter((l) => !cur.includes(l));
+  if (readOnly || !missing.length) return null;
+  return (
+    <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
+      title={missing.join('\n')}
+      onClick={() => update('gstr9c', (d: Gstr9cDoc) => ({ ...d, [field]: [d[field]?.trim(), ...missing].filter(Boolean).join('\n') }))}>
+      Add the Rule 42/43 reason
+    </Button>
   );
 };
 
@@ -164,15 +198,18 @@ export const Table14Card: React.FC = () => {
         14P is the full RCM Part B (every expense block) — the sheet’s Part B taxable total adds only two of the four blocks.
       </Note>
       <ReasonsBox field="t15Reasons" code="15" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.14T" />
+      <div className="flex justify-end"><Rule4243ReasonButton field="t15Reasons" /></div>
     </SectionCard>
   );
 };
 
 /** Part IV — Table 16: tax payable on the un-reconciled ITC. */
 export const Table16Card: React.FC = () => {
-  const { docs, workings } = useWorkspace();
+  const { docs, workings, update, readOnly } = useWorkspace();
   const C = docs.gstr9c;
   const W = workings.gstr9c;
+  const r4243 = useMemo(() => reasonOf(workings), [workings]);
+  const fill16 = () => update('gstr9c', (d: Gstr9cDoc) => ({ ...d, t16: { ...d.t16, ...r4243.t16 } }));
 
   const t16Lines = useMemo<FormLine[]>(
     () =>
@@ -204,6 +241,14 @@ export const Table16Card: React.FC = () => {
         ]}
       />
       <FormGrid label="GSTR-9C Table 16" lines={t16Lines} heads={['t']} headLabels={{ t: 'Amount payable (₹)' }} labelWidth={220} />
+      {r4243.hasPayable && (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+          Rule 42/43 still to reverse: {fmtMoney((r4243.t16.A ?? 0) + (r4243.t16.B ?? 0) + (r4243.t16.C ?? 0) + (r4243.t16.D ?? 0))} with interest {fmtMoney(r4243.t16.E ?? 0)}
+          {!readOnly && (
+            <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={fill16}>Fill 16A to 16E from Rule 42/43</Button>
+          )}
+        </div>
+      )}
     </SectionCard>
   );
 };

@@ -565,8 +565,7 @@ screen where it applies.
     - difference lines: F and E books vs Σ periods (reason needed), final vs
       reversed (informational, settled in Payables);
     - export paper **C2A RULE 42-43** (with ITC reco and the full set).
-    Not yet: GSTR-9C Table 13 / 16 wording, reading the approved Builder ITC
-    Reversal working for a promoter's project credit.
+    Builder project credit and the 9C wording: positions 42 and 43.
 
 40. **Rule 43 working** (same sub-tab and switch as Rule 42;
     `src/lib/gstr9/rule43.ts`, checks in `scripts/verify-gstr9-rule42.mjs`;
@@ -595,13 +594,6 @@ screen where it applies.
       with no common asset in the register is warned;
     - with the working off, 7D and 7E are as before (typed in Table 7).
 
-Carried over from the workbook as-is (firm positions, flagged in the UI):
-suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
-rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
-category is set to 6D/6F, inputs / capital goods, or No ITC (positions 24–25);
-interest/FD income is Non-GST (5F).
-
-
 41. **Builder advance roll-forward** (GSTR-9C › Advances, Builder clients only;
     `src/lib/gstr9/builderAdvances.ts`, data `builderAdvancesData.ts`, card
     `gstr9c/BuilderAdvancePart.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
@@ -625,6 +617,34 @@ interest/FD income is Non-GST (5F).
     select-only, a reopen stamps the row); only the superadmin reopens
     (`annual_return_builder_reopen_year`, with a reason, never while a later year is
     closed or the year's sign-off lock stands).
+42. **Builder project credit** (Kunal, 23 Nov 2026). For a Builder client
+    (not No-ITC), the approved working of Builder › ITC Reversal (carpet
+    area, `src/utils/builderItcReversal.ts`, BUILDER_GST_POSITIONS §7A) is
+    read into the year whose GSTR-3B carries it (its posting period;
+    `builderReversal.ts`, `builderReversalStore.ts`). With the Rule 42/43
+    working on, Σ of its years' net Rule 42 adds to 7C and net Rule 43 to 7D,
+    and both are kept out of 7E as already in that 4(B)(1). Per rule, a net
+    below nil is a re-credit in 4(A)(5): shown (check 6H), never netted
+    against the other rule or the turnover figure. The turnover method (E ÷ F)
+    stays for credit common to the whole business; tag the project's own
+    credit T4 or T2 on Purchases, or switch the turnover method off (then 7C /
+    7D are the builder working only and the Rule 42/43 Payables lines are
+    not used). A superadmin override of 7C / 7D replaces the whole figure.
+43. **GSTR-9C Tables 13, 15 and 16 from the working** (`rule4243Reasons.ts`).
+    On the GSTR-9C step, "Add the Rule 42/43 reason" appends the working's
+    lines (7C and 7D reversed, the builder part, what is still to reverse with
+    interest) to Table 13 or 15, in the utility's characters only; "Fill 16A
+    to 16E from Rule 42/43" puts the reversal still due per head and its
+    interest into Table 16. Neither writes by itself: the reasons are the
+    auditor's.
+
+Carried over from the workbook as-is (firm positions, flagged in the UI):
+suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
+rather than 7A (Rule 37); all Part B RCM goes to 6C input services unless a
+category is set to 6D/6F, inputs / capital goods, or No ITC (positions 24–25);
+interest/FD income is Non-GST (5F).
+
+
 
 ## 7. Portal fetch (browser extension)
 

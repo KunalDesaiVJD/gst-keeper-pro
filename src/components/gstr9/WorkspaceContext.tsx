@@ -7,6 +7,8 @@ import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib
 import type { Drc03Filing, SetOff } from '@/lib/gstr9/payables';
 import type { CapitalGoodsAsset } from '@/lib/gstr9/capitalGoods';
 import { loadCapitalGoods, saveCapitalGoods } from '@/lib/gstr9/capitalGoodsStore';
+import { loadApprovedBuilderReversals } from '@/lib/gstr9/builderReversalStore';
+import type { BuilderReversalWorking } from '@/lib/gstr9/builderReversal';
 import {
   AnnualReturnPeriod,
   DocConflictError,
@@ -161,6 +163,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const [drc03s, setDrc03s] = useState<Drc03Filing[]>([]);
   const [capitalGoods, setCapitalGoods] = useState<CapitalGoodsAsset[]>([]);
   const [capitalGoodsLoaded, setCapitalGoodsLoaded] = useState(false);
+  const [builderReversals, setBuilderReversals] = useState<BuilderReversalWorking[]>([]);
   const cgRef = useRef<CapitalGoodsAsset[]>([]);
   /** The register as last saved (id → JSON), to save only what changed. */
   const cgSaved = useRef<Map<string, string>>(new Map());
@@ -187,9 +190,19 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const quarterly = client.registration_type === 'IFF';
   const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs, capitalGoods }),
-    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs, capitalGoods],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs, capitalGoods, builderReversals }),
+    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs, capitalGoods, builderReversals],
   );
+  const isBuilder = client.regular_sub_type === 'Builder';
+  /** Builder clients: the approved carpet-area reversals (Builder › ITC Reversal). A failure never blocks the working. */
+  useEffect(() => {
+    if (!isBuilder) { setBuilderReversals([]); return; }
+    let live = true;
+    loadApprovedBuilderReversals(client.id)
+      .then((list) => { if (live) setBuilderReversals(list); })
+      .catch((e) => toast.error('Could not load the approved Builder ITC Reversal workings: ' + (e instanceof Error ? e.message : String(e))));
+    return () => { live = false; };
+  }, [client.id, isBuilder]);
   const applyPeriod = useCallback((p: AnnualReturnPeriod | null) => {
     periodRef.current = p;
     setPeriod(p);
