@@ -10,6 +10,8 @@ import { displayCol } from '../grid/columns';
 import { fmtRate } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { CREDIT_USE_LABEL } from '@/lib/gstr9/rule42';
+import type { CreditUse } from '@/lib/gstr9/types';
 import { ITC_TABLE_OPTIONS, ITC_TYPE_OPTIONS, itcTableOf, newRcmCategory, previousFY, SHEET_BLOCKS, SUPPLY_OPTIONS } from './rcmShared';
 
 const rateTone = (rate: number): CellTone => (num(rate) <= 0 || !STANDARD_RATES.includes(num(rate)) ? 'warn' : undefined);
@@ -24,6 +26,8 @@ const rateTitle = (rate: number): string => {
  * The RCM expense categories — one per expense block of the sheet
  * (TRANSPORTATION EXP, DELIVERY EXP, OFFICE RENT EXPENSE, ADVOCATE FEES …).
  */
+const CREDIT_USE_OPTIONS = (Object.keys(CREDIT_USE_LABEL) as CreditUse[]).map((k) => ({ value: k, label: CREDIT_USE_LABEL[k] }));
+
 const RcmCategoriesCard: React.FC = () => {
   const { docs, workings, update, readOnly, client, financialYear } = useWorkspace();
   const cats = docs.rcm.categories;
@@ -107,6 +111,24 @@ const RcmCategoriesCard: React.FC = () => {
         const t = (e.text || 'is') as RcmItcType;
         const { itcType: _drop, ...rest } = r;
         return t === 'is' ? rest : { ...rest, itcType: t };
+      },
+    },
+    {
+      key: 'use',
+      header: 'Rule 42 use',
+      type: 'select',
+      width: 150,
+      options: CREDIT_USE_OPTIONS,
+      value: (r) => r.use ?? 'common',
+      editable: (r) => itcTableOf(r.itcTable) !== 'none' && r.itcType !== 'cg',
+      tone: (r) => (itcTableOf(r.itcTable) !== 'none' && r.itcType !== 'cg' ? undefined : 'muted'),
+      title: (r) =>
+        itcTableOf(r.itcTable) === 'none' ? 'No ITC taken, so nothing for Rule 42'
+          : r.itcType === 'cg' ? 'Capital goods are Rule 43’s'
+            : 'Rule 42: Common (default), T1 non-business, T2 exempt only, T3 blocked u/s 17(5), T4 taxable only',
+      onEdit: (r, e) => {
+        const { use: _drop, ...rest } = r;
+        return e.text && e.text !== 'common' && e.text in CREDIT_USE_LABEL ? { ...rest, use: e.text as CreditUse } : rest;
       },
     },
     displayCol<RcmCategory>('taxable', 'Taxable (year)', (r) => workings.rcm.categories[r.id]?.total.t ?? 0, { width: 130 }),

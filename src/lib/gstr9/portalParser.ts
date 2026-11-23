@@ -200,6 +200,9 @@ export function parseGstr3bSummary(raw: unknown, period?: string | null): Portal
   const sup = isObj(d.sup_details) ? d.sup_details : {};
   m.outTax = addTax(ptax(sup.osup_det), ptax(sup.osup_zero)); // 3.1(a) + 3.1(b)
   m.rcm = pval(sup.isup_rev); // 3.1(d)
+  // 3.1 taxable values, for Rule 42's E and F (rule42.ts).
+  const txv = (o: unknown) => (isObj(o) ? pnum((o as AnyObj).txval) : 0);
+  m.turnover = { taxable: txv(sup.osup_det), zero: txv(sup.osup_zero), nilExempt: txv(sup.osup_nil_exmp), nonGst: txv(sup.osup_nongst) };
 
   const elg = isObj(d.itc_elg) ? d.itc_elg : {};
   const avl = Array.isArray(elg.itc_avl) ? (elg.itc_avl as AnyObj[]) : [];
@@ -317,7 +320,7 @@ export function portalPathLabel(path: string): string {
   if (parts[0] === 'months') {
     const q: Record<string, string> = {
       outTax: 'Output tax 3.1(a)+(b)', itcExclRcm: 'ITC excl. RCM', rcm: 'RCM 3.1(d)', itc4a5: '4A(5)',
-      itc4b1: '4B(1)', itc4b2: '4B(2)', itc4d: '4D', itc4aTotal: '4A total',
+      itc4b1: '4B(1)', itc4b2: '4B(2)', itc4d: '4D', itc4aTotal: '4A total', turnover: '3.1 value',
     };
     return `${parts[1].toUpperCase()} · ${q[parts[2]] ?? parts[2]} · ${head}`;
   }

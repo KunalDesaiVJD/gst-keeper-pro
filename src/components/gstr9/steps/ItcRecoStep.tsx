@@ -5,7 +5,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { maxAbs, subT, totalTax } from '@/lib/gstr9/engine';
-import { newId, zIn } from '@/lib/gstr9/defaults';
+import { emptyRule42, newId, zIn } from '@/lib/gstr9/defaults';
 import type { Gstr9ManualDoc, OtherReversalRow, Tax, TaxIn, ValTax } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { HEAD_LABEL, JustifyControl, Note, OpenDifferences, SectionCard, SourceChip, type MatrixHead } from '../ui';
@@ -14,6 +14,7 @@ import { taxFooter, taxInCols } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
+import Rule42Card from '../reco/Rule42Card';
 import {
   anyTax,
   DESC_MAX,
@@ -317,8 +318,13 @@ const Table7Card: React.FC = () => {
   const g9 = workings.g9;
   const h1 = g9.t7H[0];
 
+  const r42On = workings.r42.enabled;
   const rows: T7Row[] = [
     ...T7_ROWS.map((r): T7Row => {
+      if (r.id === 'r42' && r42On) {
+        const v = G.r42?.final7C ?? null;
+        return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: v == null ? workings.r42.annual.final : null };
+      }
       const v = G.t7[r.id];
       return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: r.id === 's17_5' && v == null ? g9.t7EPortal : null };
     }),
@@ -342,24 +348,30 @@ const Table7Card: React.FC = () => {
           {r.kind === 'h1' && <SmallBadge>From Duties &amp; Taxes</SmallBadge>}
           {r.id === 's17_5' &&
             (r.v == null ? <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge> : <SmallBadge variant="outline">Typed</SmallBadge>)}
+          {r.id === 'r42' && r42On &&
+            (r.v == null ? <SmallBadge title="Final for the year from ITC reco › Rule 42/43">Rule 42 working</SmallBadge> : <SmallBadge variant="outline">Typed over</SmallBadge>)}
         </span>
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
     },
-    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => r.id === 's17_5' && !canEditSource, computedHint: (r) =>
-        r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there' : 'As-filed GSTR-3B 4B(1) less 7A2, 7C and 7D — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
+    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => (r.id === 's17_5' || (r.id === 'r42' && r42On)) && !canEditSource, computedHint: (r) =>
+        r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there'
+          : r.id === 'r42' ? 'Final for the year from the Rule 42 working — a superadmin may type over it'
+            : 'As-filed GSTR-3B 4B(1) less 7A2, 7C and 7D — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
   ];
 
   const onRowsChange = (next: T7Row[]) =>
     update('gstr9', (d) => {
       const t7 = { ...d.t7 };
+      let r42Override: TaxIn | null | undefined;
       next.forEach((r) => {
         const field = r.field;
         if (field === 'otherDesc') t7.otherDesc = r.label;
         else if (field === 's17_5') t7.s17_5 = withFormulas(r.v, r.f);
+        else if (field === 'r42' && r42On) r42Override = withFormulas(r.v, r.f);
         else t7[field] = withFormulas(r.v ?? zIn(), r.f);
       });
-      return { ...d, t7 };
+      return r42Override === undefined ? { ...d, t7 } : { ...d, t7, r42: { ...(d.r42 ?? emptyRule42()), final7C: r42Override } };
     });
 
   const reset7E = () => {
@@ -545,7 +557,7 @@ const NextYearCard: React.FC = () => {
 
 // ---------------------------------------------------------------------------
 
-const TABS = ['working', 'table7', 'next'] as const;
+const TABS = ['working', 'table7', 'next', 'rule42'] as const;
 
 /**
  * Step 7 — the working (Tables 6 and 7 against 6A2 and the books) first; the
@@ -570,6 +582,9 @@ const ItcRecoStep: React.FC = () => {
           <StepTab value="next" title="6A1, Tables 12 and 13, and 8C">
             6A1 · Tables 12 &amp; 13
           </StepTab>
+          <StepTab value="rule42" title="Common credit used for exempt supplies: monthly provisional, annual final, true-up and interest">
+            Rule 42/43
+          </StepTab>
         </StepTabsList>
         <TabsContent value="working" className="mt-0">
           <WorkingCard />
@@ -580,6 +595,9 @@ const ItcRecoStep: React.FC = () => {
         <TabsContent value="next" className="mt-0 space-y-3">
           <T6A1Card />
           <NextYearCard />
+        </TabsContent>
+        <TabsContent value="rule42" className="mt-0">
+          <Rule42Card />
         </TabsContent>
       </Tabs>
     </div>
