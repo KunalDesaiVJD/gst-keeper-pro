@@ -1,12 +1,14 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
-import { FY_MONTHS, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
+import { hasRateLines, meaningfulLines, rollUpRateLines } from '@/lib/gstr9/rateWise';
+import { FY_MONTHS, type DtiMonth, type DtRateLine, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { JustifyControl, MatrixTable, Money, Note, SectionCard, type MatrixHead } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { taxDisplayCols, taxFooter } from '../grid/columns';
 import AdjustmentsGrid from './AdjustmentsGrid';
 import PortalNote from './PortalNote';
+import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
 import {
   computedCols,
@@ -43,6 +45,8 @@ const GROUPS: Array<{ field: DtiField; label: string; suspended: boolean }> = [
 /** One month of DUTIES & TAXES-INPUT: books (typed) + the as-filed 3B (portal doc). */
 type DtiRow = Record<DtiField, TaxIn> & {
   id: MonthKey;
+  /** The month's optional rate-wise breakup (Purchase / Debit note are then its totals, locked in the grid). */
+  rateWise: DtiMonth['rateWise'];
   /** PortalDoc.months[m].itcExclRcm — 4A(1)+4A(4)+4A(5) − 4B(1) − 4B(2) of the as-filed GSTR-3B. */
   itcExclRcm: Tax;
   /** DtiMonth.f (books) plus PortalDoc.f for this month's "As per 3B" heads, under the grid's column keys. */
@@ -114,6 +118,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           suspRev180: mm.suspRev180,
           suspReclaim: mm.suspReclaim,
           suspReclaim180: mm.suspReclaim180,
+          rateWise: mm.rateWise,
           itcExclRcm: docs.portal.months[m].itcExclRcm,
           f: monthRowF(mm.f, docs.portal, m, 'itcExclRcm'),
         };
@@ -158,11 +163,52 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
 
   const lineKeys = useMemo(() => new Set(workings.diffs.map((d) => d.key)), [workings.diffs]);
 
+  // ------------------------------------------------------------------ Rate-wise breakup (Purchase / Debit note)
+  const [rateMonth, setRateMonth] = useState<MonthKey | null>(null);
+  const rateMm = rateMonth ? docs.duties_input.months[rateMonth] : null;
+  const onApplyRates = useCallback(
+    (lines: Record<string, DtRateLine[]>) => {
+      const m = rateMonth;
+      if (!m) return;
+      update('duties_input', (d) => {
+        const cur = d.months[m];
+        let next: DtiMonth = { ...cur };
+        const rw: NonNullable<DtiMonth['rateWise']> = { ...(cur.rateWise ?? {}) };
+        (['purchase', 'debitNote'] as const).forEach((k) => {
+          const ls = meaningfulLines(lines[k]);
+          if (ls.length) {
+            rw[k] = ls;
+            // The group is the lines' total now; any expression typed into its cells no longer applies.
+            next = { ...next, [k]: rollUpRateLines(ls), f: withoutPrefix(next.f, k) };
+          } else {
+            // No lines: the figure stays as it is and is typed directly again.
+            delete rw[k];
+          }
+        });
+        if (Object.keys(rw).length) next.rateWise = rw;
+        else delete next.rateWise;
+        return { ...d, months: { ...d.months, [m]: next } };
+      });
+    },
+    [rateMonth, update],
+  );
+
   const columns = useMemo<GridColumn<DtiRow>[]>(() => {
-    const cols: GridColumn<DtiRow>[] = [monthCol<DtiRow>('dti', 168)];
+    const cols: GridColumn<DtiRow>[] = [
+      monthCol<DtiRow>('dti', 168),
+      rateWiseCol<DtiRow>((r) => meaningfulLines(r.rateWise?.purchase).length + meaningfulLines(r.rateWise?.debitNote).length, setRateMonth),
+    ];
     GROUPS.forEach((g) => {
       if (recon || (compact && g.suspended)) return;
-      cols.push(...mirroredTaxCols<DtiRow>((r) => r[g.field], (r, t) => ({ ...r, [g.field]: t }), { group: g.label, prefix: g.field, cess }));
+      const rateField = g.field === 'purchase' || g.field === 'debitNote' ? g.field : null;
+      cols.push(
+        ...mirroredTaxCols<DtiRow>((r) => r[g.field], (r, t) => ({ ...r, [g.field]: t }), {
+          group: g.label,
+          prefix: g.field,
+          cess,
+          editable: rateField ? (r) => !hasRateLines(r.rateWise?.[rateField]) : undefined,
+        }),
+      );
       // Compact view: the four suspended groups collapse into their net effect (I + L − O − R).
       if (compact && g.field === 'debitNote') {
         cols.push(...taxDisplayCols<DtiRow>((r) => dti.months[r.id].suspNet, { group: 'Suspended ITC net (I + L − O − R)', prefix: 'susp', cess }));
@@ -372,6 +418,18 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           footer={footer}
           maxHeight={gridMaxHeight}
         />
+        <RateWiseDialog
+          month={rateMonth}
+          ledger="Input tax"
+          sides={[
+            { key: 'purchase', label: 'Purchase', lines: rateMm?.rateWise?.purchase, current: rateMm?.purchase ?? { i: 0, c: 0, s: null, x: 0 } },
+            { key: 'debitNote', label: 'Debit note', lines: rateMm?.rateWise?.debitNote, current: rateMm?.debitNote ?? { i: 0, c: 0, s: null, x: 0 } },
+          ]}
+          cess={cess}
+          readOnly={readOnly}
+          onClose={() => setRateMonth(null)}
+          onApply={onApplyRates}
+        />
         {!readOnly && (compact || recon || cess) && (
           <p className="text-[11px] text-muted-foreground">
             {recon
@@ -382,6 +440,8 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           </p>
         )}
         <Note tone="position">
+          A month’s books figures can be typed directly, or entered rate by rate with its Rate-wise button: Purchase and Debit note are then the
+          totals of its rate lines and are changed there.
           Difference = Books − 3B, per head. A month needs a reason when any head is off by more than ₹{tol} (per-client tolerance; the workbook
           has none). RCM and P&amp;L lines are for information.
         </Note>

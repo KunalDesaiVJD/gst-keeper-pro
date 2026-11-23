@@ -1,12 +1,14 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
-import { FY_MONTHS, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
+import { hasRateLines, meaningfulLines, rollUpRateLines } from '@/lib/gstr9/rateWise';
+import { FY_MONTHS, type DtoMonth, type DtRateLine, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
 import { JustifyControl, Note, SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { taxFooter } from '../grid/columns';
 import AdjustmentsGrid from './AdjustmentsGrid';
 import PortalNote from './PortalNote';
+import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
 import {
   computedCols,
@@ -29,6 +31,8 @@ interface DtoRow {
   id: MonthKey;
   sales: TaxIn;
   creditNote: TaxIn;
+  /** The month's optional rate-wise breakup (Sales / Credit note are then its totals, locked in the grid). */
+  rateWise: DtoMonth['rateWise'];
   /** PortalDoc.months[m].outTax — 3.1(a) + 3.1(b) tax of the as-filed GSTR-3B. */
   outTax: Tax;
   /** DtoMonth.f (books) plus PortalDoc.f for this month's "As per 3B" heads, under the grid's column keys. */
@@ -55,6 +59,7 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           id: m,
           sales: mm.sales,
           creditNote: mm.creditNote,
+          rateWise: mm.rateWise,
           outTax: docs.portal.months[m].outTax,
           f: monthRowF(mm.f, docs.portal, m, 'outTax'),
         };
@@ -88,14 +93,49 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
     [rows, update],
   );
 
+  // ------------------------------------------------------------------ Rate-wise breakup
+  const [rateMonth, setRateMonth] = useState<MonthKey | null>(null);
+  const rateMm = rateMonth ? docs.duties_output.months[rateMonth] : null;
+  const onApplyRates = useCallback(
+    (lines: Record<string, DtRateLine[]>) => {
+      const m = rateMonth;
+      if (!m) return;
+      update('duties_output', (d) => {
+        const cur = d.months[m];
+        let next: DtoMonth = { ...cur };
+        const rw: NonNullable<DtoMonth['rateWise']> = { ...(cur.rateWise ?? {}) };
+        (['sales', 'creditNote'] as const).forEach((k) => {
+          const ls = meaningfulLines(lines[k]);
+          if (ls.length) {
+            rw[k] = ls;
+            // The group is the lines' total now; any expression typed into its cells no longer applies.
+            next = { ...next, [k]: rollUpRateLines(ls), f: withoutPrefix(next.f, k) };
+          } else {
+            // No lines: the figure stays as it is and is typed directly again.
+            delete rw[k];
+          }
+        });
+        if (Object.keys(rw).length) next.rateWise = rw;
+        else delete next.rateWise;
+        return { ...d, months: { ...d.months, [m]: next } };
+      });
+    },
+    [rateMonth, update],
+  );
+
   const columns = useMemo<GridColumn<DtoRow>[]>(
     () => [
       monthCol<DtoRow>('dto', 104),
+      rateWiseCol<DtoRow>((r) => meaningfulLines(r.rateWise?.sales).length + meaningfulLines(r.rateWise?.creditNote).length, setRateMonth),
       ...(recon
         ? []
         : [
-            ...mirroredTaxCols<DtoRow>((r) => r.sales, (r, t) => ({ ...r, sales: t }), { group: 'Sales', prefix: 'sales', cess }),
-            ...mirroredTaxCols<DtoRow>((r) => r.creditNote, (r, t) => ({ ...r, creditNote: t }), { group: 'Credit note', prefix: 'creditNote', cess }),
+            ...mirroredTaxCols<DtoRow>((r) => r.sales, (r, t) => ({ ...r, sales: t }), {
+              group: 'Sales', prefix: 'sales', cess, editable: (r) => !hasRateLines(r.rateWise?.sales),
+            }),
+            ...mirroredTaxCols<DtoRow>((r) => r.creditNote, (r, t) => ({ ...r, creditNote: t }), {
+              group: 'Credit note', prefix: 'creditNote', cess, editable: (r) => !hasRateLines(r.rateWise?.creditNote),
+            }),
           ]),
       ...computedCols<DtoRow>((r) => dto.months[r.id].net, { group: 'Net sales', prefix: 'net', cess }),
       ...portal3bCols<DtoRow>({
@@ -176,6 +216,18 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           footer={footer}
           maxHeight={gridMaxHeight}
         />
+        <RateWiseDialog
+          month={rateMonth}
+          ledger="Output tax"
+          sides={[
+            { key: 'sales', label: 'Sales', lines: rateMm?.rateWise?.sales, current: rateMm?.sales ?? { i: 0, c: 0, s: null, x: 0 } },
+            { key: 'creditNote', label: 'Credit note', lines: rateMm?.rateWise?.creditNote, current: rateMm?.creditNote ?? { i: 0, c: 0, s: null, x: 0 } },
+          ]}
+          cess={cess}
+          readOnly={readOnly}
+          onClose={() => setRateMonth(null)}
+          onApply={onApplyRates}
+        />
         {!readOnly && (recon || cess) && (
           <p className="text-[11px] text-muted-foreground">
             {recon
@@ -184,6 +236,8 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           </p>
         )}
         <Note tone="position">
+          A month’s books figures can be typed directly, or entered rate by rate with its Rate-wise button: Sales and Credit note are then
+          the totals of its rate lines and are changed there.
           Difference = Books − 3B, per head. A month needs a reason when any head is off by more than ₹{tol} (per-client tolerance; the
           workbook has none — its note reads “if there is any diff, write proper justification”). Click a month’s status (beside the month) to
           write it.

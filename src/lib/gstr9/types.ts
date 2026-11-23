@@ -171,9 +171,36 @@ export interface AdjustmentRow {
   f?: Formulas;
 }
 
+/**
+ * One rate line of a month's optional rate-wise breakup (Duties & Taxes).
+ * When a month's group (sales, credit note, purchase, debit note) holds lines,
+ * the group's figure is their sum (rollUpRateLines), written into the group's
+ * TaxIn on every change, so the engine and every export read the same figures
+ * whether the month was entered rate-wise or as one books figure.
+ */
+export interface DtRateLine {
+  id: string;
+  /** GST rate in percent (18 = 18%); null while not chosen. */
+  rate: number | null;
+  supplyType: SupplyType;
+  taxable: number;
+  igst: number;
+  cgst: number;
+  /** Always mirrors CGST (null), as everywhere in the Annual Return workings. */
+  sgst: number | null;
+  cess: number;
+  /** Expressions typed into this line ("taxable", "rate", "tax.c" …). */
+  f?: Formulas;
+}
+
+/** The rate-wise breakup of a month's typed groups; a group without lines is entered directly. */
+export type DtRateWise<K extends string> = Partial<Record<K, DtRateLine[]>>;
+
 export interface DtoMonth {
   sales: TaxIn;
   creditNote: TaxIn;
+  /** Optional rate-wise breakup of Sales / Credit note (the group figure is its sum). */
+  rateWise?: DtRateWise<'sales' | 'creditNote'>;
   f?: Formulas;
 }
 
@@ -190,6 +217,8 @@ export interface DtiMonth {
   suspRev180: TaxIn;
   suspReclaim: TaxIn;
   suspReclaim180: TaxIn;
+  /** Optional rate-wise breakup of Purchase / Debit note (the group figure is its sum). */
+  rateWise?: DtRateWise<'purchase' | 'debitNote'>;
   f?: Formulas;
 }
 
