@@ -1,6 +1,7 @@
 import React, { Suspense, useState } from 'react';
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
+import { lazyWithReload } from '@/lib/chunkReload';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar, { SidebarContents } from './Sidebar';
 import NotificationBell from '@/components/notices/NotificationBell';
@@ -14,7 +15,15 @@ import { PageLoading } from './PageLoading';
 import logo from '@/assets/logo.png';
 
 // The GST Assistant, loaded once a staff page is up.
-const AssistantPanel = React.lazy(() => import('@/components/assistant/AssistantPanel'));
+// The assistant never takes the screen down with it: its own chunk reloads
+// like a page's after a deploy, and an error in it hides only the panel.
+const AssistantPanel = lazyWithReload(() => import('@/components/assistant/AssistantPanel'));
+class AssistantBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { console.error('[GST Assistant]', error); }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 
 const MainLayout: React.FC = () => {
   const { isAuthenticated, isLoading, isStaffRole } = useAuth();
@@ -85,7 +94,7 @@ const MainLayout: React.FC = () => {
             <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
           </ErrorBoundary>
         </main>
-        {isStaffRole() && <Suspense fallback={null}><AssistantPanel /></Suspense>}
+        {isStaffRole() && <AssistantBoundary><Suspense fallback={null}><AssistantPanel /></Suspense></AssistantBoundary>}
       </div>
 
       {/* Ctrl K / ⌘K search over clients and notices - only for staff */}
