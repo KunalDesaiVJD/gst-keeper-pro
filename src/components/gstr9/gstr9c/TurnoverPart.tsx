@@ -57,11 +57,12 @@ const T7_SOURCE: Record<'B' | 'C' | 'D' | 'D1', { short: string; title: string }
 
 /** Part II — Tables 5 and 6: reconciliation of gross turnover. */
 export const Table5Card: React.FC = () => {
-  const { docs, workings } = useWorkspace();
+  const { docs, workings, client } = useWorkspace();
   const go = useGoToStep();
   const C = docs.gstr9c;
   const W = workings.gstr9c;
   const BA = W.builderAdv;
+  const isBuilder = client.regular_sub_type === 'Builder';
   const def = W.defaults;
   const auditMissing = workings.sales.auditReportTotal === null;
   const notInG9 = workings.sales.partBByNature.not_in_gstr9;
@@ -97,7 +98,7 @@ export const Table5Card: React.FC = () => {
           heads: ['t'],
           shown: { t: n0(BA.t5[k as keyof typeof BA.t5]) },
           source: 'Advances',
-          sourceTitle: 'From the Builder advance roll-forward (the Advances tab)',
+          sourceTitle: 'From the Builder advance roll-forward (Sales › Advances)',
         });
       } else lines.push({
         id: k,
@@ -165,7 +166,7 @@ export const Table5Card: React.FC = () => {
       },
     );
     return lines;
-  }, [C.t5A, C.t5, C.t5Q, C.t5OCg, def.t5A, def.t5Q, def.t5OCg, W.t5.P, W.t5.R, W.t5.rows, BA, auditMissing]);
+  }, [C.t5A, C.t5, C.t5Q, C.t5OCg, def.t5A, def.t5Q, def.t5OCg, W.t5.P, W.t5.R, BA, auditMissing]);
 
   return (
     <SectionCard
@@ -173,6 +174,16 @@ export const Table5Card: React.FC = () => {
       description="Audited turnover adjusted to what the annual return declares. Type the adjustments as positive amounts; the sign shown is applied."
       excelRef="9C utility PT II (5) · 5A ← PL-OUTPUT D54"
     >
+      {isBuilder && (
+        <Note tone={BA ? 'info' : 'warn'}>
+          {BA
+            ? '5B, 5C, 5H, 5I, 5J and 5O come from the Builder advance roll-forward.'
+            : 'Builder client: fill the advance roll-forward first, and it fills 5B, 5C, 5H, 5I, 5J and 5O.'}
+          <Button type="button" variant="link" size="sm" className="ml-1 h-auto p-0 text-xs" onClick={() => go('sales', { salestab: 'advances' })}>
+            Open Sales › Advances <ArrowRight className="ml-0.5 h-3 w-3" />
+          </Button>
+        </Note>
+      )}
       {C.t5A === null && auditMissing && (
         <Note tone="warn">
           No audit-report total has been entered on the Sales step, so 5A uses books Part A + Part B ({fmtMoney(workings.sales.total)}).

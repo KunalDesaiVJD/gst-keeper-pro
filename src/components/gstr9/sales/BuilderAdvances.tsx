@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  carryForward, editableReason, emptyBuilderAdv, normalizeBuilderAdv, openingsDiffer, prevFy, rollForward, withCarry,
-  type BuilderAdvAdjustment, type BuilderAdvanceDoc, type BuilderChainYear,
+  carryForward, editableReason, emptyBuilderAdv, emptyTieOut, normalizeBuilderAdv, openingsDiffer, prevFy, rollForward, withCarry,
+  type BuilderAdvAdjustment, type BuilderAdvanceDoc, type BuilderAdvTieOut, type BuilderChainYear,
 } from '@/lib/gstr9/builderAdvances';
 import { closeBuilderYear, loadBuilderChain, loadBuilderYearMoney, reopenBuilderYear } from '@/lib/gstr9/builderAdvancesData';
 import { newId } from '@/lib/gstr9/defaults';
@@ -15,7 +15,7 @@ import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 
-// GSTR-9C › Advances (Builder clients only): the customer-advance roll-forward of
+// Sales › Advances (Builder clients only): the customer-advance roll-forward of
 // the firm's TURNOVER IN 9C sheet. Earlier years are read-only; only the one
 // open year can change, and the database holds the same rule
 // (20261123150000_annual_return_builder_advances.sql). The figures fill Table 5.
@@ -98,22 +98,42 @@ const BuilderAdvanceCard: React.FC = () => {
   const setAdj = (id: string, patch: Partial<BuilderAdvAdjustment>) =>
     setDoc((d) => ({ ...d, adjustments: d.adjustments.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
 
+  const setTie = (patch: Partial<BuilderAdvTieOut>) =>
+    setDoc((d) => ({ ...d, tieOut: { ...(d.tieOut ?? emptyTieOut()), source: 'books', readAt: '', ...patch } }));
+
+  // GSTR-1 and GSTR-3B are often not prepared in this app, so the Builder module may hold
+  // nothing for the year: then the money is typed from the client's collection register,
+  // and the module is only read when it has the year's receipts.
   const readMoney = async (withSuggestions: boolean) => {
     setBusy(true);
     try {
       const m = await loadBuilderYearMoney(client.id, financialYear);
+      const fresh = withSuggestions ? m.cancellations.filter((c) => !doc.adjustments.some((a) => a.sourceId === c.id)) : [];
+      if (!withSuggestions && m.receiptCount === 0 && m.refunds === 0) {
+        toast.info(`The Builder module holds no receipts for FY ${financialYear}. Type the figures from the collection register.`);
+        return;
+      }
+      if (withSuggestions && fresh.length === 0) {
+        toast.info(m.cancellations.length ? 'Every refunded cancellation is already listed.' : `The Builder module holds no refunds for FY ${financialYear}. Add the line by hand.`);
+        return;
+      }
       setDoc((d) => {
-        const have = new Set(d.adjustments.map((a) => a.sourceId).filter(Boolean));
-        const added: BuilderAdvAdjustment[] = withSuggestions
-          ? m.cancellations.filter((c) => !have.has(c.id)).map((c) => ({
+        if (withSuggestions) {
+          const added: BuilderAdvAdjustment[] = fresh.map((c) => ({
             id: newId(), row: 'O', sourceId: c.id, amount: c.refunded,
             label: `Advance refunded to a cancelled member${c.unit ? ` (unit ${c.unit})` : ''}`,
             reason: `Booking cancelled${c.date ? ` on ${c.date}` : ''}; GST was paid on the advance when received and the refund reduced the advance in the books.`,
-          }))
-          : [];
-        return { ...d, adjustments: [...d.adjustments, ...added], tieOut: { receipts: m.receipts, refunds: m.refunds, readAt: new Date().toISOString(), note: d.tieOut?.note ?? '' } };
-      }, 'Read receipts and refunds from the Builder module');
-      toast.success(`Read ${m.receiptCount} receipt${m.receiptCount === 1 ? '' : 's'} and ${m.cancellations.length} refunded cancellation${m.cancellations.length === 1 ? '' : 's'}.`);
+          }));
+          return { ...d, adjustments: [...d.adjustments, ...added] };
+        }
+        return {
+          ...d,
+          tieOut: { source: 'builder', receipts: m.receipts, gstIncluded: 0, chequeReturns: 0, refunds: m.refunds, readAt: new Date().toISOString(), note: d.tieOut?.note ?? '' },
+        };
+      }, withSuggestions ? 'Suggested 5O lines from Builder cancellations' : 'Read receipts and refunds from the Builder module');
+      toast.success(withSuggestions
+        ? `Added ${fresh.length} refunded cancellation${fresh.length === 1 ? '' : 's'}.`
+        : `Read ${m.receiptCount} receipt${m.receiptCount === 1 ? '' : 's'} from the Builder module.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not read the Builder module.');
     } finally {
@@ -265,26 +285,41 @@ const BuilderAdvanceCard: React.FC = () => {
         </SectionCard>
 
         <SectionCard
-          title="Tie-out with the Builder module"
-          description="Receipts dated in the FY less refunds paid, against the advance received above. A check only: it never fills Table 5."
-          actions={<Button size="sm" variant="outline" disabled={!editable || busy} onClick={() => void readMoney(false)}><RefreshCw className="mr-1 h-3.5 w-3.5" />Read receipts</Button>}
+          title="Tie-out with collections"
+          description="Collections in the FY from the collection register or bank book, less GST and cheque returns and refunds, against the advance received above. A check only: it never fills Table 5."
+          actions={<Button size="sm" variant="outline" disabled={!editable || busy} onClick={() => void readMoney(false)}><RefreshCw className="mr-1 h-3.5 w-3.5" />Fill from Builder module</Button>}
         >
-          {doc.tieOut && rf.tieOut ? (
-            <>
-              {field('Receipts (bounced cheques left out, excl. GST)', doc.tieOut.receipts, () => undefined, { locked: true })}
-              {field('Less: refunds paid to cancelled members', doc.tieOut.refunds, () => undefined, { locked: true })}
-              {field('Net received per the Builder module', rf.tieOut.net, () => undefined, { locked: true })}
-              {field('Difference against the roll-forward', rf.tieOut.diff, () => undefined, { locked: true })}
-              <Textarea
-                aria-label="Tie-out note"
-                placeholder="Why the figures differ (GST adjustments, receipts before onboarding, cheque returns …)"
-                className="min-h-[60px] text-sm"
-                disabled={!editable}
-                defaultValue={doc.tieOut.note}
-                onBlur={(e) => { if (e.target.value !== doc.tieOut?.note) setDoc((d) => ({ ...d, tieOut: d.tieOut ? { ...d.tieOut, note: e.target.value } : d.tieOut })); }}
-              />
-            </>
-          ) : <Note tone="info">Not read yet.</Note>}
+          {(() => {
+            const T = doc.tieOut ?? emptyTieOut();
+            const fromBuilder = T.source === 'builder';
+            return (
+              <>
+                <p className="text-[11px] text-muted-foreground">
+                  {fromBuilder
+                    ? `Read from the Builder module${T.readAt ? ` on ${new Date(T.readAt).toLocaleString('en-IN')}` : ''} (receipts excl. GST, bounced cheques left out). Typing a figure switches to the books.`
+                    : 'Typed from the books. Use Fill from Builder module only where the year\'s receipts were recorded there.'}
+                </p>
+                {field('Total collected from customers', T.receipts, (v) => setTie({ receipts: v }))}
+                {field('Less: GST included in the collections', T.gstIncluded, (v) => setTie({ gstIncluded: v }))}
+                {field('Less: cheques returned', T.chequeReturns, (v) => setTie({ chequeReturns: v }))}
+                {field('Less: refunds paid to cancelled members', T.refunds, (v) => setTie({ refunds: v }))}
+                {rf.tieOut && (
+                  <>
+                    {field('Net advance collected', rf.tieOut.net, () => undefined, { locked: true })}
+                    {field('Difference against the roll-forward', rf.tieOut.diff, () => undefined, { locked: true })}
+                    <Textarea
+                      aria-label="Tie-out note"
+                      placeholder="Why the figures differ (opening entries, receipts before onboarding, adjustments by journal …)"
+                      className="min-h-[60px] text-sm"
+                      disabled={!editable}
+                      defaultValue={T.note}
+                      onBlur={(e) => { if (e.target.value !== T.note) setDoc((d) => ({ ...d, tieOut: { ...(d.tieOut ?? emptyTieOut()), note: e.target.value } })); }}
+                    />
+                  </>
+                )}
+              </>
+            );
+          })()}
         </SectionCard>
       </div>
 

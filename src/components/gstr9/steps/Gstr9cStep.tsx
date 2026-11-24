@@ -7,7 +7,6 @@ import { croreText } from '@/lib/gstr9/applicability';
 import { useWorkspace } from '../WorkspaceContext';
 import { DiffKpi } from '../gstr9c/bits';
 import { Table5Card, Table7Card } from '../gstr9c/TurnoverPart';
-import BuilderAdvanceCard from '../gstr9c/BuilderAdvancePart';
 import { Table11Card, Table9Card } from '../gstr9c/TaxPaidPart';
 import { NoItcNote, Table12Card, Table14Card, Table16Card } from '../gstr9c/ItcPart';
 import AdditionalLiabilityPart from '../gstr9c/AdditionalLiabilityPart';
@@ -36,7 +35,6 @@ const PARTS: Array<{ part: string | null; short: string; title: string; tables: 
     short: 'Turnover',
     title: 'Reconciliation of turnover declared in audited annual financial statement with turnover declared in annual return (GSTR-9)',
     tables: [
-      { key: 'advances', text: 'Advances', name: 'Builder advance roll-forward (fills Table 5)', component: BuilderAdvanceCard, builder: true },
       { key: '5', text: '5', name: 'Reconciliation of gross turnover (with Table 6 reasons)', component: Table5Card, diff: 'gstr9c.5R' },
       { key: '7', text: '7', name: 'Reconciliation of taxable turnover (with Table 8 reasons)', component: Table7Card, diff: 'gstr9c.7G' },
     ],
