@@ -405,7 +405,7 @@ const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChang
   const [unacked, setUnacked] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const c = can(s, me, kind === 'verify' ? 'verify' : 'lock');
-  const override = kind === 'lock' ? c.override : undefined;
+  const override = c.override;
   const since = kind === 'verify' ? s.prepared?.at : s.verified?.at ?? s.prepared?.at;
 
   const loadUnacked = async () => {
@@ -428,7 +428,7 @@ const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChang
   const confirm = async () => {
     setBusy(true);
     try {
-      if (kind === 'verify') await signoff('verify', { note: note.trim(), changesAck: unacked ?? 0 });
+      if (kind === 'verify') await signoff('verify', { note: override ? [reason.trim(), note.trim()].filter(Boolean).join(' — ') : note.trim(), changesAck: unacked ?? 0 });
       else await setStatus('locked', { note: note.trim(), checklist: Object.fromEntries(REVIEW_CHECKLIST.map((x) => [x.key, x.auto ? true : !!ticks[x.key]])), changesAck: unacked ?? 0, overrideReason: override ? reason.trim() : undefined });
       toast.success(kind === 'verify' ? 'Verified.' : `FY ${financialYear} is reviewed and locked.`);
       onOpenChange(false);
@@ -491,8 +491,8 @@ const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChang
 
         {override && (
           <div className="space-y-1.5 rounded-md border border-warning/50 bg-warning/10 p-2.5">
-            <p className="flex items-start gap-1.5 text-xs"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden /> {override} Locking now is a superadmin override; the reason is printed on the sign-off page.</p>
-            <Label htmlFor="override-reason" className="text-xs">Override reason (required)</Label>
+            <p className="flex items-start gap-1.5 text-xs"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden /> {override} {kind === 'verify' ? 'The reason is logged and printed on the sign-off page.' : 'Locking now is a superadmin override; the reason is printed on the sign-off page.'}</p>
+            <Label htmlFor="override-reason" className="text-xs">{kind === 'verify' ? 'Reason for verifying your own preparation (required)' : 'Override reason (required)'}</Label>
             <Textarea id="override-reason" value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
           </div>
         )}
@@ -505,7 +505,7 @@ const SignDialog: React.FC<{ kind: 'verify' | 'lock'; open: boolean; onOpenChang
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button onClick={() => void confirm()} disabled={busy || !ready || !c.ok}>
             {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : kind === 'verify' ? <ShieldCheck className="mr-1 h-3.5 w-3.5" /> : <Lock className="mr-1 h-3.5 w-3.5" />}
-            {kind === 'verify' ? 'Verify' : override ? 'Lock with override' : 'Review & lock'}
+            {kind === 'verify' ? (override ? 'Verify with reason' : 'Verify') : override ? 'Lock with override' : 'Review & lock'}
           </Button>
         </DialogFooter>
       </DialogContent>

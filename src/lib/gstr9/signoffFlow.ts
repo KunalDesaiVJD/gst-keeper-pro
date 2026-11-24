@@ -8,7 +8,10 @@
 //              who then becomes the preparer); a GST manager / superadmin may
 //              mark it for them. Never the allotted verifier or reviewer.
 //   Verify   — the allotted verifier, or a GST manager / superadmin; never
-//              whoever prepared it (or is allotted to) or the allotted reviewer.
+//              the allotted reviewer, nor whoever prepared it (or is allotted
+//              to) — except a GST manager / the superadmin, who may verify
+//              their own preparation with a reason (the firm, 24 Nov 2026,
+//              20261124120000); a third person still reviews & locks.
 //   Review & lock — a GST manager or the superadmin who neither prepared nor
 //              verified it. Only the superadmin may override that (no
 //              verification, or one they signed), and only with a reason.
@@ -194,9 +197,14 @@ export function can(s: SignoffState, me: SignoffActor, action: SignoffAction | '
     case 'verify':
       if (!s.prepared) return no('It has to be prepared first.');
       if (s.verified) return no('It is already verified.');
-      if (isMe(s.prepared)) return no('You prepared it — someone else must verify it.');
-      if (isMe(s.preparer)) return no('You are allotted to prepare it — someone else must verify it.');
       if (isMe(s.reviewer)) return no('You are allotted to review it — someone else must verify it.');
+      if (isMe(s.prepared) || isMe(s.preparer)) {
+        const self = isMe(s.prepared) ? 'You prepared it' : 'You are allotted to prepare it';
+        // A GST manager / the superadmin may verify their own preparation, with a reason (DB: 20261124120000).
+        return me.isManager
+          ? { ok: true, override: `${self}, so verifying it yourself needs a reason. A third person still reviews & locks.` }
+          : no(`${self} — someone else must verify it.`);
+      }
       if (isMe(s.verifier) || me.isManager) return yes;
       return no(s.verifier
         ? `Allotted to ${displayName(s.verifier.name)} to verify.`
@@ -299,6 +307,10 @@ export const clientStage = (s: SignoffState): Stage =>
 /** The whole state as a client login sees it: no send-back (stage, ring colour and note alike). */
 export const clientView = (s: SignoffState): SignoffState => ({ ...s, stage: clientStage(s), returned: null });
 
+/** Verified by the person who prepared it (a GST manager / superadmin, with a reason). */
+export const selfVerified = (s: SignoffState): boolean =>
+  !!s.verified?.id && (s.verified.id === s.prepared?.id || s.verified.id === s.preparer?.id);
+
 /** The verb in the cell when it is my turn. */
 export const turnVerb = (s: SignoffState): string => {
   const step = currentStep(s);
@@ -324,7 +336,7 @@ export const stageSentence = (s: SignoffState, opts: { notes?: boolean } = {}): 
       const role = l?.role ? ` (${ROLE_WORD[l.role] ?? l.role})` : '';
       return l ? `Reviewed & locked by ${displayName(l.name)}${role} · ${fmtDay(l.at)}` : 'Reviewed & locked';
     }
-    case 'verified': return `Verified by ${displayName(s.verified?.name)} · ${fmtDay(s.verified?.at)}`;
+    case 'verified': return `Verified by ${displayName(s.verified?.name)}${selfVerified(s) ? ' (who also prepared it)' : ''} · ${fmtDay(s.verified?.at)}`;
     case 'prepared': return `Prepared by ${displayName(s.prepared?.name)} · ${fmtDay(s.prepared?.at)}`;
     case 'sent_back':
       return `Sent back to the ${s.returned?.to === 'verifier' ? 'verifier' : 'preparer'} by ${displayName(s.returned?.by)} · ${fmtDay(s.returned?.at)}${q(s.returned?.note)}`;
