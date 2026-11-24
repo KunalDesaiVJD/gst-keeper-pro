@@ -1135,6 +1135,59 @@ const BuilderBookingsPage: React.FC = () => {
   };
 
   /**
+   * A booking with nothing recorded against it (a wrong name, the wrong unit)
+   * can be removed outright, rather than "cancelled" through the corrections
+   * flow, which is for a sale that really happened. The page's own data hides
+   * the item once anything is in; the database is asked again here, so a
+   * receipt, invoice, credit note, BU event, conversion or cancellation saved
+   * meanwhile (another tab) still stops it. Members go with the booking
+   * (cascade); the unit is free to book again.
+   */
+  const bookingIsEmpty = useCallback((unitId: string, bookingId: string) =>
+    !(receipts[unitId] || []).some((r) => r.booking_id === bookingId)
+    && !(invoices[unitId] || []).some((i) => i.booking_id === bookingId)
+    && !(allCancellations[unitId] || []).some((c) => c.booking_id === bookingId),
+  [receipts, invoices, allCancellations]);
+
+  const handleDeleteEmptyBooking = async (u: UnitRow, booking: BookingRow) => {
+    const names = (members[booking.id] || []).map((m) => m.name).filter(Boolean).join(', ') || 'this booking';
+    if (!window.confirm(
+      `Delete the booking of unit ${u.unit_no} (${names})? Nothing is recorded against it, `
+      + 'so it is removed outright and the unit is free to book again.',
+    )) return;
+    try {
+      const checks = await Promise.all([
+        supabase.from('builder_receipts').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id),
+        supabase.from('builder_invoices').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id),
+        supabase.from('builder_credit_notes').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id),
+        supabase.from('builder_bu_event_units').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id),
+        supabase.from('builder_cancellations').select('id', { count: 'exact', head: true }).eq('booking_id', booking.id),
+        supabase.from('builder_conversions').select('id', { count: 'exact', head: true })
+          .or(`from_booking_id.eq.${booking.id},to_booking_id.eq.${booking.id}`),
+      ]);
+      const labels = ['receipts', 'invoices', 'credit notes', 'a BU event', 'a cancellation', 'a conversion'];
+      const failed = checks.find((c) => c.error);
+      if (failed?.error) throw failed.error;
+      const held = checks.map((c, i) => ((c.count || 0) > 0 ? labels[i] : null)).filter(Boolean);
+      if (held.length) {
+        toast.error(`This booking has ${held.join(', ')} recorded against it, so it cannot be deleted. Use Cancel booking instead.`);
+        await load();
+        return;
+      }
+      const { error } = await supabase.from('builder_bookings').delete().eq('id', booking.id);
+      if (error) throw error;
+      if (u.status === 'Booked') {
+        const { error: unitErr } = await supabase.from('builder_units').update({ status: 'Available' }).eq('id', u.id);
+        if (unitErr) throw unitErr;
+      }
+      toast.success(`Booking of unit ${u.unit_no} deleted`);
+      await load();
+    } catch (e) {
+      toast.error(`Could not delete the booking: ${(e as Error).message}`);
+    }
+  };
+
+  /**
    * Units a collection run can touch. Every unit is offered — a booked one
    * collects against its booking; an unbooked one is auto-booked on save (money
    * in is the moment of sale), so the grid never leaves a unit out just because
@@ -2125,6 +2178,15 @@ const BuilderBookingsPage: React.FC = () => {
                                       <DropdownMenuItem onSelect={() => openEditMembers(u, booking)}>
                                         Edit member{mem.length > 1 ? 's' : ''}
                                         {(mem.length === 0 || mem[0].name === 'To be named') ? ' (name not set)' : ''}
+                                      </DropdownMenuItem>
+                                    )}
+                                    {booking && u.status === 'Booked' && !u.bu_event_id && bookingIsEmpty(u.id, booking.id) && (
+                                      <DropdownMenuItem
+                                        className="text-destructive focus:text-destructive"
+                                        onSelect={() => { void handleDeleteEmptyBooking(u, booking); }}
+                                      >
+                                        <Trash2 className="mr-2 h-3.5 w-3.5" />
+                                        Delete booking (nothing recorded)
                                       </DropdownMenuItem>
                                     )}
                                     <DropdownMenuSeparator />
