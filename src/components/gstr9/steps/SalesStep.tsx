@@ -12,12 +12,13 @@ import PartBGrid from '../sales/PartBGrid';
 import AuditReconciliation from '../sales/AuditReconciliation';
 import Table5Preview from '../sales/Table5Preview';
 import { CapitalGoodsSold } from '../sales/CapitalGoodsSold';
+import BuilderAdvances from '../sales/BuilderAdvances';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** URL parameter that remembers the open part (the page keeps ?client= and ?step= alongside). */
 const TAB_PARAM = 'salestab';
-const TABS = ['a', 'b', 'cgsold', 'audit', 't5'] as const;
+const TABS = ['a', 'b', 'cgsold', 'audit', 't5', 'advances'] as const;
 type TabKey = (typeof TABS)[number];
 
 /** Small count pill on a tab trigger. */
@@ -88,10 +89,11 @@ const EmptyExplainer: React.FC = () => (
 
 /** Step 2 — Sales (PL-OUTPUT): Part A taxable income, Part B non-taxable income, audit-report match. */
 const SalesStep: React.FC = () => {
-  const { docs, workings } = useWorkspace();
+  const { docs, workings, client } = useWorkspace();
+  const isBuilder = client.regular_sub_type === 'Builder';
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get(TAB_PARAM);
-  const tab: TabKey = TABS.some((t) => t === fromUrl) ? (fromUrl as TabKey) : 'a';
+  const tab: TabKey = TABS.some((t) => t === fromUrl) && (fromUrl !== 'advances' || isBuilder) ? (fromUrl as TabKey) : 'a';
   const setTab = (v: string) => {
     const next = new URLSearchParams(params);
     next.set(TAB_PARAM, v);
@@ -151,6 +153,14 @@ const SalesStep: React.FC = () => {
             <StepTab value="t5">
               GSTR-9 Table 5
             </StepTab>
+            {isBuilder && (
+              <StepTab value="advances" title="Builder advance roll-forward (fills GSTR-9C Table 5)">
+                Advances
+                {workings.gstr9c.builderAdv && Math.abs(workings.gstr9c.t5.R) > 1 && (
+                  <span className="text-[10px] font-normal text-muted-foreground">9C 5R open</span>
+                )}
+              </StepTab>
+            )}
         </StepTabsList>
 
         <TabsContent value="a">
@@ -168,6 +178,11 @@ const SalesStep: React.FC = () => {
         <TabsContent value="t5">
           <Table5Preview />
         </TabsContent>
+        {isBuilder && (
+          <TabsContent value="advances">
+            <BuilderAdvances />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

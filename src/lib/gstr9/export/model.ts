@@ -56,7 +56,7 @@ export interface WorkingPapersInput {
  */
 export const STEP_PAPERS: Partial<Record<StepKey, string[]>> = {
   portal: ['B6'],
-  sales: ['B1', 'C6'],
+  sales: ['B1', 'C6', 'D2A'],
   purchases: ['B2'],
   duties: ['B3', 'B4'],
   rcm: ['B5'],

@@ -84,6 +84,12 @@ is('year before open refused', B.editableReason('2025-26', chain) !== null, true
 is('openings carried', B.openingsDiffer(y3, B.carryForward(y2)), false);
 is('prevFy', B.prevFy('2025-26'), '2024-25');
 
+// Tie-out typed from the collection register (GSTR-1 / 3B not prepared in the app).
+const tied = B.rollForward({ ...y3, tieOut: { source: 'books', receipts: 96427564, gstIncluded: 2669935, chequeReturns: 450000, refunds: 751000, readAt: '', note: '' } });
+eq('tie-out net = collected − GST − cheque returns − refunds', tied.tieOut.net, 92556629);
+eq('tie-out difference against advance received', tied.tieOut.diff, 92556629 - 101844999.84);
+is('old stored tie-out still reads (no GST / cheque fields)', B.normalizeBuilderAdv({ ...y3, tieOut: { receipts: 10, refunds: 1 } }).tieOut.gstIncluded, 0);
+
 if (failed) {
   console.error(`\n${failed} check(s) failed`);
   process.exit(1);

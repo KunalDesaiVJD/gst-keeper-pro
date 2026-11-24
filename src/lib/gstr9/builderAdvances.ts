@@ -32,11 +32,22 @@ export interface BuilderAdvAdjustment {
 }
 
 export interface BuilderAdvTieOut {
-  /** Builder receipts dated in the FY, bounced cheques left out (consideration, excl. GST). */
+  /**
+   * Where the money figures come from: the client's collection register / bank
+   * book typed from the books (the default; GSTR-1 and 3B are often not prepared
+   * in this app, so the Builder module may hold nothing), or read once from the
+   * Builder module's receipts and refunds.
+   */
+  source: 'books' | 'builder';
+  /** Total collected from customers in the FY (as in the collection register). */
   receipts: number;
+  /** GST included in those collections (credited to the GST ledgers, not to advances). */
+  gstIncluded: number;
+  /** Cheques returned / bounced, already in the receipts above. */
+  chequeReturns: number;
   /** Refunds paid in the FY to cancelled members. */
   refunds: number;
-  /** When the figures were read from the Builder module. */
+  /** When the figures were read from the Builder module ('' when typed). */
   readAt: string;
   note: string;
 }
@@ -77,7 +88,7 @@ export interface BuilderRollForward {
   unadjustedEnd: number;
   /** Table 5 rows this working fills. */
   t5: { B: number; C: number; H: number; I: number; J: number; O: number };
-  /** Receipts less refunds against the advance received (null until read). */
+  /** Collections less GST, cheque returns and refunds, against the advance received (null until entered). */
   tieOut: { net: number; diff: number } | null;
 }
 
@@ -86,6 +97,8 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 const r2 = (n: number): number => Math.round((n + Number.EPSILON) * 100) / 100;
+
+export const emptyTieOut = (): BuilderAdvTieOut => ({ source: 'books', receipts: 0, gstIncluded: 0, chequeReturns: 0, refunds: 0, readAt: '', note: '' });
 
 export const emptyBuilderAdv = (carry?: BuilderCarry | null): BuilderAdvanceDoc => ({
   openingAdvance: carry?.openingAdvance ?? 0,
@@ -124,7 +137,15 @@ export function normalizeBuilderAdv(raw: unknown): BuilderAdvanceDoc | null {
         sourceId: typeof a.sourceId === 'string' ? a.sourceId : null,
       })),
     tieOut: t
-      ? { receipts: num(t.receipts), refunds: num(t.refunds), readAt: typeof t.readAt === 'string' ? t.readAt : '', note: typeof t.note === 'string' ? t.note : '' }
+      ? {
+        source: t.source === 'builder' ? 'builder' : 'books',
+        receipts: num(t.receipts),
+        gstIncluded: num(t.gstIncluded),
+        chequeReturns: num(t.chequeReturns),
+        refunds: num(t.refunds),
+        readAt: typeof t.readAt === 'string' ? t.readAt : '',
+        note: typeof t.note === 'string' ? t.note : '',
+      }
       : null,
   };
 }
@@ -135,7 +156,7 @@ export function rollForward(d: BuilderAdvanceDoc): BuilderRollForward {
   const receivedToDate = r2(d.receivedBefore + received);
   const salesToDate = r2(d.salesBefore + d.revenue);
   const sumOf = (row: BuilderAdjRow) => r2(d.adjustments.filter((a) => a.row === row).reduce((s, a) => s + num(a.amount), 0));
-  const net = d.tieOut ? r2(d.tieOut.receipts - d.tieOut.refunds) : null;
+  const net = d.tieOut ? r2(d.tieOut.receipts - d.tieOut.gstIncluded - d.tieOut.chequeReturns - d.tieOut.refunds) : null;
   return {
     openingAdvance: d.openingAdvance,
     openingUnbilled: d.openingUnbilled,

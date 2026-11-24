@@ -71,6 +71,7 @@ import {
   type WpRow,
   type WpTable,
 } from './model';
+import { normalizeBuilderAdv } from '../builderAdvances';
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -855,7 +856,7 @@ function rule42Paper(c: Ctx): WorkingPaper {
 function builderAdvPaper(c: Ctx): WorkingPaper {
   const { w, docs, meta, just } = c;
   const B = w.gstr9c.builderAdv!;
-  const doc = docs.gstr9c.builderAdv;
+  const doc = normalizeBuilderAdv(docs.gstr9c.builderAdv);
   const fy = meta.financialYear;
   const end = `31.03.${Number(fy.slice(0, 4)) + 1}`;
   const start = `01.04.${fy.slice(0, 4)}`;
@@ -886,13 +887,17 @@ function builderAdvPaper(c: Ctx): WorkingPaper {
   j.data('5Q', 'Turnover as per GSTR-9', w.gstr9c.t5.Q, '');
   j.total('5R', 'Difference (Q − P)', w.gstr9c.t5.R, just('gstr9c.5R'));
   if (B.tieOut && doc?.tieOut) {
-    p.h2('TIE-OUT WITH THE BUILDER MODULE');
+    const T = doc.tieOut;
+    p.h2('TIE-OUT WITH COLLECTIONS');
     const r = p.table([['PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 1 });
-    r.data('Receipts dated in the FY (bounced cheques left out, excl. GST)', doc.tieOut.receipts, `Read ${doc.tieOut.readAt ? fmtDateTime(doc.tieOut.readAt) : ''}`);
-    r.data('Less: refunds paid to cancelled members', doc.tieOut.refunds, '');
-    r.sub('Net received per the Builder module', B.tieOut.net, '');
+    const from = T.source === 'builder' ? `Builder module${T.readAt ? `, read ${fmtDateTime(T.readAt)}` : ''}` : 'Collection register (books)';
+    r.data('Total collected from customers in the FY', { v: T.receipts, src: 'typed' }, from);
+    r.data('Less: GST included in the collections', { v: T.gstIncluded, src: 'typed' }, '');
+    r.data('Less: cheques returned', { v: T.chequeReturns, src: 'typed' }, '');
+    r.data('Less: refunds paid to cancelled members', { v: T.refunds, src: 'typed' }, '');
+    r.sub('Net advance collected', B.tieOut.net, '');
     r.data('Advance received per this roll-forward', B.received, '');
-    r.total('Difference', B.tieOut.diff, doc.tieOut.note || '');
+    r.total('Difference', B.tieOut.diff, T.note || '');
   }
   return paper(c, {
     ref: 'D2A', title: 'GSTR-9C — Builder advance roll-forward (Table 5)', sheet: 'D2A BUILDER ADVANCES', phase: 'returns', master: 'TURNOVER IN 9C',

@@ -594,9 +594,10 @@ screen where it applies.
       with no common asset in the register is warned;
     - with the working off, 7D and 7E are as before (typed in Table 7).
 
-41. **Builder advance roll-forward** (GSTR-9C › Advances, Builder clients only;
-    `src/lib/gstr9/builderAdvances.ts`, data `builderAdvancesData.ts`, card
-    `gstr9c/BuilderAdvancePart.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
+41. **Builder advance roll-forward** (Sales › Advances, the last Sales tab, Builder
+    clients only, moved from the GSTR-9C step on 24 Nov 2026 at Kunal's request;
+    GSTR-9C Table 5 links to it; `src/lib/gstr9/builderAdvances.ts`, data
+    `builderAdvancesData.ts`, card `sales/BuilderAdvances.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
     approved 23 Nov 2026; `node scripts/verify-gstr9-builder-adv.mjs`). Stored in
     the year's gstr9c doc as `builderAdv` (null = off). Advance received in the FY =
     closing advance − opening advance + revenue recognised; received and sales to
@@ -605,8 +606,15 @@ screen where it applies.
     (opening advance), and 5J / 5O from its listed adjustments; the typed values of
     those six rows are not used. Positions taken (the plan's recommended options):
     an advance refunded to a cancelled member is **5O (+)** with its reason (5J only
-    where a credit note was raised in the books); Builder receipts and refunds are a
-    **tie-out only**, never a source of Table 5 (keeps §5); back years are entered
+    where a credit note was raised in the books); the **tie-out with collections** is a
+    check only, never a source of Table 5 (keeps §5): total collected from customers
+    less GST included, cheques returned and refunds paid, against the advance
+    received. Because the firm's builders' GSTR-1 and GSTR-3B were mostly not prepared
+    in this app, the Builder module usually holds no receipts, so the tie-out is
+    **typed from the collection register / bank book** by default; "Fill from Builder
+    module" reads its receipts (excl. GST, bounced cheques left out) and refunds only
+    where that year's receipts were recorded there, and says so when there are none
+    (likewise "Suggest from cancellations" for 5O). 5Q stays the portal GSTR-9; back years are entered
     once and **closed** by a GST Manager / superadmin; revenue recognised is typed
     and warned when it differs from 5A. **One open year per client**, held by the
     trigger `annual_return_docs_builder_adv` (`20261123150000`): a year's roll-forward
