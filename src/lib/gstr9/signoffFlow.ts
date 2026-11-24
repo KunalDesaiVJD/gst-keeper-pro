@@ -185,7 +185,7 @@ export function can(s: SignoffState, me: SignoffActor, action: SignoffAction | '
       if (!s.sheets) return no('Nothing has been saved in the working yet.');
       if (isMe(s.verifier)) return no('You are allotted to verify this — someone else must prepare it.');
       if (isMe(s.reviewer)) return no('You are allotted to review this — someone else must prepare it.');
-      if (s.preparer && !isMe(s.preparer) && !me.isManager) return no(`Allotted to ${displayName(s.preparer.name)} to prepare.`);
+      // Anyone on the GST team may mark it prepared, also for the allotted preparer (DB: 20261124100000).
       return yes;
     case 'withdraw_prepared':
       if (!s.prepared) return no('It is not marked prepared.');

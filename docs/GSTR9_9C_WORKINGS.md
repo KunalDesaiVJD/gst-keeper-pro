@@ -198,11 +198,13 @@ sign-off covers GSTR-9 and GSTR-9C together.
   reviews. A preparer cannot be changed once the working is prepared, a
   verifier once it is verified, nor anyone once it is locked. A row that
   someone else changed meanwhile is skipped, not overwritten.
-- **Prepare.** The allotted preparer marks the working prepared, with an
-  optional note. When no one is allotted, anyone on staff may, and becomes
-  the preparer; a GST manager or the superadmin may mark it for the
-  preparer. The allotted verifier and reviewer may not. Something must have
-  been saved in the working.
+- **Prepare.** Anyone on the GST team (every staff level) marks the working
+  prepared from their own login, with an optional note. When no one is
+  allotted, whoever marks it becomes the preparer; when someone else is
+  allotted, it is marked for that preparer ("Marked prepared for …") and the
+  allotment stays (the firm, 24 Nov 2026, `20261124100000`). The allotted
+  verifier and reviewer may not. Something must have been saved in the
+  working.
 - **Verify.** The allotted verifier, or a GST manager or the superadmin —
   never whoever prepared it or is allotted to prepare it, nor the allotted
   reviewer. It needs no open difference, and is done inside the working
