@@ -7,7 +7,7 @@
 // recorded per user (Settings → AI Assistant).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Bot, Camera, Check, Loader2, MapPin, PenLine, PlayCircle, RotateCcw, Send, Sparkles, X } from 'lucide-react';
+import { Bot, Camera, Check, FileText, Image as ImageIcon, Loader2, MapPin, Paperclip, PenLine, PlayCircle, RotateCcw, Send, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,6 +20,7 @@ import { askAssistant, markAction, type AssistantAction } from '@/lib/assistant/
 import { takeSnapshot, findTarget } from '@/lib/assistant/pageSnapshot';
 import { annotatedScreenshot } from '@/lib/assistant/screenshot';
 import { applyFill } from '@/lib/assistant/fill';
+import { ACCEPT, MAX_FILES, MAX_TOTAL_BYTES, chipOf, formatSize, readAttachment, totalBytes, type Attachment, type AttachmentChip } from '@/lib/assistant/attachments';
 import GuideOverlay, { type GuideStep } from './GuideOverlay';
 
 interface ChatItem {
@@ -28,6 +29,7 @@ interface ChatItem {
   text: string;
   actions?: AssistantAction[];
   error?: boolean;
+  files?: AttachmentChip[];
 }
 
 const STORE = 'gst_assistant_chat_v1';
@@ -37,6 +39,15 @@ const SUGGESTIONS = [
   'Why does ITC in GSTR-3B differ from 2B?',
   'Take me to Filing Status for this client',
 ];
+
+const FileChip: React.FC<{ f: AttachmentChip; onRemove?: () => void; light?: boolean }> = ({ f, onRemove, light }) => (
+  <span className={cn('inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]', light ? 'border-primary-foreground/30 bg-primary-foreground/10' : 'bg-card')} title={f.note ?? f.name}>
+    {f.kind === 'image' ? <ImageIcon className="h-3 w-3 shrink-0" /> : <FileText className="h-3 w-3 shrink-0" />}
+    <span className="truncate">{f.name}</span>
+    <span className="shrink-0 opacity-70">{formatSize(f.size)}</span>
+    {onRemove && <button type="button" aria-label={`Remove ${f.name}`} className="shrink-0 opacity-70 hover:opacity-100" onClick={onRemove}><X className="h-3 w-3" /></button>}
+  </span>
+);
 
 function load(): { conversationId: string | null; history: unknown[]; items: ChatItem[] } {
   try {
@@ -84,6 +95,38 @@ const AssistantPanel: React.FC = () => {
   const endRef = useRef<HTMLDivElement>(null);
   const [clientName, setClientName] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(true);
+  // Files for the next question (kept in memory only, never stored).
+  const [files, setFiles] = useState<Attachment[]>([]);
+  const [reading, setReading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const addFiles = useCallback(async (list: File[]) => {
+    if (!list.length) return;
+    setReading(true);
+    const added: Attachment[] = [];
+    let total = totalBytes(files);
+    for (const f of list) {
+      if (files.length + added.length >= MAX_FILES) { toast.error(`Up to ${MAX_FILES} files with one question.`); break; }
+      if (total + f.size > MAX_TOTAL_BYTES) { toast.error(`${f.name || 'This file'} would take the files over 10 MB for this question.`); continue; }
+      try {
+        const a = await readAttachment(f);
+        added.push(a);
+        total += a.size;
+        if (a.note) toast.warning(`${a.name}: ${a.note}.`);
+      } catch (e) {
+        toast.error((e as Error).message);
+      }
+    }
+    setReading(false);
+    if (added.length) setFiles((cur) => [...cur, ...added]);
+  }, [files]);
+
+  const removeFile = (id: string) => setFiles((cur) => {
+    const gone = cur.find((x) => x.id === id);
+    if (gone?.preview) URL.revokeObjectURL(gone.preview);
+    return cur.filter((x) => x.id !== id);
+  });
 
   // Switched off by the firm (Settings → AI Assistant): no button at all.
   useEffect(() => {
@@ -111,15 +154,18 @@ const AssistantPanel: React.FC = () => {
   }, []);
 
   const ask = useCallback(async (q: string) => {
-    const question = q.trim();
-    if (!question || busy) return;
+    const sending = files;
+    const question = q.trim() || (sending.length ? 'Please review the attached file(s) and tell me what to do with them in GST Keeper.' : '');
+    if (!question || busy || reading) return;
     setInput('');
-    const mine: ChatItem = { id: crypto.randomUUID(), role: 'user', text: question };
+    setFiles([]);
+    const mine: ChatItem = { id: crypto.randomUUID(), role: 'user', text: q.trim(), files: sending.map(chipOf) };
     setState((s) => ({ ...s, items: [...s.items, mine] }));
     setBusy(true);
     // The screen as it is now (the panel itself left out).
     const page = takeSnapshot({ route: location.pathname + location.search, clientId: selectedClientId || null, clientName, period: selectedMonth || null });
-    const res = await askAssistant({ question, conversationId: state.conversationId, history: state.history, page });
+    const res = await askAssistant({ question, conversationId: state.conversationId, history: state.history, page, attachments: sending });
+    for (const a of sending) if (a.preview) URL.revokeObjectURL(a.preview);
     setBusy(false);
     if (!res.ok) {
       setState((s) => ({ ...s, items: [...s.items, { id: crypto.randomUUID(), role: 'assistant', text: res.error || 'The assistant could not answer.', error: true }] }));
@@ -130,7 +176,7 @@ const AssistantPanel: React.FC = () => {
       history: res.history ?? s.history,
       items: [...s.items, { id: crypto.randomUUID(), role: 'assistant', text: res.reply ?? '', actions: res.actions ?? [] }],
     }));
-  }, [busy, location.pathname, location.search, selectedClientId, clientName, selectedMonth, state.conversationId, state.history]);
+  }, [busy, reading, files, location.pathname, location.search, selectedClientId, clientName, selectedMonth, state.conversationId, state.history]);
 
   const go = async (a: Extract<AssistantAction, { kind: 'navigate' }>) => {
     if (a.client_id) setSelectedClientId(a.client_id);
@@ -212,7 +258,7 @@ const AssistantPanel: React.FC = () => {
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3 text-sm">
             {state.items.length === 0 && (
               <div className="space-y-3">
-                <p className="text-muted-foreground">Ask about any GST screen or figure. I can take you to a screen, show you the steps on your screen, or fill figures for you to check and save.</p>
+                <p className="text-muted-foreground">Ask about any GST screen or figure. I can take you to a screen, show you the steps on your screen, or fill figures for you to check and save. Attach a file or paste a screenshot (Ctrl V) for me to review.</p>
                 <div className="flex flex-wrap gap-1.5">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} type="button" onClick={() => void ask(s)} className="rounded-full border bg-card px-3 py-1 text-xs text-foreground/80 hover:bg-muted">{s}</button>
@@ -224,6 +270,7 @@ const AssistantPanel: React.FC = () => {
               <div key={m.id} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                 <div className={cn('max-w-[92%] rounded-lg px-3 py-2', m.role === 'user' ? 'bg-primary text-primary-foreground' : m.error ? 'border border-destructive/40 bg-destructive/5 text-foreground' : 'border bg-card text-foreground')}>
                   {m.text && (m.role === 'user' ? <p className="whitespace-pre-wrap">{m.text}</p> : <Rich text={m.text} />)}
+                  {m.files?.length ? <div className={cn('flex flex-wrap gap-1', m.text && 'mt-1.5')}>{m.files.map((f, i) => <FileChip key={i} f={f} light={m.role === 'user'} />)}</div> : null}
                   {m.actions?.map((a) => (
                     <div key={a.id} className="mt-2 rounded-md border bg-muted/30 p-2.5">
                       {a.kind === 'navigate' && (
@@ -292,21 +339,45 @@ const AssistantPanel: React.FC = () => {
           </div>
 
           <form
-            className="border-t p-3"
+            className={cn('border-t p-3', dragging && 'bg-primary/5 ring-2 ring-inset ring-primary/40')}
             onSubmit={(e) => { e.preventDefault(); void ask(input); }}
+            onDragOver={(e) => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragging(true); } }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setDragging(false); void addFiles([...e.dataTransfer.files]); }}
           >
+            {(files.length > 0 || reading) && (
+              <div className="mb-2 space-y-1.5">
+                <div className="flex flex-wrap gap-1.5">
+                  {files.map((f) => (
+                    f.preview
+                      ? <span key={f.id} className="relative"><img src={f.preview} alt={f.name} className="h-12 w-16 rounded border object-cover" /><button type="button" aria-label={`Remove ${f.name}`} onClick={() => removeFile(f.id)} className="absolute -right-1.5 -top-1.5 rounded-full border bg-card p-0.5 shadow"><X className="h-3 w-3" /></button></span>
+                      : <FileChip key={f.id} f={chipOf(f)} onRemove={() => removeFile(f.id)} />
+                  ))}
+                  {reading && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading the file…</span>}
+                </div>
+                <p className="text-[11px] text-muted-foreground">{formatSize(totalBytes(files))} of 10 MB. The files go with this question only and are not kept.</p>
+              </div>
+            )}
             <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void ask(input); } }}
-              placeholder="Ask, or say what to enter…"
+              onPaste={(e) => {
+                const pasted = [...e.clipboardData.files];
+                if (pasted.length) { e.preventDefault(); void addFiles(pasted.map((f, i) => (f.name && f.name !== 'image.png' ? f : new File([f], `screenshot ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}${i ? ` (${i + 1})` : ''}.png`, { type: f.type })))); }
+              }}
+              placeholder="Ask, say what to enter, or paste a screenshot…"
               rows={2}
               className="resize-none text-sm"
               disabled={busy}
             />
+            <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ''; }} />
             <div className="mt-2 flex items-center justify-between">
-              <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs text-muted-foreground" onClick={reset} disabled={busy}><RotateCcw className="h-3.5 w-3.5" />New chat</Button>
-              <Button type="submit" size="sm" className="h-8 gap-1 px-3 text-xs" disabled={busy || !input.trim()}><Send className="h-3.5 w-3.5" />Ask</Button>
+              <div className="flex items-center gap-1">
+                <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs text-muted-foreground" onClick={reset} disabled={busy}><RotateCcw className="h-3.5 w-3.5" />New chat</Button>
+                <Button type="button" variant="ghost" size="sm" className="h-8 gap-1 px-2 text-xs text-muted-foreground" onClick={() => fileInput.current?.click()} disabled={busy || reading || files.length >= MAX_FILES} title="Attach images, PDF, Excel, CSV, Word or text files, up to 10 MB"><Paperclip className="h-3.5 w-3.5" />Attach</Button>
+              </div>
+              <Button type="submit" size="sm" className="h-8 gap-1 px-3 text-xs" disabled={busy || reading || (!input.trim() && !files.length)}><Send className="h-3.5 w-3.5" />Ask</Button>
             </div>
           </form>
         </SheetContent>
