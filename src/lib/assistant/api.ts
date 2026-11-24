@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { currentActorId } from '@/lib/changeLogHeaders';
 import { ASSISTANT_SCREENS } from './screens.generated';
 import type { PageSnapshot } from './pageSnapshot';
+import { forRequest, type Attachment } from './attachments';
 
 export type AssistantAction =
   | { id: string; kind: 'navigate'; route: string; client_id?: string; period?: string; tab?: string; reason: string }
@@ -43,7 +44,7 @@ function sessionsEndedAt(): string | null {
   }
 }
 
-export async function askAssistant(req: { question: string; conversationId: string | null; history: unknown[]; page: PageSnapshot }): Promise<AssistantAnswer> {
+export async function askAssistant(req: { question: string; conversationId: string | null; history: unknown[]; page: PageSnapshot; attachments?: Attachment[] }): Promise<AssistantAnswer> {
   const { data, error } = await supabase.functions.invoke('gst-assistant', {
     body: {
       actorId: currentActorId(),
@@ -53,6 +54,7 @@ export async function askAssistant(req: { question: string; conversationId: stri
       history: req.history,
       page: req.page,
       screens: SCREENS,
+      attachments: forRequest(req.attachments ?? []),
     },
   });
   if (error) {
