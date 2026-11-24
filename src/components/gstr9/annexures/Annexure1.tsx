@@ -72,7 +72,7 @@ const Annexure1: React.FC = () => {
     ...(a.CG.t || totalTax(a.CG)
       ? [{
         key: 'A+cg', code: '', label: 'Capital goods sold outside the P/L revenue (Annexure-5)', value: a.CG, indent: true,
-        note: <span className="text-[11px] text-muted-foreground">Purchases · Capital goods sold</span>,
+        note: <span className="text-[11px] text-muted-foreground">Sales · Capital goods sold</span>,
       } as MatrixRow]
       : []),
     {

@@ -137,7 +137,7 @@ function buildColumns(calc: Record<string, CgSaleCalc>, taxOnValue: (a: CapitalG
 }
 
 /**
- * Purchases step, tab "Capital goods sold": the assets of the client's
+ * Sales step, tab "Capital goods sold": the assets of the client's
  * capital goods register sold in this year, and the s.18(6) computation of
  * each (Rule 40(2), Rule 44(6)). The register is client-level (shared with the
  * Rule 43 working); rows save on their own, as the other grids do.

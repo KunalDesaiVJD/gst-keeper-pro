@@ -25,7 +25,7 @@ const Annexure2: React.FC = () => {
     { key: 'A1', code: 'A1', label: 'RCM — ITC', value: w.A1, note: <Muted>RCM · Part B</Muted> },
     { key: 'A2', code: 'A2', label: 'Debit notes', value: w.A2 },
     ...(w.A3.i || w.A3.c || w.A3.s || w.A3.x
-      ? [{ key: 'A3', code: 'A3', label: 's.18(6) reversal on capital goods sold, not yet in the ITC ledger (Annexure-5)', value: w.A3, note: <Muted>Purchases · Capital goods sold</Muted> } as MatrixRow]
+      ? [{ key: 'A3', code: 'A3', label: 's.18(6) reversal on capital goods sold, not yet in the ITC ledger (Annexure-5)', value: w.A3, note: <Muted>Sales · Capital goods sold</Muted> } as MatrixRow]
       : []),
     { key: 'B', code: 'B', label: 'Other adjustment in Dr./Cr. side (suspended ITC, net)', value: w.B },
     { key: 'C', code: 'C', label: 'Net ITC availed (A + A1 − A2 − A3 − B)', value: w.C, total: true },

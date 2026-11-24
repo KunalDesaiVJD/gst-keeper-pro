@@ -70,7 +70,7 @@ export const useGoToStep = (): ((key: StepKey, extra?: Record<string, string>) =
 export const diffTabParams = (d: { key: string; step: StepKey }): Record<string, string> => {
   const k = d.key;
   switch (d.step) {
-    case 'sales': return k === 'sales.audit' ? { salestab: 'audit' } : {};
+    case 'sales': return k === 'sales.audit' ? { salestab: 'audit' } : k.startsWith('cg.') ? { salestab: 'cgsold' } : {};
     case 'purchases': return k === 'purchases.dt' ? { purchasestab: 'summary' } : {};
     case 'duties': return { dutiestab: k.startsWith('dti.') ? 'input' : 'output' };
     case 'rcm': return { rcmtab: 'compare' };

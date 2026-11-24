@@ -124,7 +124,7 @@ export const Table5Card: React.FC = () => {
           fKey: 't5OCg',
           write: (d, v) => ({ ...d, t5OCg: v ? n0(v.t) : null }),
           source: 'Annexure-5',
-          sourceTitle: 'Sale value of capital goods sold this year that are not in a Sales ledger (Purchases · Capital goods sold)',
+          sourceTitle: 'Sale value of capital goods sold this year that are not in a Sales ledger (Sales · Capital goods sold)',
         });
       }
     });

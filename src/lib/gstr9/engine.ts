@@ -1530,7 +1530,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   cg.assets.forEach((a) => {
     const c = cg.calc[a.id];
     if (!c || !c.issues.length) return;
-    push(`cg.${a.id}`, 'purchases', `Capital goods sold — ${a.description || 'asset'}: ${c.issues.join('; ')}`, val(num(a.disposalValue)), val(), {
+    push(`cg.${a.id}`, 'sales', `Capital goods sold — ${a.description || 'asset'}: ${c.issues.join('; ')}`, val(num(a.disposalValue)), val(), {
       direction: 'Incomplete', aLabel: 'Sale value', bLabel: 'Not computed', hasTaxable: true, hasTax: false,
     });
   });
