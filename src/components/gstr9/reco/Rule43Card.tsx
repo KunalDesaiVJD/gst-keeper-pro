@@ -8,11 +8,11 @@ import { KpiTile, Note, SectionCard } from '../ui';
 import { SheetGrid, type GridColumn, type GridFooterRow } from '../grid/SheetGrid';
 import { displayCol, lockSgst, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
-import { fmtIsoDate, parseDateInput } from '../purchases/CapitalGoodsSold';
+import { fmtIsoDate, parseDateInput } from '../sales/CapitalGoodsSold';
 import { taxToIn, withFormulas } from './helpers';
 
 // ITC reco › Rule 42/43 — the Rule 43 working (src/lib/gstr9/rule43.ts): the
-// client's capital goods register (shared with s.18(6) on Purchases › Capital
+// client's capital goods register (shared with s.18(6) on Sales › Capital
 // goods sold) as Rule 43 reads it, then Tr and Te period by period against
 // what each GSTR-3B reversed. The register's edits save to the register; the
 // periods' "reversed" go to docs.gstr9.r42.months[m].reversed43.
@@ -192,7 +192,7 @@ const Rule43Card: React.FC = () => {
     >
       {!on && <Note tone="info">The working is off: 7D stays as typed in Table 7. Switch on “Use for GSTR-9 7C” above to bring 7D from here too.</Note>}
       <Note tone="position">
-        Tc is the credit on the asset; one that moved from exempt or non-business use into common use counts its credit less 5 points for every quarter or part from the invoice (the same helper as s.18(6)). An asset leaves Tr from the month it is sold, and its sale is s.18(6)’s on Purchases › Capital goods sold. No annual re-computation: 7D is Σ Te; Te short in a return goes to Payables with interest from its due date.
+        Tc is the credit on the asset; one that moved from exempt or non-business use into common use counts its credit less 5 points for every quarter or part from the invoice (the same helper as s.18(6)). An asset leaves Tr from the month it is sold, and its sale is s.18(6)’s on Sales › Capital goods sold. No annual re-computation: 7D is Σ Te; Te short in a return goes to Payables with interest from its due date.
       </Note>
       {W.warnings.map((w) => <Note key={w} tone="warn">{w}</Note>)}
 
@@ -218,7 +218,7 @@ const Rule43Card: React.FC = () => {
         emptyText={<span>No capital goods in the register for {financialYear}. Add the assets used for both taxable and exempt supplies.</span>}
       />
       <p className="text-[11px] text-muted-foreground">
-        The register is the client’s, across years, and shared with Purchases › Capital goods sold. Dates as dd-mm-yyyy; SGST is the CGST figure and is locked.
+        The register is the client’s, across years, and shared with Sales › Capital goods sold. Dates as dd-mm-yyyy; SGST is the CGST figure and is locked.
       </p>
 
       <div className="flex justify-end gap-1 text-xs">

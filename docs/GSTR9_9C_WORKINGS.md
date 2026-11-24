@@ -696,7 +696,7 @@ change is in `gst_change_log`; a trigger refuses an edit in a locked year,
 judged by the year of the date it touches (a sale by its disposal year, a
 purchase change by its invoice year; a new asset by its disposal year only).
 
-The Purchases step's tab **Capital goods sold** shows the assets sold in the
+The Sales step's tab **Capital goods sold** shows the assets sold in the
 working's year (and sales still without a date) and computes each
 (`src/lib/gstr9/capitalGoods.ts`, `computeCgSale`, `summariseCgYear`); the
 engine reads the register through `WorkspaceContext.capitalGoods` and lands

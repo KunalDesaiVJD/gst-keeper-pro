@@ -5,7 +5,7 @@ import type { Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { fmtIsoDate } from '../purchases/CapitalGoodsSold';
+import { fmtIsoDate } from '../sales/CapitalGoodsSold';
 import { StepLink } from './StepLink';
 
 const HEADS: Array<[keyof Tax, string]> = [['i', 'IGST'], ['c', 'CGST'], ['s', 'SGST'], ['x', 'Cess']];
@@ -62,10 +62,10 @@ const Annexure5: React.FC = () => {
       title="Annexure-5 — Capital goods sold u/s 18(6)"
       description="Per asset: the ITC taken, reduced by 5 percentage points for every quarter or part since the purchase invoice, against the tax on the transaction value; the higher is payable (s.18(6), Rule 40(2), Rule 44(6))."
       excelRef="—"
-      actions={<StepLink step="purchases" extra={{ purchasestab: 'cgsold' }} className="text-xs">Capital goods sold</StepLink>}
+      actions={<StepLink step="sales" extra={{ salestab: 'cgsold' }} className="text-xs">Capital goods sold</StepLink>}
     >
       {cg.assets.length === 0 ? (
-        <Note tone="info">No capital goods sold in {financialYear}. Record a sale under Purchases · Capital goods sold.</Note>
+        <Note tone="info">No capital goods sold in {financialYear}. Record a sale under Sales · Capital goods sold.</Note>
       ) : (
         <>
           <div className="grid gap-2 md:grid-cols-2">

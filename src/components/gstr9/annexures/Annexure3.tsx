@@ -69,7 +69,7 @@ const Annexure3: React.FC = () => {
   const positive = (_h: string, v: number) => (v > tol ? ('error' as const) : undefined);
   const sumRows: FixedTaxRow[] = [
     ...(totalTax(w.cg186) > 0.005
-      ? [{ id: 'cg186', kind: 'computed', value: w.cg186, label: '5. Capital goods sold u/s 18(6): shortfall not yet reversed', hint: 'Annexure-5 (Purchases · Capital goods sold), input side' } as FixedTaxRow]
+      ? [{ id: 'cg186', kind: 'computed', value: w.cg186, label: '5. Capital goods sold u/s 18(6): shortfall not yet reversed', hint: 'Annexure-5 (Sales · Capital goods sold), input side' } as FixedTaxRow]
       : []),
     { id: 'total', kind: 'computed', value: w.total, emphasis: true, label: totalTax(w.cg186) > 0.005 ? 'Total (1 + 2 + 3 + 4 + 5)' : 'Total (1 + 2 + 3 + 4)', hint: 'Signed, as the sheet (D46)' },
     { id: 'payable', kind: 'computed', value: w.payable, label: 'DRC-03 payable', hint: 'Heads that come out positive' },

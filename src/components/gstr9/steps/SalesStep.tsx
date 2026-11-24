@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ClipboardPaste } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { StepTab, StepTabsList } from '../reco/StepTabs';
+import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { KpiTile, OpenDifferences, useDiffLine } from '../ui';
 import { fmtMoney } from '../grid/money';
@@ -11,12 +11,13 @@ import PartAGrid from '../sales/PartAGrid';
 import PartBGrid from '../sales/PartBGrid';
 import AuditReconciliation from '../sales/AuditReconciliation';
 import Table5Preview from '../sales/Table5Preview';
+import { CapitalGoodsSold } from '../sales/CapitalGoodsSold';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** URL parameter that remembers the open part (the page keeps ?client= and ?step= alongside). */
 const TAB_PARAM = 'salestab';
-const TABS = ['a', 'b', 'audit', 't5'] as const;
+const TABS = ['a', 'b', 'cgsold', 'audit', 't5'] as const;
 type TabKey = (typeof TABS)[number];
 
 /** Small count pill on a tab trigger. */
@@ -98,6 +99,7 @@ const SalesStep: React.FC = () => {
   };
 
   const s = workings.sales;
+  const cg = workings.cg;
   const auditLine = useDiffLine('sales.audit');
   const empty = docs.sales.partA.length === 0 && docs.sales.partB.length === 0 && docs.sales.auditReportTotal === null;
   const mismatches = docs.sales.partA.filter((r) => s.rows[r.id]?.rateMismatch).length;
@@ -125,6 +127,17 @@ const SalesStep: React.FC = () => {
               Part B · Non-taxable
               <Count n={docs.sales.partB.length} label={plural(docs.sales.partB.length, 'ledger')} />
             </StepTab>
+            <StepTab value="cgsold" title="Capital goods sold in the year: s.18(6), Rule 40(2), Rule 44(6)">
+              Capital goods sold
+              <TabSub>s.18(6)</TabSub>
+              {cg.assets.length > 0 && <Count n={cg.assets.length} label={plural(cg.assets.length, 'asset')} />}
+              {cg.incomplete > 0 && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-normal text-foreground" title={`${plural(cg.incomplete, 'asset')} to complete`}>
+                  <AlertTriangle className="h-3 w-3 text-warning" aria-hidden />
+                  {cg.incomplete} to complete
+                </span>
+              )}
+            </StepTab>
             <StepTab value="audit">
               Audit report
               {auditLine?.open ? (
@@ -145,6 +158,9 @@ const SalesStep: React.FC = () => {
         </TabsContent>
         <TabsContent value="b">
           <PartBGrid />
+        </TabsContent>
+        <TabsContent value="cgsold">
+          <CapitalGoodsSold />
         </TabsContent>
         <TabsContent value="audit">
           <AuditReconciliation />

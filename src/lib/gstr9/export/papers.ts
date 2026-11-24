@@ -1127,7 +1127,7 @@ function capitalGoodsSold(c: Ctx): WorkingPaper {
   p.note('Firm positions (23 Nov 2026, docs/GSTR9_9C_WORKINGS.md §6 items 34–38): the higher of is compared on the total, the shortfall split over the heads of the ITC as reduced; ITC taken is the credit availed before any Rule 42/43 reversal; TRAN-1 credit counts from the original invoice date; a quarter is three months from the invoice date and a part counts in full.');
   return paper(c, {
     ref: 'C6', title: 'ANNEXURE-5 — Capital goods sold u/s 18(6)', sheet: 'C6 ANNEXURE-5 CG SOLD', phase: 'reconcile', master: '—',
-    source: 'Source: the client’s capital goods register (Purchases · Capital goods sold); s.18(6), Rule 40(2), Rule 44(6)',
+    source: 'Source: the client’s capital goods register (Sales · Capital goods sold); s.18(6), Rule 40(2), Rule 44(6)',
     widths: [6, 30, 10, 16, 13, 16, 18, 13, 14, 18, 9, 10, 9, 18, 18, 18, 18, 26, 48],
     freezeCols: 2,
   }, p);
