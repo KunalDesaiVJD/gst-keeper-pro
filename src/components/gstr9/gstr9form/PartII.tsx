@@ -8,6 +8,8 @@ import { useWorkspace } from '../WorkspaceContext';
 import { FORM_GRID_MAX_H, FORM_HEAD_LABELS, FORM_HEADS, FORM_MATRIX_SCROLL, isManualPath, particularsCol, toneClass } from './helpers';
 import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
 import { EntryHeading, FormTable, FormTableCol, FormTableRow, RowSrc, Src, StepLink } from './shared';
+import { FigLink } from '../figure/FigLink';
+import { portalT4, portalT5, rcmPartA, salesT5 } from './sourceTargets';
 
 // ---------------------------------------------------------------------------
 // Table 4 — outward supplies on which tax is payable (portal system-computed)
@@ -67,6 +69,14 @@ export const Table4: React.FC = () => {
       total: r.total,
       note,
       diffKey: r.diffKey ?? (r.k === 'G' && rcmSource === 'gstr9' ? 'rcm.annual' : undefined),
+      // 4G opens RCM Part A (3.1(d) month by month, or the portal's annual 4G when no month is in); the others the portal's Table 4.
+      link: r.total
+        ? undefined
+        : r.k === 'G'
+          ? (h) => (rcmSource === 'gstr9' ? portalT4('rchrg', h) : rcmPartA(h))
+          : r.portal
+            ? (h) => portalT4(r.portal!, h)
+            : undefined,
     };
   });
 
@@ -100,18 +110,20 @@ type T5View = FormTableRow & {
   portalTotal?: 'G' | 'L' | 'M';
   kind: 'books' | 'typed' | 'computed';
   withTax?: boolean;
+  /** Books line of the Sales step's Table 5 preview this row is read from. */
+  books?: 'A' | 'B' | 'C' | 'C1' | 'D' | 'E' | 'F' | 'G' | 'H';
 };
 
 const T5_ROWS: T5View[] = [
-  { key: '5A', code: '5A', k: 'A', portal: 'zero_rtd', diffKey: 'g9.t5.5A', kind: 'books', label: 'Zero rated supply (Export) without payment of tax' },
-  { key: '5B', code: '5B', k: 'B', portal: 'sez', diffKey: 'g9.t5.5B', kind: 'books', label: 'Supply to SEZs without payment of tax' },
-  { key: '5C', code: '5C', k: 'C', portal: 'rchrg', diffKey: 'g9.t5.5C', kind: 'books', label: 'Supplies on which tax is to be paid by recipient on reverse charge basis' },
-  { key: '5C1', code: '5C1', k: 'C1', portal: 'ecom_14', kind: 'books', label: 'Supplies on which tax is to be paid by e-commerce operators as per section 9(5) [Supplier to report]' },
-  { key: '5D', code: '5D', k: 'D', portal: 'exmt', diffKey: 'g9.t5.5D', kind: 'books', label: 'Exempted' },
-  { key: '5E', code: '5E', k: 'E', portal: 'nil', diffKey: 'g9.t5.5E', kind: 'books', label: 'Nil Rated' },
-  { key: '5F', code: '5F', k: 'F', portal: 'non_gst', diffKey: 'g9.t5.5F', kind: 'books', label: "Non-GST supply (includes 'no supply')" },
-  { key: '5G', code: '5G', k: 'G', portalTotal: 'G', kind: 'computed', total: true, label: 'Sub-total (A to F above)' },
-  { key: '5H', code: '5H', k: 'H', portal: 'cr_nt', diffKey: 'g9.t5.5H', kind: 'books', label: 'Credit Notes issued in respect of transactions specified in A to F above (−)' },
+  { key: '5A', code: '5A', k: 'A', books: 'A', portal: 'zero_rtd', diffKey: 'g9.t5.5A', kind: 'books', label: 'Zero rated supply (Export) without payment of tax' },
+  { key: '5B', code: '5B', k: 'B', books: 'B', portal: 'sez', diffKey: 'g9.t5.5B', kind: 'books', label: 'Supply to SEZs without payment of tax' },
+  { key: '5C', code: '5C', k: 'C', books: 'C', portal: 'rchrg', diffKey: 'g9.t5.5C', kind: 'books', label: 'Supplies on which tax is to be paid by recipient on reverse charge basis' },
+  { key: '5C1', code: '5C1', k: 'C1', books: 'C1', portal: 'ecom_14', kind: 'books', label: 'Supplies on which tax is to be paid by e-commerce operators as per section 9(5) [Supplier to report]' },
+  { key: '5D', code: '5D', k: 'D', books: 'D', portal: 'exmt', diffKey: 'g9.t5.5D', kind: 'books', label: 'Exempted' },
+  { key: '5E', code: '5E', k: 'E', books: 'E', portal: 'nil', diffKey: 'g9.t5.5E', kind: 'books', label: 'Nil Rated' },
+  { key: '5F', code: '5F', k: 'F', books: 'F', portal: 'non_gst', diffKey: 'g9.t5.5F', kind: 'books', label: "Non-GST supply (includes 'no supply')" },
+  { key: '5G', code: '5G', k: 'G', books: 'G', portalTotal: 'G', kind: 'computed', total: true, label: 'Sub-total (A to F above)' },
+  { key: '5H', code: '5H', k: 'H', books: 'H', portal: 'cr_nt', diffKey: 'g9.t5.5H', kind: 'books', label: 'Credit Notes issued in respect of transactions specified in A to F above (−)' },
   { key: '5I', code: '5I', k: 'I', portal: 'dr_nt', kind: 'typed', label: 'Debit Notes issued in respect of transactions specified in A to F above (+)' },
   { key: '5J', code: '5J', k: 'J', portal: 'amd_pos', kind: 'typed', label: 'Supplies declared through Amendments (+)' },
   { key: '5K', code: '5K', k: 'K', portal: 'amd_neg', kind: 'typed', label: 'Supplies reduced through Amendments (−)' },
@@ -166,7 +178,16 @@ export const Table5: React.FC = () => {
   };
 
   const cols: FormTableCol<T5View>[] = [
-    { key: 't', header: FORM_HEAD_LABELS.t, group: 'Form GSTR-9', cell: (r) => <Money value={g.t5[r.k].t} /> },
+    {
+      key: 't',
+      header: FORM_HEAD_LABELS.t,
+      group: 'Form GSTR-9',
+      cell: (r) => (
+        <FigLink to={r.books ? salesT5(r.books) : undefined}>
+          <Money value={g.t5[r.k].t} />
+        </FigLink>
+      ),
+    },
     ...(['c', 's', 'i', 'x'] as const).map<FormTableCol<T5View>>((h) => ({
       key: h,
       header: FORM_HEAD_LABELS[h],
@@ -181,7 +202,12 @@ export const Table5: React.FC = () => {
       na: (r) => !r.portal && !r.portalTotal,
       cell: (r) => {
         const p = portalOf(r);
-        return p === null ? <span className="text-muted-foreground">—</span> : <Money value={p} />;
+        if (p === null) return <span className="text-muted-foreground">—</span>;
+        return (
+          <FigLink to={r.portal ? portalT5(r.portal) : undefined}>
+            <Money value={p} />
+          </FigLink>
+        );
       },
     },
     {

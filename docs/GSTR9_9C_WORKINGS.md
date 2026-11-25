@@ -752,3 +752,31 @@ Kunal asked (25 Nov 2026) that a remark written on a difference line be read and
 - **Next FY.** The FY after reads the previous FY's *applied* next-FY effects (`carriedEffects`): a card on the Overview and Annexure-4 lists them with where each goes this year (Table 13: 6A1, not 6B; Table 12: out of Table 7; Tables 10 / 11: out of Table 4) and compares their totals with Annexure-4 (fill it from last year's working, which now holds them); and the reason pop-over of an ITC or outward line offers a ready reason built from them (*Use as reason*). Nothing in the next FY is written by itself.
 - **Exports.** C5 Differences carries the effect, its next-FY treatment and its status (Big4 papers, same layout).
 - Check: `node --experimental-strip-types scripts/verify-remark-effects.mjs`.
+
+## 11. Figure links to their source (25 Nov 2026)
+
+Every figure on the GSTR-9 and GSTR-9C steps that comes from another step is a
+link (dotted underline): a click opens that step and tab, scrolls to the source
+row and flashes it (and the head's cell where it maps one to one). Typed rows,
+figures a superadmin has typed over, and totals added up on the form itself are
+not links.
+
+- Mechanism: every row of the workspace's shared tables (`SheetGrid`,
+  `MatrixTable`, `FormTable`, `reco/FigureTable`) carries
+  `data-fig="<table label>|<row id>"` and each cell `data-col`
+  (`src/lib/gstr9/figureLinks.ts`). A `FigTarget` names the step, tab params,
+  table label, row and column; `<FigLink>` makes the figure clickable and
+  `<FigureFocus />` (mounted once on the page) waits for the row, scrolls and
+  flashes it (`src/components/gstr9/figure/FigLink.tsx`).
+- Targets: `gstr9form/sourceTargets.ts` (Tables 4 to 8), `sourceTargets2.ts`
+  (Tables 9 to 14), `gstr9c/sourceTargets.ts` (9C). **Renaming a table's
+  `label` or a row id breaks its links**: search these files when you do.
+- Portal data's inner GSTR-9 tab is in `g9portaltab`, its GSTR-3B tab in `g3btab`.
+- A figure that is a sum lands on its first or main row (e.g. 9C 7B on 5D).
+- Exports: on D1 (GSTR-9), D2 (GSTR-9C) and D3 (Notice) a figure links to the
+  exact row and head of its source paper, in Excel (`#'Sheet'!E27`, written into
+  the sheet's hyperlinks after ExcelJS so the cell stays a number) and in the
+  working-papers PDF (the page of the row). Source rows carry `anchor`; a link
+  whose anchor is missing falls back to a shorter anchor, then the paper's A1,
+  and a link to a paper not in a one-step export is dropped
+  (`src/lib/gstr9/export/model.ts`).

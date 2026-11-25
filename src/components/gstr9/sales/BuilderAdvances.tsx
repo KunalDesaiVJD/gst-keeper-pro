@@ -11,6 +11,7 @@ import {
 } from '@/lib/gstr9/builderAdvances';
 import { closeBuilderYear, loadBuilderChain, loadBuilderYearMoney, reopenBuilderYear } from '@/lib/gstr9/builderAdvancesData';
 import { newId } from '@/lib/gstr9/defaults';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
@@ -185,8 +186,9 @@ const BuilderAdvanceCard: React.FC = () => {
   const canReopen = isSuper && latestClosed && !(chain ?? []).some((y) => y.fy > latestClosed.fy && y.closed);
   const revenueVs5A = Math.abs(doc.revenue - W.t5.A) > 0.5;
 
-  const field = (label: string, value: number, onChange: (v: number) => void, opts: { locked?: boolean; note?: string } = {}) => (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 last:border-0">
+  // `fig`: the GSTR-9C Table 5 row the figure fills, as a figure-link anchor (figureLinks.ts).
+  const field = (label: string, value: number, onChange: (v: number) => void, opts: { locked?: boolean; note?: string; fig?: string } = {}) => (
+    <div data-fig={opts.fig ? figAnchor('Builder advance figures', opts.fig) : undefined} className="flex flex-wrap items-center justify-between gap-2 border-b py-1.5 last:border-0">
       <div className="min-w-0 text-sm">
         {label}
         {opts.note && <div className="text-[11px] text-muted-foreground">{opts.note}</div>}
@@ -269,11 +271,11 @@ const BuilderAdvanceCard: React.FC = () => {
 
       <div className="grid gap-3 lg:grid-cols-2">
         <SectionCard title={`FY ${financialYear} figures`} description="From the audited financial statements.">
-          {field('Opening advance', doc.openingAdvance, (v) => setDoc((d) => ({ ...d, openingAdvance: v })), { locked: !first, note: first ? 'First year of the chain: typed' : `Carried from FY ${prevYear?.fy}` })}
-          {field('Unbilled revenue at the beginning (5B)', doc.openingUnbilled, (v) => setDoc((d) => ({ ...d, openingUnbilled: v })), { locked: !first })}
+          {field('Opening advance', doc.openingAdvance, (v) => setDoc((d) => ({ ...d, openingAdvance: v })), { locked: !first, note: first ? 'First year of the chain: typed' : `Carried from FY ${prevYear?.fy}`, fig: '5I' })}
+          {field('Unbilled revenue at the beginning (5B)', doc.openingUnbilled, (v) => setDoc((d) => ({ ...d, openingUnbilled: v })), { locked: !first, fig: '5B' })}
           {first && field('Advance received before this FY', doc.receivedBefore, (v) => setDoc((d) => ({ ...d, receivedBefore: v })), { note: 'Total advance received in all earlier years' })}
           {first && field('Sales accounted before this FY', doc.salesBefore, (v) => setDoc((d) => ({ ...d, salesBefore: v })))}
-          {field('Closing advance (5C)', doc.closingAdvance, (v) => setDoc((d) => ({ ...d, closingAdvance: v })), { note: `Customer advances in the balance sheet at 31 March ${Number(financialYear.slice(0, 4)) + 1}` })}
+          {field('Closing advance (5C)', doc.closingAdvance, (v) => setDoc((d) => ({ ...d, closingAdvance: v })), { note: `Customer advances in the balance sheet at 31 March ${Number(financialYear.slice(0, 4)) + 1}`, fig: '5C' })}
           {field('Revenue recognised (transferred to WIP / sales)', doc.revenue, (v) => setDoc((d) => ({ ...d, revenue: v })))}
           {revenueVs5A && (
             <Note tone="warn">
@@ -281,7 +283,7 @@ const BuilderAdvanceCard: React.FC = () => {
               {editable && <Button size="sm" variant="link" className="h-auto px-1 py-0 text-xs" onClick={() => setDoc((d) => ({ ...d, revenue: W.t5.A }))}>Use 5A</Button>}
             </Note>
           )}
-          {field('Unbilled revenue at the end (5H)', doc.closingUnbilled, (v) => setDoc((d) => ({ ...d, closingUnbilled: v })))}
+          {field('Unbilled revenue at the end (5H)', doc.closingUnbilled, (v) => setDoc((d) => ({ ...d, closingUnbilled: v })), { fig: '5H' })}
         </SectionCard>
 
         <SectionCard
@@ -373,7 +375,7 @@ const BuilderAdvanceCard: React.FC = () => {
           ['5Q', 'Turnover as per GSTR-9', W.t5.Q],
           ['5R', 'Difference (Q − P)', W.t5.R],
         ].map(([code, label, v]) => (
-          <div key={code as string} className={`flex items-center justify-between border-b py-1 text-sm last:border-0 ${code === '5R' || code === '5P' ? 'font-semibold' : ''}`}>
+          <div key={code as string} data-fig={figAnchor('Builder advance Table 5', code as string)} className={`flex items-center justify-between border-b py-1 text-sm last:border-0 ${code === '5R' || code === '5P' ? 'font-semibold' : ''}`}>
             <span><span className="mr-2 font-mono text-xs text-muted-foreground">{code}</span>{label}</span>
             <span className="tabular-nums">{fmt(v as number)}</span>
           </div>

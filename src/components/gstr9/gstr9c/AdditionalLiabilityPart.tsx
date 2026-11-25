@@ -6,6 +6,8 @@ import { SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ANNEX_TAB_PARAM } from '../annexures/taxRows';
 import { RefStrip } from './bits';
+import { FigLink } from '../figure/FigLink';
+import { annexure3 } from './sourceTargets';
 import { FormGrid } from './FormGrid';
 import { C9_GRID_MAX_H, columnTotals, figs, FORM_HEADS, FormLine, headsText, TAX_HEADS, toRateRow, useGoToStep } from './formLines';
 
@@ -69,9 +71,9 @@ const AdditionalLiabilityPart: React.FC = () => {
     >
       <RefStrip
         items={[
-          { label: 'Annexure-3 payable', value: headsText(A3.payable) },
-          { label: 'Set off (DRC-03 / GSTR-3B)', value: headsText(A3.alreadyPaid) },
-          { label: 'Balance to pay', value: headsText(A3.balance) },
+          { label: 'Annexure-3 payable', value: <FigLink to={annexure3('payable')}>{headsText(A3.payable)}</FigLink> },
+          { label: 'Set off (DRC-03 / GSTR-3B)', value: <FigLink to={annexure3('already')}>{headsText(A3.alreadyPaid)}</FigLink> },
+          { label: 'Balance to pay', value: <FigLink to={annexure3('balance')}>{headsText(A3.balance)}</FigLink> },
         ]}
       />
       <FormGrid

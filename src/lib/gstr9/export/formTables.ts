@@ -23,6 +23,8 @@ export interface FormRow {
   cells: FormCell[];
   bold?: boolean;
   indent?: boolean;
+  /** Names the row when its code does not (a form row of no letter, a second line of a lettered one) — the working papers anchor links on it. */
+  key?: string;
 }
 
 export interface FormTable {
@@ -120,17 +122,17 @@ export function gstr9FormTables(w: Workings): FormTable[] {
       { code: 'A', label: 'Total amount of input tax credit availed through FORM GSTR-3B (sum total of Table 4A of FORM GSTR-3B)', cells: typed('', t6.A) },
       { code: 'A1', label: 'ITC of any preceding financial year availed in the financial year (included in 6A above) other than reclaim', cells: typed('', t6.A1) },
       { code: 'A2', label: 'Net ITC of the financial year (A - A1)', cells: typed('', t6.A2), bold: true },
-      { code: 'B', label: 'Inward supplies (other than imports and inward supplies liable to reverse charge but includes services received from SEZs)', cells: typed('Inputs', t6.B_ip) },
-      { code: '', label: '', cells: typed('Capital Goods', t6.B_cg) },
-      { code: '', label: '', cells: typed('Input Services', t6.B_is) },
-      { code: 'C', label: 'Inward supplies received from unregistered persons liable to reverse charge (other than B above) on which tax is paid & ITC availed', cells: typed('Inputs', t6.C_ip) },
-      { code: '', label: '', cells: typed('Capital Goods', t6.C_cg) },
-      { code: '', label: '', cells: typed('Input Services', t6.C_is) },
-      { code: 'D', label: 'Inward supplies received from registered persons liable to reverse charge (other than B above) on which tax is paid and ITC availed', cells: typed('Inputs', t6.D_ip) },
-      { code: '', label: '', cells: typed('Capital Goods', t6.D_cg) },
-      { code: '', label: '', cells: typed('Input Services', t6.D_is) },
-      { code: 'E', label: 'Import of goods (including supplies from SEZs)', cells: typed('Inputs', t6.E_ip) },
-      { code: '', label: '', cells: typed('Capital Goods', t6.E_cg) },
+      { code: 'B', key: 'B_ip', label: 'Inward supplies (other than imports and inward supplies liable to reverse charge but includes services received from SEZs)', cells: typed('Inputs', t6.B_ip) },
+      { code: '', key: 'B_cg', label: '', cells: typed('Capital Goods', t6.B_cg) },
+      { code: '', key: 'B_is', label: '', cells: typed('Input Services', t6.B_is) },
+      { code: 'C', key: 'C_ip', label: 'Inward supplies received from unregistered persons liable to reverse charge (other than B above) on which tax is paid & ITC availed', cells: typed('Inputs', t6.C_ip) },
+      { code: '', key: 'C_cg', label: '', cells: typed('Capital Goods', t6.C_cg) },
+      { code: '', key: 'C_is', label: '', cells: typed('Input Services', t6.C_is) },
+      { code: 'D', key: 'D_ip', label: 'Inward supplies received from registered persons liable to reverse charge (other than B above) on which tax is paid and ITC availed', cells: typed('Inputs', t6.D_ip) },
+      { code: '', key: 'D_cg', label: '', cells: typed('Capital Goods', t6.D_cg) },
+      { code: '', key: 'D_is', label: '', cells: typed('Input Services', t6.D_is) },
+      { code: 'E', key: 'E_ip', label: 'Import of goods (including supplies from SEZs)', cells: typed('Inputs', t6.E_ip) },
+      { code: '', key: 'E_cg', label: '', cells: typed('Capital Goods', t6.E_cg) },
       { code: 'F', label: 'Import of services (excluding inward supplies from SEZs)', cells: typed('', t6.F) },
       { code: 'G', label: 'Input Tax credit received from ISD', cells: typed('', t6.G) },
       { code: 'H', label: 'Amount of ITC reclaimed (other than B above) under the provisions of the Act', cells: typed('', t6.H) },
@@ -222,7 +224,7 @@ export function gstr9FormTables(w: Workings): FormTable[] {
       { code: '11', label: 'Supplies / tax reduced through Amendments (-) (net of credit notes)', cells: vc(g.t11) },
       { code: '12', label: 'Reversal of ITC availed during previous financial year', cells: [null, ...tc(g.t12)] },
       { code: '13', label: 'ITC availed for the previous financial year', cells: [null, ...tc(g.t13)] },
-      { code: '', label: 'Total turnover (5N + 10 - 11)', cells: vc(g.totalTurnover), bold: true },
+      { code: '', key: 'total', label: 'Total turnover (5N + 10 - 11)', cells: vc(g.totalTurnover), bold: true },
     ],
   });
 
@@ -233,11 +235,11 @@ export function gstr9FormTables(w: Workings): FormTable[] {
     labelHead: 'Description',
     head: ['Payable', 'Paid'],
     rows: [
-      { code: '', label: 'Integrated Tax', cells: [g.t14.igst.payable, g.t14.igst.paid] },
-      { code: '', label: 'Central Tax', cells: [g.t14.cgst.payable, g.t14.cgst.paid] },
-      { code: '', label: 'State/UT Tax', cells: [g.t14.sgst.payable, g.t14.sgst.paid] },
-      { code: '', label: 'Cess', cells: [g.t14.cess.payable, g.t14.cess.paid] },
-      { code: '', label: 'Interest', cells: [g.t14.interest.payable, g.t14.interest.paid] },
+      { code: '', key: 'igst', label: 'Integrated Tax', cells: [g.t14.igst.payable, g.t14.igst.paid] },
+      { code: '', key: 'cgst', label: 'Central Tax', cells: [g.t14.cgst.payable, g.t14.cgst.paid] },
+      { code: '', key: 'sgst', label: 'State/UT Tax', cells: [g.t14.sgst.payable, g.t14.sgst.paid] },
+      { code: '', key: 'cess', label: 'Cess', cells: [g.t14.cess.payable, g.t14.cess.paid] },
+      { code: '', key: 'interest', label: 'Interest', cells: [g.t14.interest.payable, g.t14.interest.paid] },
     ],
   });
 

@@ -10,7 +10,10 @@ import { FormGrid } from './FormGrid';
 import { rule4243Reason } from '@/lib/gstr9/rule4243Reasons';
 import type { Gstr9cDoc } from '@/lib/gstr9/types';
 import type { Workings } from '@/lib/gstr9/engine';
-import { C9_MATRIX_SCROLL, figs, FormLine, headsText, n0, TAX_HEADS, toTax, useGoToStep } from './formLines';
+import { C9_MATRIX_SCROLL, figs, FormHead, FormLine, headsText, n0, TAX_HEADS, toTax, useGoToStep } from './formLines';
+import { FigLink } from '../figure/FigLink';
+import type { FigTarget } from '@/lib/gstr9/figureLinks';
+import { c9Row, dutiesLye, expenseHead, g9T7J, itcTable13, purchasesNetItc, rule42Final } from './sourceTargets';
 
 const T12_LABEL = {
   A: 'ITC availed as per audited annual financial statement / books of account',
@@ -20,6 +23,9 @@ const T12_LABEL = {
   E: 'ITC claimed in annual return (GSTR-9)',
   F: 'Un-reconciled ITC',
 } as const;
+
+/** Where 12A–12C come from, by head. */
+const T12_LINK: Record<'A' | 'B' | 'C', (h: FormHead) => FigTarget> = { A: purchasesNetItc, B: dutiesLye, C: itcTable13 };
 
 const T12_SOURCE: Record<'A' | 'B' | 'C', { short: string; title: string }> = {
   A: { short: 'Books net ITC', title: 'Net ITC as per books — PL-INPUT row 79 (P&L ITC − suspended ITC − other adjustments + RCM)' },
@@ -90,6 +96,7 @@ export const Table12Card: React.FC = () => {
         def: figs(def.t12[k], false) ?? {},
         fKey: field,
         write: (d, v) => ({ ...d, [field]: v ? toTax(v) : null }),
+        link: T12_LINK[k],
         source: T12_SOURCE[k].short,
         sourceTitle: T12_SOURCE[k].title,
       };
@@ -99,7 +106,7 @@ export const Table12Card: React.FC = () => {
       over('B'),
       over('C'),
       { id: 'D', code: '12D', label: T12_LABEL.D, hint: '(A + B − C)', mode: 'computed', heads: TAX_HEADS, shown: figs(W.t12.D, false) ?? {}, emphasis: 'total' },
-      { id: 'E', code: '12E', label: T12_LABEL.E, mode: 'computed', heads: TAX_HEADS, shown: figs(W.t12.E, false) ?? {}, source: '= GSTR-9 7J' },
+      { id: 'E', code: '12E', label: T12_LABEL.E, mode: 'computed', heads: TAX_HEADS, shown: figs(W.t12.E, false) ?? {}, source: '= GSTR-9 7J', link: g9T7J },
       { id: 'F', code: '12F', label: T12_LABEL.F, hint: '(E − D)', mode: 'computed', heads: TAX_HEADS, shown: figs(W.t12.F, false) ?? {}, emphasis: 'diff', diffKey: 'gstr9c.12F' },
     ];
   }, [C, def.t12, W.t12]);
@@ -164,10 +171,11 @@ export const Table14Card: React.FC = () => {
       label: r.label,
       indent: r.indent,
       value: W.t14.rows[r.k],
+      link: (h) => expenseHead(r.k, h),
     }));
     rows.push(
-      { key: 'R', code: '14R', label: 'Total amount of eligible ITC availed', value: W.t14.R, total: true },
-      { key: 'S', code: '14S', label: 'ITC claimed in annual return (GSTR-9)', value: W.t14.S, note: <span className="text-[10px] text-muted-foreground">= GSTR-9 7J</span> },
+      { key: 'R', code: '14R', label: 'Total amount of eligible ITC availed', value: W.t14.R, total: true, link: (h) => expenseHead('R', h) },
+      { key: 'S', code: '14S', label: 'ITC claimed in annual return (GSTR-9)', value: W.t14.S, note: <span className="text-[10px] text-muted-foreground">= GSTR-9 7J</span>, link: g9T7J },
       { key: 'T', code: '14T', label: 'Un-reconciled ITC (S − R)', value: W.t14.T, total: true, signed: true, diffKey: 'gstr9c.14T' },
     );
     return rows;
@@ -236,14 +244,16 @@ export const Table16Card: React.FC = () => {
     >
       <RefStrip
         items={[
-          { label: '12F un-reconciled ITC', value: headsText(W.t12.F) },
-          { label: '14T un-reconciled ITC', value: headsText(W.t14.T) },
+          { label: '12F un-reconciled ITC', value: <FigLink to={c9Row('12', 'F')}>{headsText(W.t12.F)}</FigLink> },
+          { label: '14T un-reconciled ITC', value: <FigLink to={c9Row('14', 'T')}>{headsText(W.t14.T)}</FigLink> },
         ]}
       />
       <FormGrid label="GSTR-9C Table 16" lines={t16Lines} heads={['t']} headLabels={{ t: 'Amount payable (₹)' }} labelWidth={220} />
       {r4243.hasPayable && (
         <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
-          Rule 42/43 still to reverse: {fmtMoney((r4243.t16.A ?? 0) + (r4243.t16.B ?? 0) + (r4243.t16.C ?? 0) + (r4243.t16.D ?? 0))} with interest {fmtMoney(r4243.t16.E ?? 0)}
+          Rule 42/43 still to reverse:{' '}
+          <FigLink to={rule42Final('pay')}>{fmtMoney((r4243.t16.A ?? 0) + (r4243.t16.B ?? 0) + (r4243.t16.C ?? 0) + (r4243.t16.D ?? 0))}</FigLink> with interest{' '}
+          <FigLink to={rule42Final('int')}>{fmtMoney(r4243.t16.E ?? 0)}</FigLink>
           {!readOnly && (
             <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={fill16}>Fill 16A to 16E from Rule 42/43</Button>
           )}

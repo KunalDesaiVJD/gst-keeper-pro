@@ -15,6 +15,8 @@ import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox, RefStrip } from './bits';
 import { FormGrid } from './FormGrid';
+import { FigLink } from '../figure/FigLink';
+import { c9Row, g9T9Paid, rcmPartB, salesPartA } from './sourceTargets';
 import { C9_GRID_MAX_H, columnTotals, figs, FORM_HEADS, FormLine, headsText, n0, TAX_HEADS, toRateRow, toTax, useGoToStep } from './formLines';
 
 const T9_LABEL: Record<Gstr9cT9RateKey | Gstr9cT9OtherKey | 'P' | 'Q' | 'R', string> = {
@@ -109,6 +111,7 @@ export const Table9Card: React.FC = () => {
         write: (d, v) => ({ ...d, t9: { ...d.t9, [k]: v ? toRateRow(v) : null } }),
         source: src.short,
         sourceTitle: src.title,
+        link: W.t9.source[k] === 'rcm' ? rcmPartB : W.t9.source[k] === 'sales' || W.t9.source[k] === 'sales+rcm' ? salesPartA : undefined,
       };
     });
     GSTR9C_T9_OTHER_KEYS.forEach((k) => {
@@ -135,6 +138,7 @@ export const Table9Card: React.FC = () => {
         def: figs(def.t9Q, false) ?? {},
         fKey: 't9Q',
         write: (d, v) => ({ ...d, t9Q: v ? toTax(v) : null }),
+        link: g9T9Paid,
         source: 'GSTR-9 Table 9 paid',
         sourceTitle: qSourceTitle,
       },
@@ -200,9 +204,9 @@ export const Table11Card: React.FC = () => {
     >
       <RefStrip
         items={[
-          { label: '5R un-reconciled turnover', value: fmtMoney(W.t5.R) },
-          { label: '7G un-reconciled taxable turnover', value: fmtMoney(W.t7.G) },
-          { label: '9R un-reconciled payment', value: headsText(W.t9.R) },
+          { label: '5R un-reconciled turnover', value: <FigLink to={c9Row('5', 'R', 't')}>{fmtMoney(W.t5.R)}</FigLink> },
+          { label: '7G un-reconciled taxable turnover', value: <FigLink to={c9Row('7', 'G', 't')}>{fmtMoney(W.t7.G)}</FigLink> },
+          { label: '9R un-reconciled payment', value: <FigLink to={c9Row('9', 'R')}>{headsText(W.t9.R)}</FigLink> },
         ]}
       />
       <FormGrid

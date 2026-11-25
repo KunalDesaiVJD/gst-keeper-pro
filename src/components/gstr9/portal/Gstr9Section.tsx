@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Lock, RefreshCw, Upload } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -101,7 +102,17 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const [polling, setPolling] = useState<{ tries: number } | null>(null);
   const [preview, setPreview] = useState<PreviewState | null>(null);
   // Fetched figures open on what the working uses; typed (or nothing yet) opens straight on Table 4 to type into.
-  const [tab, setTab] = useState<string>(() => (!meta?.source || meta.source === 'manual' ? 't4' : 'used'));
+  // Kept in the URL (g9portaltab) so a figure link on the GSTR-9 step can open the right table.
+  const [params, setParams] = useSearchParams();
+  const G9_TABS = ['used', 't4', 't5', 'itc', 't9'];
+  const fromUrl = params.get('g9portaltab');
+  const [defaultTab] = useState<string>(() => (!meta?.source || meta.source === 'manual' ? 't4' : 'used'));
+  const tab = fromUrl && G9_TABS.includes(fromUrl) ? fromUrl : defaultTab;
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set('g9portaltab', v);
+    setParams(next, { replace: true });
+  };
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 

@@ -5,10 +5,12 @@ import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
 import { GridColumn, SheetGrid } from '../grid/SheetGrid';
 import { diffTone, displayCol, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
+import { FigLink, type FigTarget } from '../figure/FigLink';
 import { JustifyControl, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { docFormulas, isManualPath, setDocFormulas } from './helpers';
 import { ResetButton, Src, StepLink } from './shared';
+import { gstr9T4N, portalT9 } from './sourceTargets2';
 
 type OtherKey = 'interest' | 'lateFee' | 'penalty' | 'other';
 
@@ -71,15 +73,54 @@ export const Table9: React.FC = () => {
     return c.payableSource === 'portal' ? 'the portal' : c.payableSource === '4N' ? 'Table 4N' : 'your override';
   };
 
+  // Figure links (figureLinks.ts): the paid columns and a portal payable open Portal data › Table 9; a 4N payable opens Table 4N.
+  const linked = (v: number | null | undefined, to?: FigTarget) =>
+    v === null || v === undefined ? null : <FigLink to={to}>{fmtMoney(v)}</FigLink>;
+  const portalCol = (col: GridColumn<T9Row>, portalKey: string): GridColumn<T9Row> => ({
+    ...col,
+    render: (r) => linked(col.value(r, 0) as number | null, portalT9(r.id, portalKey)),
+  });
+  const payableTarget = (r: T9Row): FigTarget | undefined => {
+    const c = calc(r);
+    if (!c) return portalT9(r.id, 'payable');
+    if (c.payableSource === 'portal') return portalT9(r.id, 'payable');
+    if (c.payableSource === '4N') return gstr9T4N(taxKey[r.head!]);
+    return undefined; // typed over here
+  };
+  // A superadmin types over the payable in its cell, so the cell stays a plain cell for them (the chip still links).
+  const payableEditable = canEditSource && !readOnly;
+
+  const withPayableLink = (col: GridColumn<T9Row>): GridColumn<T9Row> =>
+    payableEditable
+      ? col
+      : {
+          ...col,
+          render: (r) => {
+            const v = payableNow(r);
+            // As the grid shows it: a payable still following the portal / 4N is the italic placeholder.
+            const text = r.head && r.override === null ? <span className="italic text-muted-foreground">{fmtMoney(v)}</span> : fmtMoney(v);
+            return <FigLink to={payableTarget(r)}>{text}</FigLink>;
+          },
+        };
+
   const itcCol = (key: 'itcC' | 'itcS' | 'itcI' | 'itcX', header: string): GridColumn<T9Row> =>
-    displayCol<T9Row>(key, header, (r) => (calc(r) ? calc(r)![key] : null), { group: 'Paid through ITC', width: 100 });
+    portalCol(displayCol<T9Row>(key, header, (r) => (calc(r) ? calc(r)![key] : null), { group: 'Paid through ITC', width: 100 }), key);
 
   const sourceChip = (r: T9Row) => {
     const c = calc(r);
     if (c?.payableSource === 'override') return <Src kind="typed" title="Tax payable typed here — overrides the portal / 4N figure">Override</Src>;
-    if (c?.payableSource === '4N') return <Src kind="computed" title="No portal figure — tax as per Table 4N">4N</Src>;
+    if (c?.payableSource === '4N')
+      return (
+        <FigLink to={gstr9T4N()}>
+          <Src kind="computed" title="No portal figure — tax as per Table 4N">4N</Src>
+        </FigLink>
+      );
     const path = r.head ? `gstr9.table9.${r.head}` : `gstr9.table9.${r.other}`;
-    return <Src kind="portal" meta={meta} manual={isManualPath(manual, path)} />;
+    return (
+      <FigLink to={portalT9(r.id)}>
+        <Src kind="portal" meta={meta} manual={isManualPath(manual, path)} />
+      </FigLink>
+    );
   };
 
   const columns: GridColumn<T9Row>[] = [
@@ -99,7 +140,7 @@ export const Table9: React.FC = () => {
         </span>
       ),
     },
-    moneyCol<T9Row>('payable', 'Tax payable', (r) => (r.head ? r.override : payableNow(r)), (r, v) => ({ ...r, override: v }), {
+    withPayableLink(moneyCol<T9Row>('payable', 'Tax payable', (r) => (r.head ? r.override : payableNow(r)), (r, v) => ({ ...r, override: v }), {
       nullable: true,
       width: 120,
       // The payable comes from the portal (else 4N): the superadmin's to type over (sourceLock.ts).
@@ -114,14 +155,20 @@ export const Table9: React.FC = () => {
               : 'Typed override — press Delete to go back to the portal / 4N figure'
           : 'From the portal — edit on Portal data',
       tone: (r) => (r.head && r.override !== null ? 'warn' : undefined),
-    }),
-    displayCol<T9Row>('n4', 'Tax as per 4N', (r) => (r.head ? n4[taxKey[r.head]] : null), { width: 108, tone: () => 'muted' }),
-    displayCol<T9Row>('cash', 'Paid through cash', (r) => (calc(r) ? calc(r)!.cash : other(r)!.cash), { width: 108 }),
+    })),
+    {
+      ...displayCol<T9Row>('n4', 'Tax as per 4N', (r) => (r.head ? n4[taxKey[r.head]] : null), { width: 108, tone: () => 'muted' }),
+      render: (r) => (r.head ? linked(n4[taxKey[r.head]], gstr9T4N(taxKey[r.head])) : null),
+    },
+    portalCol(displayCol<T9Row>('cash', 'Paid through cash', (r) => (calc(r) ? calc(r)!.cash : other(r)!.cash), { width: 108 }), 'cash'),
     itcCol('itcC', 'Central tax'),
     itcCol('itcS', 'State/UT tax'),
     itcCol('itcI', 'Integrated tax'),
     itcCol('itcX', 'Cess'),
-    displayCol<T9Row>('paid', 'Total tax paid', (r) => (calc(r) ? calc(r)!.paid : other(r)!.cash), { width: 108 }),
+    {
+      ...displayCol<T9Row>('paid', 'Total tax paid', (r) => (calc(r) ? calc(r)!.paid : other(r)!.cash), { width: 108 }),
+      render: (r) => linked(calc(r) ? calc(r)!.paid : other(r)!.cash, portalT9(r.id)),
+    },
     displayCol<T9Row>('diff', 'Payable − Paid', (r) => (calc(r) ? calc(r)!.diff : other(r)!.diff), {
       width: 108,
       tone: (r) => diffTone(calc(r) ? calc(r)!.diff : other(r)!.diff, tol),
