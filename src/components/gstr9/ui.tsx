@@ -3,6 +3,8 @@ import { RemarkEffectPanel } from './remarks/RemarkEffectPanel';
 import { useRemarkEffects } from './remarks/useRemarkEffects';
 import { AlertTriangle, CheckCircle2, CircleDot, EqualApproximately, Info, MessageSquareText, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
+import { FigLink, type FigTarget } from './figure/FigLink';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -294,6 +296,8 @@ export interface MatrixRow {
   signed?: boolean;
   /** Replace the figure cells with custom content (e.g. inline inputs). */
   cells?: Partial<Record<MatrixHead, React.ReactNode>>;
+  /** Where the row's figures come from: each figure becomes a link that opens it (figure/FigLink.tsx). */
+  link?: FigTarget | ((head: MatrixHead) => FigTarget | undefined);
 }
 
 export const MatrixTable: React.FC<{
@@ -328,18 +332,22 @@ export const MatrixTable: React.FC<{
                 <td colSpan={heads.length + 1 + (hasDiff ? 1 : 0)} className="border-b px-2 py-1.5 font-semibold">{r.label}</td>
               </tr>
             ) : (
-              <tr key={r.key} className={cn(r.total && 'bg-muted/40 font-semibold')}>
+              <tr key={r.key} data-fig={figAnchor(label, r.key)} className={cn(r.total && 'bg-muted/40 font-semibold')}>
                 <td className="border-b border-r px-2 py-1.5 align-top text-muted-foreground">{r.code}</td>
                 <td className={cn('border-b border-r px-2 py-1.5 align-top', r.indent && 'pl-6')}>
                   <span>{r.label}</span>
                   {r.note && <span className="ml-2 inline-flex align-middle">{r.note}</span>}
                 </td>
                 {heads.map((h) => (
-                  <td key={h} className="border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap">
+                  <td key={h} data-col={h} className="border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap">
                     {r.cells?.[h] !== undefined
                       ? r.cells[h]
                       : r.value && (r.value as Record<string, number>)[h] !== undefined
-                        ? <Money value={(r.value as Record<string, number>)[h]} signed={r.signed} />
+                        ? (
+                          <FigLink to={typeof r.link === 'function' ? r.link(h) : r.link}>
+                            <Money value={(r.value as Record<string, number>)[h]} signed={r.signed} />
+                          </FigLink>
+                        )
                         : <span className="text-muted-foreground">—</span>}
                   </td>
                 ))}

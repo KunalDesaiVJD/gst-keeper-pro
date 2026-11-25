@@ -1,6 +1,7 @@
 import React from 'react';
 import { ArrowUpRight, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import type { StepKey } from '@/lib/gstr9/engine';
@@ -213,7 +214,7 @@ export function FormTable<R extends FormTableRow>({
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.key} className={cn(r.total && 'bg-muted/40 font-semibold')}>
+            <tr key={r.key} data-fig={figAnchor(label, r.key)} className={cn(r.total && 'bg-muted/40 font-semibold')}>
               <td className="border-b border-r px-2 py-1.5 align-top text-muted-foreground">{r.code}</td>
               <td className={cn('border-b border-r px-2 py-1.5 align-top', r.indent && 'pl-6')}>
                 <span>{r.label}</span>
@@ -222,6 +223,7 @@ export function FormTable<R extends FormTableRow>({
               {cols.map((c) => (
                 <td
                   key={c.key}
+                  data-col={c.key}
                   className={cn('border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap', c.na?.(r) && 'bg-muted/30', c.className)}
                 >
                   {c.na?.(r) ? null : c.cell(r)}

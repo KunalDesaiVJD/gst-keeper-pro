@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 
 import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
 import { Button } from '@/components/ui/button';
 import { fmtMoney, fmtRate, parseClipboard, parseClipboardHtml, parseEntry } from './money';
 
@@ -506,7 +507,7 @@ export function SheetGrid<R>({
             {rows.map((row, r) => {
               const tone = rowTone?.(row);
               return (
-                <tr key={getRowId(row)} className={cn('group', tone === 'muted' && 'text-muted-foreground', tone === 'warn' && 'bg-warning/5', tone === 'error' && 'bg-destructive/5')}>
+                <tr key={getRowId(row)} data-fig={figAnchor(label, getRowId(row))} className={cn('group', tone === 'muted' && 'text-muted-foreground', tone === 'warn' && 'bg-warning/5', tone === 'error' && 'bg-destructive/5')}>
                   {columns.map((col, c) => {
                     const isActive = active?.r === r && active?.c === c;
                     const isEditing = editing?.pos.r === r && editing?.pos.c === c;
@@ -519,6 +520,7 @@ export function SheetGrid<R>({
                       <td
                         key={col.key}
                         id={cellId(r, c)}
+                        data-col={col.key}
                         role="gridcell"
                         aria-selected={isActive}
                         aria-readonly={!editable || undefined}
@@ -622,6 +624,7 @@ export function SheetGrid<R>({
               {footer.map((f) => (
                 <tr
                   key={f.key}
+                  data-fig={figAnchor(label, `footer:${f.key}`)}
                   className={cn(
                     'font-semibold',
                     f.tone === 'total' && 'bg-muted',
@@ -632,7 +635,7 @@ export function SheetGrid<R>({
                   {columns.map((col, c) => {
                     const cell = c === 0 ? f.label : f.cells[col.key];
                     return (
-                      <td key={col.key} className={cn('h-8 border-t border-r px-2 tabular-nums whitespace-nowrap', c === 0 ? 'text-left' : alignCls(col), col.sticky && 'bg-inherit sm:sticky sm:left-0')}>
+                      <td key={col.key} data-col={col.key} className={cn('h-8 border-t border-r px-2 tabular-nums whitespace-nowrap', c === 0 ? 'text-left' : alignCls(col), col.sticky && 'bg-inherit sm:sticky sm:left-0')}>
                         {typeof cell === 'number' ? fmtMoney(cell) : cell}
                       </td>
                     );
