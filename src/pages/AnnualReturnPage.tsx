@@ -15,6 +15,7 @@ import { useClient } from '@/contexts/ClientContext';
 import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/gstr9/WorkspaceContext';
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
 import { FigureFocus } from '@/components/gstr9/figure/FigLink';
+import { CellLegend } from '@/components/gstr9/figure/CellLegend';
 import { StepSelfCheck } from '@/components/gstr9/selfcheck/SelfCheckList';
 import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
 import ExportMenu from '@/components/gstr9/ExportMenu';
@@ -283,6 +284,7 @@ const Workspace: React.FC = () => {
         </p>
       )}
 
+      {step.key !== 'overview' && step.key !== 'review' && <CellLegend readOnly={period?.status === 'locked'} />}
       <StepComponent />
       <FigureFocus />
       <StepSelfCheck step={step.key} />

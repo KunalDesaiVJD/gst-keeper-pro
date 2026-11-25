@@ -40,7 +40,8 @@ export const FigLink: React.FC<{ to?: FigTarget | null; children: React.ReactNod
       title={`Go to the source: ${to.label}`}
       aria-label={`Go to the source: ${to.label}`}
       className={cn(
-        'rounded-sm text-right tabular-nums underline decoration-primary/40 decoration-dotted underline-offset-2 hover:text-primary hover:decoration-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        // Green, dotted: a figure linked from another tab (the working-paper convention, figure/CellLegend.tsx).
+        'rounded-sm text-right tabular-nums text-success-strong underline decoration-success-strong/50 decoration-dotted underline-offset-2 hover:decoration-solid focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}
     >

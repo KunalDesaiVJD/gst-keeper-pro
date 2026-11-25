@@ -539,9 +539,12 @@ export function SheetGrid<R>({
                         className={cn(
                           'relative h-8 border-b border-r px-2 py-0 tabular-nums whitespace-nowrap',
                           alignCls(col),
-                          editable ? 'bg-card cursor-cell' : 'bg-muted/40',
+                          // Input vs not (25 Nov 2026): a cell to type is pale yellow with blue figures; everything
+                          // computed, locked or linked from another tab is grey (figure/CellLegend.tsx).
+                          editable ? 'bg-cell-input text-cell-input-foreground cursor-cell' : 'bg-muted/40',
+                          editable && empty && col.type !== 'select' && !col.sticky && 'gstr9-cell-empty-input',
                           col.sticky && 'z-10 sm:sticky sm:left-0',
-                          col.sticky && (editable ? 'bg-card' : 'bg-muted'),
+                          col.sticky && (editable ? 'bg-card text-foreground' : 'bg-muted'),
                           cTone === 'error' && 'text-destructive-strong font-medium',
                           cTone === 'warn' && 'bg-warning/15 font-medium text-foreground',
                           cTone === 'ok' && 'text-success-strong',
