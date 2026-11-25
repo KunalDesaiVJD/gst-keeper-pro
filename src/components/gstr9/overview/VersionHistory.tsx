@@ -26,6 +26,7 @@ const DOC_NAME: Record<DocKey, string> = {
   notice: 'Notice format',
   justifications: 'Justifications',
   settings: 'Settings',
+  selfcheck: 'Self-validation',
 };
 
 /** A one-line summary of a stored version, so staff can tell versions apart. */
@@ -62,6 +63,8 @@ function describe(key: DocKey, raw: unknown): string {
         return `${Object.keys((d as AnnualReturnDocs['justifications']).lines || {}).length} reasons`;
       case 'settings':
         return `tolerance ${rupees((d as AnnualReturnDocs['settings']).tolerance)}`;
+      case 'selfcheck':
+        return `${Object.keys((d as AnnualReturnDocs['selfcheck']).answers || {}).length} answers`;
       default:
         return '';
     }

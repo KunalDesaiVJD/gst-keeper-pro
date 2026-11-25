@@ -781,6 +781,36 @@ export interface SettingsDoc {
 }
 
 // ---------------------------------------------------------------------------
+// The preparer's self-validation (selfCheck.ts has the questions and rules)
+// ---------------------------------------------------------------------------
+
+export type SelfCheckAnswer = 'yes' | 'no' | 'na';
+
+export interface SelfCheckEntry {
+  answer: SelfCheckAnswer;
+  /** Required for No: why, and what is being done about it. */
+  note: string;
+  by: string | null;
+  at: string;
+}
+
+export interface SelfCheckSubmitted {
+  at: string;
+  by: string | null;
+  /** Every question that applied when it was marked prepared. */
+  required: string[];
+  /** Open differences the app found, and GSTR-9C portal JSON errors (when 9C is filed). */
+  open: number;
+  jsonErrors: number;
+}
+
+export interface SelfCheckDoc {
+  answers: Record<string, SelfCheckEntry>;
+  /** Written by Mark prepared; read by the database. */
+  submitted: SelfCheckSubmitted | null;
+}
+
+// ---------------------------------------------------------------------------
 // The full set of docs for one (client, FY)
 // ---------------------------------------------------------------------------
 
@@ -797,6 +827,7 @@ export interface AnnualReturnDocs {
   notice: NoticeDoc;
   justifications: JustificationsDoc;
   settings: SettingsDoc;
+  selfcheck: SelfCheckDoc;
 }
 
 export type DocKey = keyof AnnualReturnDocs;
@@ -814,6 +845,7 @@ export const DOC_KEYS: DocKey[] = [
   'notice',
   'justifications',
   'settings',
+  'selfcheck',
 ];
 
 export interface WorkspaceContext {
@@ -824,6 +856,11 @@ export interface WorkspaceContext {
   noItcBuilder: boolean;
   /** QRMP client (registration type IFF): GSTR-3B is filed quarterly. */
   quarterly?: boolean;
+  /**
+   * GSTR-9C is not being filed for this FY (applicability.ts says so): its form reasons
+   * (Tables 6, 8, 10, 13, 15) are then not required. Unknown or omitted = required.
+   */
+  no9c?: boolean;
   /** Live set-offs from the payable register (payables.ts); none when omitted. */
   setOffs?: Array<{ side: 'output' | 'input'; method: 'drc03' | 'gstr3b'; tax: Tax }>;  /**
    * The client's capital goods register (capital_goods_register, all years); the engine takes the

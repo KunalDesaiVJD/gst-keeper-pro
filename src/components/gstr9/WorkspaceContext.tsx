@@ -3,6 +3,9 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { computeWorkings, Workings } from '@/lib/gstr9/engine';
+import { useApplicability } from './register/useApplicability';
+import { buildGstr9cPortalJson } from '@/lib/gstr9/gstr9cJson';
+import { selfCheckStatus } from '@/lib/gstr9/selfCheck';
 import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib/gstr9/types';
 import type { Drc03Filing, SetOff } from '@/lib/gstr9/payables';
 import type { CapitalGoodsAsset } from '@/lib/gstr9/capitalGoods';
@@ -34,7 +37,7 @@ import { lockedChanges, lockedMessage, SOURCE_EDITOR_ROLE } from '@/lib/gstr9/so
 const DOC_LABEL: Record<DocKey, string> = {
   sales: 'Sales', purchases: 'Purchases & ITC', duties_output: 'Duties & Taxes (output)', duties_input: 'Duties & Taxes (input)',
   rcm: 'RCM', portal: 'Portal data', gstr9: 'GSTR-9', annexures: 'Annexures', gstr9c: 'GSTR-9C', notice: 'Notice format',
-  justifications: 'Reasons', settings: 'Settings',
+  justifications: 'Reasons', settings: 'Settings', selfcheck: 'Self-validation',
 };
 
 /** What flush() hands back: whether everything saved, and the exact docs/workings that are now saved. */
@@ -187,11 +190,14 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const periodRef = useRef<AnnualReturnPeriod | null>(null);
   const scope = useRef(`${client.id}|${financialYear}`);
   const noItcBuilder = client.regular_sub_type === 'Builder' && client.builder_itc_type === 'NO_ITC';
+  // GSTR-9C's own reasons tables are required only when 9C is filed (or that is not yet known).
+  const { result: applicable } = useApplicability(client, financialYear);
+  const no9c = !!applicable && applicable.gstr9 !== 'unknown' && !applicable.file9c;
   const quarterly = client.registration_type === 'IFF';
   const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, setOffs: liveSetOffs, capitalGoods, builderReversals }),
-    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, liveSetOffs, capitalGoods, builderReversals],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, no9c, setOffs: liveSetOffs, capitalGoods, builderReversals }),
+    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, no9c, liveSetOffs, capitalGoods, builderReversals],
   );
   const isBuilder = client.regular_sub_type === 'Builder';
   /** Builder clients: the approved carpet-area reversals (Builder › ITC Reversal). A failure never blocks the working. */
@@ -545,8 +551,28 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       const r = await flush();
       const what = action === 'prepare' ? 'marked prepared' : 'verified';
       if (!r.ok) throw new Error(`your latest changes could not be saved, so it was not ${what}. Check them and try again.`);
-      if (action === 'verify' && r.workings && r.workings.openCount > 0) {
-        throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so it was not verified.`);
+      if (r.workings && r.workings.openCount > 0) {
+        throw new Error(`${r.workings.openCount} difference${r.workings.openCount === 1 ? ' still needs' : 's still need'} a reason, so it was not ${what}.`);
+      }
+      if (action === 'prepare') {
+        // The preparer's self-validation, on the saved figures; the database re-checks the answers (20261125100000).
+        if (!r.docs || !r.workings) throw new Error('the working could not be read back, so it was not marked prepared. Try again.');
+        const file9c = !no9c;
+        const jsonErrors = file9c
+          ? buildGstr9cPortalJson({ gstin: client.gstin, financialYear, workings: r.workings, doc: r.docs.gstr9c, tolerance: r.docs.settings?.tolerance ?? 0 }).errors
+          : 0;
+        const sc = selfCheckStatus({ w: r.workings, gstr9c: r.docs.gstr9c, file9c }, r.docs.selfcheck, { jsonErrors });
+        if (!sc.ok) {
+          const failed = sc.auto.filter((a) => !a.ok).map((a) => a.detail);
+          const parts = [sc.pending ? `${sc.pending} self-validation question${sc.pending === 1 ? ' is' : 's are'} not answered` : '', ...failed].filter(Boolean);
+          throw new Error(`${parts.join('; ')} — so it was not marked prepared.`);
+        }
+        update('selfcheck', (doc) => ({
+          ...doc,
+          submitted: { at: new Date().toISOString(), by: me.name || null, required: sc.required, open: r.workings!.openCount, jsonErrors },
+        }), { action: 'Self-validation submitted' });
+        const r2 = await flush();
+        if (!r2.ok) throw new Error('the self-validation could not be saved, so it was not marked prepared. Try again.');
       }
     }
     let row: SignoffRow;
@@ -559,7 +585,7 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
       throw e;
     }
     await afterSignoff(row);
-  }, [client.id, financialYear, flush, me.id, afterRefusal, afterSignoff]);
+  }, [client.id, client.gstin, financialYear, flush, update, no9c, me.id, me.name, afterRefusal, afterSignoff]);
 
   const workings = useMemo(() => (docs ? compute(docs) : null), [docs, compute]);
   // Sheets saved so far (a version above 0) — "Preparing" as soon as one is.

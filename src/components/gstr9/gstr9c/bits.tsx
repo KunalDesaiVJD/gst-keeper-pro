@@ -24,6 +24,8 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
   const value = docs.gstr9c[field] ?? '';
   const just = d?.justification?.text?.trim() ?? '';
   const canCopy = !readOnly && !!just && !value.includes(just);
+  // A difference above tolerance needs its reasons here too: the filed GSTR-9C carries them.
+  const required = !!d?.remarkMissing;
   const id = `gstr9c-${field}`;
   return (
     <div className="space-y-1.5">
@@ -31,6 +33,7 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
         <Label htmlFor={id} className="text-sm">
           <span className="mr-1.5 text-muted-foreground">Table {code}</span>
           {title}
+          {d?.requiresReason && <span className="ml-1 text-destructive-strong" aria-hidden>*</span>}
         </Label>
         {canCopy && (
           <Button
@@ -48,7 +51,9 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
         id={id}
         value={value}
         rows={2}
-        className="min-h-[3.25rem]"
+        className={cn('min-h-[3.25rem]', required && 'border-destructive/60 focus-visible:ring-destructive/40')}
+        aria-invalid={required || undefined}
+        aria-describedby={required ? `${id}-req` : undefined}
         disabled={readOnly}
         placeholder={readOnly ? '' : 'Reasons as they should read in the filed GSTR-9C'}
         onChange={(e) => {
@@ -56,6 +61,11 @@ export const ReasonsBox: React.FC<{ field: ReasonField; code: string; title: str
           update('gstr9c', (doc) => ({ ...doc, [field]: v }));
         }}
       />
+      {required && (
+        <p id={`${id}-req`} className="text-[11px] leading-snug text-destructive-strong">
+          Required: there is a difference in this table, so give its reasons here. The working cannot be marked prepared until they are typed.
+        </p>
+      )}
     </div>
   );
 };

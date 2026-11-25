@@ -7,6 +7,7 @@ import { useWorkspace } from '../WorkspaceContext';
 import DifferenceList from '../overview/DifferenceList';
 import LockPanel from '../overview/LockPanel';
 import ToleranceSetting from '../overview/ToleranceSetting';
+import { SelfCheckCard } from '../selfcheck/SelfCheckList';
 import RevisionHistory from '../overview/RevisionHistory';
 import VersionHistory from '../overview/VersionHistory';
 import { clientStage, displayName, STAGE_META } from '@/lib/gstr9/signoffFlow';
@@ -50,7 +51,7 @@ const ReviewStep: React.FC = () => {
           </p>
         ) : (
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Give every open difference a reason (or fix the figure) and mark it prepared; a second person verifies it, and a GST manager or the superadmin who neither prepared nor verified it reviews and locks it.
+            Give every open difference a reason (or fix the figure), answer the self-validation and mark it prepared; a second person verifies it, and a GST manager or the superadmin who neither prepared nor verified it reviews and locks it.
           </p>
         )}
       >
@@ -75,11 +76,12 @@ const ReviewStep: React.FC = () => {
         <DifferenceList />
       </TabsContent>
 
-      <TabsContent value="signoff" className="mt-0">
+      <TabsContent value="signoff" className="mt-0 space-y-3">
         <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
           <LockPanel />
           <ToleranceSetting />
         </div>
+        <SelfCheckCard />
       </TabsContent>
 
       <TabsContent value="history" className="mt-0">

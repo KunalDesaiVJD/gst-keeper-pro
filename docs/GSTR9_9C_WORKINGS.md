@@ -204,7 +204,31 @@ sign-off covers GSTR-9 and GSTR-9C together.
   allotted, it is marked for that preparer ("Marked prepared for …") and the
   allotment stays (the firm, 24 Nov 2026, `20261124100000`). The allotted
   verifier and reviewer may not. Something must have been saved in the
-  working.
+  working. **Self-validation first** (the firm, 25 Nov 2026,
+  `20261125100000`): the working may be marked prepared only with no open
+  difference and once the preparer has answered every self-validation
+  question that applies (`src/lib/gstr9/selfCheck.ts`: portal figures
+  fetched, books agree with the audited accounts, ineligible ITC reversed,
+  reverse charge paid, GSTR-9 Tables 4 to 19 checked, HSN summary, late fee;
+  and when it applies, additional tax paid with interest (Payables shows a
+  payable), GSTR-9C liability paid through DRC-03, GSTR-9C reasons as filed,
+  GSTR-9C verification details). Each is answered Yes, No (with a remark of
+  at least 5 characters on why and what is being done) or, where it allows,
+  Not applicable; it is asked under the step it concerns ("Self-validation
+  on this step") and every one still open is put again in the Mark prepared
+  dialog, whose button stays off until all are answered and the app's checks
+  pass (no open difference; when GSTR-9C is filed, no portal JSON error).
+  Answers are the sheet `selfcheck`; Mark prepared writes `submitted` (the
+  questions required and what the checks found) and `annual_return_signoff`
+  refuses a prepare unless every core question and every required one is
+  answered properly and nothing was open (`annual_return_selfcheck_problem`).
+  The answers print on the sign-off paper (A3) and show to the verifier on
+  Review & lock → Sign-off.
+- **GSTR-9C reasons are required.** A GSTR-9C difference line (5R, 7G, 9R,
+  12F, 14T) that needs a reason stays open until both its justification and
+  the form's own reasons table (Tables 6, 8, 10, 13, 15) are typed
+  (`DiffLine.remarkMissing`), because the filed statement carries those
+  reasons; not when GSTR-9C is not filed for the year (`ctx.no9c`).
 - **Verify.** The allotted verifier, or a GST manager or the superadmin —
   never the allotted reviewer, nor whoever prepared it or is allotted to
   prepare it, except that a GST manager or the superadmin may verify their

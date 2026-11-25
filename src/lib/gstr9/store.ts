@@ -238,6 +238,7 @@ const rpcError = (message: string | undefined, code?: string): Error | null => {
   if (message.includes('ANNUAL_RETURN_OVERRIDE_REQUIRED')) return new OverrideRequiredError(cap(said('ANNUAL_RETURN_OVERRIDE_REQUIRED')));
   if (message.includes('ANNUAL_RETURN_NOT_ALLOWED')) return new NotAllowedError(cap(said('ANNUAL_RETURN_NOT_ALLOWED')));
   if (message.includes('ANNUAL_RETURN_NOTE_REQUIRED')) return new Error(cap(said('ANNUAL_RETURN_NOTE_REQUIRED')));
+  if (message.includes('ANNUAL_RETURN_SELFCHECK')) return new NotAllowedError(cap(said('ANNUAL_RETURN_SELFCHECK')));
   if (message.includes('ANNUAL_RETURN_BAD_ACTION')) return new Error(cap(said('ANNUAL_RETURN_BAD_ACTION')));
   if (message.includes('ANNUAL_RETURN_LOCKED')) return new YearLockedError();
   const s = /ANNUAL_RETURN_SETOFF_INVALID:\s*(.*)$/.exec(message);

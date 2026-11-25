@@ -8,6 +8,7 @@
 import { displayName } from './signoffFlow';
 import { FY_MONTHS, type MonthKey } from './types';
 import { ROLE_LABEL } from './signoff';
+import { SELF_CHECK_QUESTIONS } from './selfCheck';
 
 export type ChangeKind = 'edit' | 'add' | 'remove' | 'status' | 'setoff';
 
@@ -30,6 +31,8 @@ export interface ChangeLogEntry {
   changedAt: string;
 }
 
+const selfCheckShort = (key: string): string => SELF_CHECK_QUESTIONS.find((q) => q.key === key)?.short ?? key;
+
 export const SHEET_LABEL: Record<string, string> = {
   sales: 'Sales (P&L)',
   purchases: 'Purchases & ITC (P&L)',
@@ -43,6 +46,7 @@ export const SHEET_LABEL: Record<string, string> = {
   notice: 'Notice format',
   justifications: 'Reasons for differences',
   settings: 'Settings',
+  selfcheck: 'Self-validation',
   period: 'Status & sign-off',
   payables: 'Payables & set-off',
 };
@@ -126,6 +130,8 @@ export const describePlace = (e: Pick<ChangeLogEntry, 'docKey' | 'path' | 'rowLa
   if (e.docKey === 'period') return periodPlace(e.path);
   if (e.docKey === 'payables') return `${e.path[0] === 'input' ? 'Input' : 'Output'} payable › ${e.rowLabel ?? 'set-off'}`;
   if (e.docKey === 'justifications' && e.path[0] === 'lines' && e.path[1]) return `Reason for “${e.path[1]}”`;
+  if (e.docKey === 'selfcheck' && e.path[0] === 'answers' && e.path[1]) return `Self-validation › “${selfCheckShort(e.path[1])}”${e.path[2] === 'note' ? ' › remark' : ''}`;
+  if (e.docKey === 'selfcheck' && e.path[0] === 'submitted') return 'Self-validation › submitted with Mark prepared';
   const parts = e.path.map((k) => segment(k, e.rowLabel)).filter((x): x is string => !!x);
   // "typed expression" reads better after the field it belongs to: "Taxable value (typed expression)".
   const out: string[] = [];
