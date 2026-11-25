@@ -37,11 +37,26 @@ Three layers, none waiting for an instruction:
 
 So a change to the GST module only has to do what the repo already requires: update its doc. The assistant then reads it on the next push.
 
+## Remark effects on the Annual Return (25 Nov 2026)
+
+The same Edge Function has a second mode, `mode: 'remark_effect'`, used by the Annual Return working (`src/lib/gstr9/remarkEffects.ts`). On a difference line of a GSTR-9 step (for example ITC Books − 3B), the user writes a remark explaining the difference; the app sends the line (its direction, both sides and the difference per head), the remark, this FY's GSTR-9 figures (Tables 10, 11, 12, 13, 8C, 6A1 and what is left unexplained) and the effects carried from the previous FY's working. The model reads the remark as data, never as instructions, and returns one suggested effect through its one tool, `record_effect`:
+
+- `next_fy_t10` / `next_fy_t11`: this FY's supplies declared or reduced in the next FY's returns (Tables 10 / 11; the next FY keeps them out of its own supplies, Annexure-4 clause 10);
+- `next_fy_t12`: this FY's ITC reversed in the next FY (Table 12; the next FY keeps it out of Table 7);
+- `next_fy_t13`: this FY's ITC availed in the next FY up to the 30 November cut-off of s.16(4) (Table 13 and 8C; the next FY reports it in 6A1, not 6B);
+- `prev_fy_itc`: the previous FY's ITC availed this FY (Table 6A1);
+- `pay_drc03`: a short payment paid or to be paid by DRC-03 (Payables);
+- `timing` / `no_effect`: no table effect.
+
+With it come the amount per head (taxable value only for Tables 10 and 11; from the remark when it states one, else the line's difference, never invented), a one-sentence summary, where it goes this FY and what the next FY should do, a confidence and, optionally, a question on what the remark leaves unclear. The function checks the tool's input (kind, amounts finite, 0 or more, rounded to paise, text clipped) and calls the model at most twice.
+
+It **never writes**: no working, no `assistant_actions`. The app shows the suggestion and applies it to the working only when the user presses Apply, through the working's own save. A client with `ai_opt_out` is refused, and the request goes through the same staff check, the assistant's on switch and the same key. Its tokens are recorded in `assistant_usage` under the route `/annual-return`. Code: `supabase/functions/gst-assistant/remarkEffect.ts` (request check, prompt, tool, validator; tests `test/remarkEffect.test.ts`).
+
 ## Files
 
 | Part | Where |
 | --- | --- |
-| Edge Function | `supabase/functions/gst-assistant/` (`index.ts` tool loop, `claude.ts` caller, `readRules.ts`, tests `deno test --allow-read test/`) |
+| Edge Function | `supabase/functions/gst-assistant/` (`index.ts` tool loop, `claude.ts` caller, `readRules.ts`, `remarkEffect.ts`, tests `deno test --allow-read test/`) |
 | Migration | `supabase/migrations/20261123100000_gst_assistant.sql` |
 | Panel | `src/components/assistant/AssistantPanel.tsx`, `GuideOverlay.tsx` |
 | Settings | `src/components/assistant/AssistantSettings.tsx` (Settings → AI Assistant) |

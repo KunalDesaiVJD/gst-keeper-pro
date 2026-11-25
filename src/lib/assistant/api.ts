@@ -35,7 +35,7 @@ const SCREENS = ASSISTANT_SCREENS.filter((s) => !s.redirectsTo).map((s) => {
   return o;
 });
 
-function sessionsEndedAt(): string | null {
+export function sessionsEndedAt(): string | null {
   try {
     const u = JSON.parse(localStorage.getItem('vjdesai_user') || 'null') as { sessionsEndedAt?: string | null } | null;
     return u?.sessionsEndedAt ?? null;

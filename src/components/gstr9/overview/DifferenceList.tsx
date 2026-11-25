@@ -7,6 +7,7 @@ import { Tabs, TabsList } from '@/components/ui/tabs';
 import type { DiffLine } from '@/lib/gstr9/engine';
 import { fmtMoney } from '../grid/money';
 import { JustifyControl, SectionCard } from '../ui';
+import { EffectChip } from '../remarks/RemarkEffectPanel';
 import { useWorkspace } from '../WorkspaceContext';
 import { StepTab, TAB_LIST_CLASS } from '../reco/StepTabs';
 import { diffTabParams, fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
@@ -131,6 +132,7 @@ export const DifferenceList: React.FC = () => {
                           {text && (
                             <div className={cn('mt-1 border-l-2 pl-2 text-[11px]', d.stale ? 'border-warning' : 'border-info/50')}>
                               <p className="whitespace-pre-wrap text-foreground">{text}</p>
+                              <EffectChip effect={j?.effect} text={text} />
                               <p className="text-muted-foreground">
                                 {j?.by ? `${j.by} · ` : ''}{fmtWhen(j?.at)}
                                 {d.stale && <span className="font-medium text-foreground"> · the difference has moved since — re-check</span>}

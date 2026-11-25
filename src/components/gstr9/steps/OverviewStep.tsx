@@ -6,6 +6,7 @@ import { clientStage, clientView, displayName, nextSentence, STAGE_META } from '
 import { useWorkspace } from '../WorkspaceContext';
 import { StageTrack } from '../signoff/StageTrack';
 import CarryForwardCard from '../overview/CarryForwardCard';
+import { CarriedEffectsCard } from '../remarks/CarriedEffectsCard';
 import OverviewTiles from '../overview/OverviewTiles';
 import PortalStatusCard from '../overview/PortalStatusCard';
 import StepChecklist from '../overview/StepChecklist';
@@ -88,6 +89,7 @@ const OverviewStep: React.FC = () => (
 
     {/* Only shown for an empty working, so it leads when it matters. */}
     <CarryForwardCard />
+    <CarriedEffectsCard showGoTo />
 
     <OverviewTiles />
 
