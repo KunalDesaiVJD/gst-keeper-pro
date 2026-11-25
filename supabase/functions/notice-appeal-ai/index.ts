@@ -15,7 +15,7 @@ import { scrub } from '../notice-ai/claude.ts';
 import { resolveCaller, rpcKeyReader } from '../notice-ai/backend.ts';
 import { beginAppeal, type AppealDeps } from './appeal.ts';
 
-export const VERSION = 'notice-appeal-ai 1.4.0';
+export const VERSION = 'notice-appeal-ai 1.5.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

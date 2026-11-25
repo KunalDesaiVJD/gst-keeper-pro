@@ -25,7 +25,7 @@ import { runAssist } from './assist.ts';
 import { runAdvise, runAdviseNext } from './advise.ts';
 import { runTick, type Db, type Deps } from './runner.ts';
 
-export const VERSION = 'notice-ai 1.8.0';
+export const VERSION = 'notice-ai 1.9.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -72,8 +72,8 @@ Deno.serve(async (req) => {
   try {
     if (action === 'status') {
       const db = supabaseDb(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
-      const { caller: c, keySource } = await resolveCaller(rpcKeyReader((fn) => db.rpc(fn)));
-      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null, key_source: keySource, files: !!c?.files });
+      const { caller: c, keySource, model } = await resolveCaller(rpcKeyReader((fn) => db.rpc(fn)));
+      return json({ version: VERSION, key: !!c, backend: c?.backend ?? null, key_source: keySource, model: c?.backend === 'api' ? model : null, files: !!c?.files });
     }
     if (action === 'tick') {
       const d = await deps();

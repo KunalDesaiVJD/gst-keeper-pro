@@ -1,7 +1,7 @@
 // notice-link-ai: the AI's second opinion on linking two notice cases
 // (link.ts; migration 20261027140000). Reaches Claude the way notice-ai does
 // (notice-ai/backend.ts: the Claude API with the key saved from the app or the
-// ANTHROPIC_API_KEY secret; the Claude CLI gateway only when there is no key), always Sonnet at medium effort. Its
+// ANTHROPIC_API_KEY secret; the Claude CLI gateway only when there is no key), at medium effort with the model chosen under Claude API key (Sonnet 5.5 by default). Its
 // own function, so notice-ai is never redeployed for it.
 //
 // Body: {"client_id", "child_key", "parent_key", "kind"?, "actor"?}: answered
@@ -12,7 +12,7 @@ import { scrub } from '../notice-ai/claude.ts';
 import { resolveCaller, rpcKeyReader } from '../notice-ai/backend.ts';
 import { judgeLink, type LinkDeps } from './link.ts';
 
-export const VERSION = 'notice-link-ai 1.2.0';
+export const VERSION = 'notice-link-ai 1.3.0';
 
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',

@@ -305,12 +305,13 @@ export const AUDIT_STATUS: Record<string, { label: string; tone: Tone }> = {
 };
 
 /**
- * The one model every AI call uses (Sonnet at medium effort, src/lib/aiModel.ts;
- * no setting chooses another), with Anthropic's list prices per million tokens
- * (input / output, USD) as published in September 2026, only for the list-price
- * hint; the prices saved in the settings are what the estimates use.
+ * The default model (Sonnet 5.5, src/lib/aiModel.ts; a GST Manager or the
+ * superadmin may choose another under Claude API key) at the one effort, with
+ * Anthropic's list prices per million tokens (input / output, USD) as published
+ * in September 2026, only for the list-price hint; the prices saved in the
+ * settings are what the estimates use (a model chosen there sets them).
  */
-export const AI_MODEL_INFO = { id: AI_MODEL, effort: AI_EFFORT, label: 'Sonnet, medium effort', priceIn: 2, priceOut: 10 } as const;
+export const AI_MODEL_INFO = { id: AI_MODEL, effort: AI_EFFORT, label: 'Chosen under Claude API key (Sonnet 5.5 by default), medium effort', priceIn: 2, priceOut: 10 } as const;
 
 /** Fields a reader fills on a notice (gst_notices.read_fields keys). */
 export const READ_FIELD_LABELS: Record<string, string> = {

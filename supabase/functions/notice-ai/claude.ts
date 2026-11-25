@@ -1,16 +1,19 @@
 // One request to the Claude API, the way every part of notice-ai asks: the
 // fixed instructions (system), the content (a PDF document block and/or text),
 // answered as JSON in the caller's schema (structured outputs). Streamed (a
-// reading can be long), adaptive thinking, always Sonnet at medium effort
-// (../_shared/aiModel.ts: whatever model or effort a request names), and the
-// API's own fallback on a policy decline (fallbacks "default"). A reading cut off
-// at max_tokens is asked once more with the model's whole output budget. Errors
-// come back classified: retry later, failed, or failed and pause (the key was
-// refused). Ported from agent/src/read/claude.ts; the key is the Edge Functions'
-// ANTHROPIC_API_KEY secret.
+// reading can be long), adaptive thinking, always at medium effort and with the
+// model the caller was made with: the one chosen under Claude API key, else
+// Sonnet 5.5 (../_shared/aiModel.ts), whatever model or effort a request names;
+// the API's own fallback on a policy decline (fallbacks "default") for the
+// models that take it. A reading cut off at max_tokens is asked once more with
+// the model's whole output budget. Errors come back classified: retry later,
+// failed, or failed and pause (the key was refused, or its account has no API
+// credit). Ported from agent/src/read/claude.ts; the key is the one saved from
+// the app, else the Edge Functions' ANTHROPIC_API_KEY secret. checkClaudeKey and
+// listClaudeModels ask Anthropic's free Models API (no model is called).
 
 import Anthropic, { APIError } from '@anthropic-ai/sdk';
-import { AI_EFFORT, AI_MODEL } from '../_shared/aiModel.ts';
+import { AI_EFFORT, AI_MODEL, takesFallback } from '../_shared/aiModel.ts';
 
 type BetaMessage = Anthropic.Beta.Messages.BetaMessage;
 type Params = Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
@@ -106,28 +109,28 @@ export type Caller = ((req: CallRequest) => Promise<CallOutcome>) & {
   files?: boolean;
 };
 
-export function apiCaller(client: Anthropic): Caller {
-  const c: Caller = (req) => callClaude(client, req);
+export function apiCaller(client: Anthropic, model: string = AI_MODEL): Caller {
+  const c: Caller = (req) => callClaude(client, req, model);
   c.backend = 'api';
   return c;
 }
 
-/** The request as it is sent: always the one model at the one effort, whatever it named. */
-export function pinned<T extends { model: string; effort: string }>(req: T): T {
-  return { ...req, model: AI_MODEL, effort: AI_EFFORT };
+/** The request as it is sent: the caller's model at the one effort, whatever it named. */
+export function pinned<T extends { model: string; effort: string }>(req: T, model: string = AI_MODEL): T {
+  return { ...req, model, effort: AI_EFFORT };
 }
 
-export function buildParams(req: CallRequest, maxTokens: number): Params {
+export function buildParams(req: CallRequest, maxTokens: number, model: string = AI_MODEL): Params {
   return {
-    model: AI_MODEL,
+    model,
     max_tokens: maxTokens,
     thinking: { type: 'adaptive' },
     output_config: { effort: AI_EFFORT, format: { type: 'json_schema', schema: req.schema } },
     system: req.system,
     messages: [{ role: 'user', content: req.content }],
-    // Sonnet takes the API's own fallback on a policy decline.
-    betas: [FALLBACK_BETA],
-    fallbacks: 'default',
+    // The models that take it get the API's own fallback on a policy decline
+    // (Haiku, for one, has none).
+    ...(takesFallback(model) ? { betas: [FALLBACK_BETA], fallbacks: 'default' as const } : {}),
   };
 }
 
@@ -159,6 +162,16 @@ export function scrub(s: string): string {
 
 const brief = (e: unknown) => scrub(((e as Error)?.message || String(e)).replace(/\s+/g, ' ')).slice(0, 300);
 
+/** What the admin is told when the key's account has no API credit (the Claude API and the key check alike). */
+export const NO_CREDIT = 'Anthropic knows this key, but its account has no API credit. Add credit at console.anthropic.com › Settings › Billing (a Claude subscription does not cover the API).';
+
+/** An API error saying the account has no credit: a 400 invalid_request_error "credit balance is too low", or a 402. */
+export function isNoCredit(e: unknown): boolean {
+  if (!(e instanceof Anthropic.APIError)) return false;
+  if (e.status === 402) return true;
+  return e.status === 400 && /credit balance/i.test(String(e.message ?? ''));
+}
+
 export interface ErrorClass {
   status: 'retry' | 'failed';
   reason: string;
@@ -171,8 +184,9 @@ export function classifyError(e: unknown, stopped: boolean, what = 'the document
     return { status: 'retry', reason: 'timeout', error: `Reading ${what} took longer than this run had left; it is tried again in the next run.` };
   }
   if (e instanceof Anthropic.AuthenticationError) {
-    return { status: 'retry', reason: 'api_key', error: 'The Claude API refused the ANTHROPIC_API_KEY secret.', pause: 'api_key' };
+    return { status: 'retry', reason: 'api_key', error: 'The Claude API refused the key in use (the one saved under Claude API key, else the ANTHROPIC_API_KEY secret).', pause: 'api_key' };
   }
+  if (isNoCredit(e)) return { status: 'retry', reason: 'api_billing', error: NO_CREDIT, pause: 'api_billing' };
   if (e instanceof Anthropic.PermissionDeniedError) {
     return { status: 'retry', reason: 'api_permission', error: `The Claude API refused this request for the key's organisation: ${brief(e)}`, pause: 'api_permission' };
   }
@@ -184,10 +198,9 @@ export function classifyError(e: unknown, stopped: boolean, what = 'the document
     if (/pdf pages|maximum of \d+ pdf|too many pages/i.test(m)) return { status: 'failed', reason: 'too_long', error: `${what[0].toUpperCase()}${what.slice(1)} has more pages than the Claude API takes in one request.` };
     return { status: 'failed', reason: 'bad_request', error: `The Claude API rejected the request: ${m}` };
   }
-  if (e instanceof Anthropic.NotFoundError) return { status: 'failed', reason: 'model_unavailable', error: `The model is not available to this API key: ${brief(e)}` };
+  if (e instanceof Anthropic.NotFoundError) return { status: 'failed', reason: 'model_unavailable', error: `The model is not available to this API key (choose another under Claude API key): ${brief(e)}` };
   if (e instanceof Anthropic.APIError) {
     const st = e.status ?? 0;
-    if (st === 402) return { status: 'retry', reason: 'api_billing', error: 'The Claude API account has a billing problem.', pause: 'api_billing' };
     if (st === 413) return { status: 'failed', reason: 'too_large', error: `${what[0].toUpperCase()}${what.slice(1)} is too large for the Claude API.` };
     if (st >= 500 || st === 408 || st === 409) return { status: 'retry', reason: 'api_unavailable', error: `The Claude API is unavailable (${st}).` };
     return { status: 'failed', reason: 'bad_request', error: `The Claude API rejected the request (${st}): ${brief(e)}` };
@@ -206,14 +219,14 @@ export function requestBytes(content: ContentBlock[]): number {
   return n;
 }
 
-export async function callClaude(client: Anthropic, asked: CallRequest): Promise<CallOutcome> {
-  const req = pinned(asked);
+export async function callClaude(client: Anthropic, asked: CallRequest, model: string = AI_MODEL): Promise<CallOutcome> {
+  const req = pinned(asked, model);
   const what = req.what ?? 'the document';
   if (requestBytes(req.content) + REQUEST_HEADROOM > MAX_REQUEST_BYTES) {
     return { ok: false, status: 'failed', reason: 'too_large', error: `${what[0].toUpperCase()}${what.slice(1)} is too large to send to the Claude API (32 MB a request).`, usage: null };
   }
   const started = Date.now();
-  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model: AI_MODEL, calls: 0 };
+  const usage: CallUsage = { input_tokens: 0, output_tokens: 0, duration_ms: 0, request_id: null, status: 'ok', model, calls: 0 };
   const ids: string[] = [];
   const count = (u: Partial<BetaMessage['usage']> | undefined | null, requestId: string | null | undefined, model?: string) => {
     const b = billedTokens(u);
@@ -231,7 +244,7 @@ export async function callClaude(client: Anthropic, asked: CallRequest): Promise
     let stream: ReturnType<typeof client.beta.messages.stream> | null = null;
     let msg: BetaMessage;
     try {
-      stream = client.beta.messages.stream(buildParams(req, budget), { signal: req.signal });
+      stream = client.beta.messages.stream(buildParams(req, budget, model), { signal: req.signal });
       msg = await stream.finalMessage();
     } catch (e) {
       // What the API had counted before the failure (input tokens arrive with
@@ -274,4 +287,104 @@ export async function callClaude(client: Anthropic, asked: CallRequest): Promise
   }
   usage.status = 'error';
   return { ok: false, status: 'failed', reason: 'max_tokens', error: 'The answer did not fit in the model\'s output budget.', usage };
+}
+
+// ── The key check and the model list: Anthropic's free Models API ─────────────
+
+export const KEY_CHECK_TIMEOUT_MS = 10_000;
+
+/** What Anthropic said of a key: it works, it is refused, its account has no credit, or Anthropic could not be asked. */
+export type KeyCheck = 'ok' | 'refused' | 'no_credit' | 'unavailable';
+
+/** The sentences the admin reads for each answer but ok. */
+export const KEY_CHECK_WORDS: Record<Exclude<KeyCheck, 'ok'>, string> = {
+  refused: 'Anthropic did not accept this key. Check that it was copied whole and has not been turned off.',
+  no_credit: 'Anthropic knows this key, but its account has no API credit, so it was not saved. Add credit at console.anthropic.com › Settings › Billing (a Claude subscription does not cover the API), then paste it again.',
+  unavailable: 'Anthropic could not be reached to check the key, so it was not saved. Try again in a minute.',
+};
+
+export function classifyKeyCheck(e: unknown): Exclude<KeyCheck, 'ok'> {
+  if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) return 'refused';
+  if (e instanceof Anthropic.APIError) {
+    const t = (e as APIError & { type?: string | null }).type ?? (e.error as { error?: { type?: string } } | undefined)?.error?.type;
+    if (t === 'authentication_error' || t === 'permission_error') return 'refused';
+    if (isNoCredit(e)) return 'no_credit';
+  }
+  // A network error, a timeout, a 5xx or 529, a rate limit or any other answer.
+  return 'unavailable';
+}
+
+/** One line for a log about a failed check: the status, the error type and the start of the message, the key scrubbed. */
+export function keyCheckLogLine(e: unknown): string {
+  if (e instanceof Anthropic.APIError) {
+    const t = (e as APIError & { type?: string | null }).type ?? '';
+    return scrub(`${e.status ?? '-'} ${t} ${String(e.message ?? '')}`.replace(/\s+/g, ' ')).slice(0, 200);
+  }
+  return scrub(String((e as Error)?.name ?? 'error')).slice(0, 200);
+}
+
+/**
+ * Asks the Models API (GET /v1/models, free, calls no model) with this key, once
+ * more on "unavailable" unless the caller stopped it. `list` gets the answer's
+ * models when it is wanted.
+ */
+export async function withModelsApi<T>(
+  apiKey: string,
+  ask: (client: Anthropic) => Promise<T>,
+  opts: { fetch?: typeof fetch; signal?: AbortSignal; log?: (line: string) => void } = {},
+): Promise<{ check: 'ok'; value: T } | { check: Exclude<KeyCheck, 'ok'> }> {
+  const client = makeClaudeClient({ apiKey, maxRetries: 0, timeoutMs: KEY_CHECK_TIMEOUT_MS, fetch: opts.fetch });
+  let last: Exclude<KeyCheck, 'ok'> = 'unavailable';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return { check: 'ok', value: await ask(client) };
+    } catch (e) {
+      last = classifyKeyCheck(e);
+      opts.log?.(keyCheckLogLine(e));
+      if (last !== 'unavailable' || opts.signal?.aborted) break;
+    }
+  }
+  return { check: last };
+}
+
+/** Checks a key before it is saved. */
+export async function checkClaudeKey(apiKey: string, opts: { fetch?: typeof fetch; signal?: AbortSignal; log?: (line: string) => void } = {}): Promise<KeyCheck> {
+  const r = await withModelsApi(apiKey, (c) => c.models.list({ limit: 1 }, { signal: opts.signal }), opts);
+  return r.check;
+}
+
+/** One model the AI can use: it reads PDFs, answers in a JSON schema, thinks adaptively and takes medium effort. */
+export interface ModelChoice {
+  id: string;
+  name: string;
+  created_at: string | null;
+  max_input_tokens: number | null;
+}
+
+type ModelInfo = Anthropic.Models.ModelInfo;
+
+export function usableModel(m: ModelInfo): boolean {
+  if (!/^claude-/.test(m.id)) return false;
+  const c = m.capabilities;
+  if (!c) return false;
+  return !!(c.pdf_input?.supported && c.structured_outputs?.supported && c.thinking?.types?.adaptive?.supported && c.effort?.medium?.supported);
+}
+
+/** The models of the key's account the AI can use, newest first. */
+export function toModelChoices(list: ModelInfo[]): ModelChoice[] {
+  return list.filter(usableModel)
+    .map((m) => ({ id: m.id, name: m.display_name || m.id, created_at: m.created_at ?? null, max_input_tokens: m.max_input_tokens ?? null }))
+    .sort((a, b) => String(b.created_at ?? '').localeCompare(String(a.created_at ?? '')));
+}
+
+/** The live list (every page), or why it could not be had. */
+export async function listClaudeModels(apiKey: string, opts: { fetch?: typeof fetch; signal?: AbortSignal; log?: (line: string) => void } = {}) {
+  return withModelsApi(apiKey, async (c) => {
+    const all: ModelInfo[] = [];
+    for await (const m of c.models.list({ limit: 100 }, { signal: opts.signal })) {
+      all.push(m);
+      if (all.length >= 500) break;
+    }
+    return toModelChoices(all);
+  }, opts);
 }

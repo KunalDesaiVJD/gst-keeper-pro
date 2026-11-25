@@ -2,6 +2,9 @@
 // to the Edge Function ai-key, sends a key once (to save it) and never gets it
 // back, only its masked form. The key lives in Supabase Vault
 // (20261104100000_ai_api_key_vault.sql); nothing of it is kept in the browser.
+// ai-key checks a key with Anthropic before it saves it, and lists the models
+// the key's account can use, from Anthropic's live list, for the model choice
+// (20261104120000_ai_api_model.sql; the effort stays medium).
 import { currentActorId } from '@/lib/changeLogHeaders';
 
 const ENV = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
@@ -18,7 +21,19 @@ export interface ClaudeKeyStatus {
   saved_at: string | null;
   active: KeySource;
   env_set: boolean;
+  /** The model chosen here (null: the default), its name, who chose it and when. */
+  model?: string | null;
+  model_name?: string | null;
+  model_set_by_name?: string | null;
+  model_set_at?: string | null;
+  /** The model the Claude API calls use now, and the default. */
+  model_in_use?: string;
+  default_model?: string;
+  effort?: string;
 }
+
+export interface ClaudeModelChoice { id: string; name: string; created_at: string | null; max_input_tokens: number | null }
+export interface ClaudeModelList { models: ClaudeModelChoice[]; model_in_use: string; default_model: string; effort: string }
 
 export interface ClaudeKeyTest { ok: boolean; active: KeySource; model?: string; ms?: number; error?: string }
 
@@ -49,6 +64,9 @@ export const loadClaudeKeyStatus = () => call<ClaudeKeyStatus>('status');
 export const saveClaudeKey = (key: string, password: string) => call<ClaudeKeyStatus>('save', { key: key.trim(), password });
 export const removeClaudeKey = (password: string) => call<ClaudeKeyStatus>('remove', { password });
 export const testClaudeKey = () => call<ClaudeKeyTest>('test');
+export const loadClaudeModels = () => call<ClaudeModelList>('models');
+/** An empty model goes back to the default. */
+export const setClaudeModel = (model: string) => call<ClaudeKeyStatus>('set_model', { model });
 
 export const KEY_SOURCE_WORDS: Record<KeySource, string> = {
   app: 'The key saved here',
