@@ -345,7 +345,7 @@ verify and lock only inside the working — `src/lib/gstr9/signoffFlow.ts`); fig
 source (portal data, filled-in overrides — `src/lib/gstr9/sourceLock.ts`) can be
 typed over only by the superadmin, enforced in the DB too; payables are
 set off only via an imported DRC-03 or a GSTR-3B effect with its copy
-(`annual_return_payable_setoffs`, not blocked by the lock).
+(`annual_return_payable_setoffs`, not blocked by the lock). A working is marked prepared only after the preparer's self-validation (`src/lib/gstr9/selfCheck.ts`, sheet `selfcheck`, every question answered, a No with a remark, no open difference; refused by `annual_return_signoff` too, `20261125100000`), and a GSTR-9C difference stays open until its form reasons table (6, 8, 10, 13, 15) is typed (`DiffLine.remarkMissing`).
 
 Rule 42 (common credit, exempt supplies) and Rule 43 (capital goods in common use, read from the shared `capital_goods_register` and its use history) are the working on ITC reco › Rule 42/43 (`src/lib/gstr9/rule42.ts`, `rule43.ts`, §6 positions 39–40, `node scripts/verify-gstr9-rule42.mjs`): off per client/FY until switched on, then 7C is Rule 42's final figure, 7D is Σ Te, and Payables carries what is still to reverse with interest; a builder's approved Builder › ITC Reversal working adds to 7C / 7D in its posting year (position 42), and the GSTR-9C step offers the working's Table 13/15 reason and Table 16 figures (position 43).
 

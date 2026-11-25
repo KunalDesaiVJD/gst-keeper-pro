@@ -14,6 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/gstr9/WorkspaceContext';
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
+import { StepSelfCheck } from '@/components/gstr9/selfcheck/SelfCheckList';
 import RevisionHistory from '@/components/gstr9/overview/RevisionHistory';
 import ExportMenu from '@/components/gstr9/ExportMenu';
 import ApplicabilityRegister from '@/components/gstr9/register/ApplicabilityRegister';
@@ -282,6 +283,7 @@ const Workspace: React.FC = () => {
       )}
 
       <StepComponent />
+      <StepSelfCheck step={step.key} />
 
       <div className="flex items-center justify-between border-t pt-3">
         <Button variant="outline" size="sm" disabled={idx === 0} onClick={() => go(STEPS[idx - 1].key)}>

@@ -27,6 +27,8 @@ import { BASIS_LABEL, DISPOSAL_LABEL, SHORTFALL_ROUTE_LABEL } from '../capitalGo
 import { ITC_ROWS, MONTH_FIELDS, monthTitle, T5_ROWS, T9_ROWS } from '../portalImport';
 import { hasRateLines, rateLinesByRate, rateLinesTotal } from '../rateWise';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
+import { ANSWER_LABEL, selfCheckStatus } from '../selfCheck';
+import { buildGstr9cPortalJson } from '../gstr9cJson';
 import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
 import {
@@ -361,6 +363,34 @@ function signOff(c: Ctx): WorkingPaper {
       : done ? 'Ticked by the reviewer' : 'Not ticked';
     k.data(int(i + 1), wide(item.label, 2), { v: done ? '✓' : '✗', tick: true, align: 'center' }, basis);
   });
+
+  p.h2('Preparer’s self-validation');
+  {
+    const file9c = !w.ctx.no9c;
+    const jsonErrors = file9c
+      ? buildGstr9cPortalJson({ gstin: w.ctx.gstin, financialYear: w.ctx.financialYear, workings: w, doc: c.docs.gstr9c, tolerance: c.docs.settings?.tolerance ?? 0 }).errors
+      : 0;
+    const sc = selfCheckStatus({ w, gstr9c: c.docs.gstr9c, file9c }, c.docs.selfcheck, { jsonErrors });
+    const v = p.table([['#', wide('QUESTION', 2), 'ANSWER', 'REMARK / BASIS']]);
+    sc.items.forEach((it, i) => {
+      const e = it.entry;
+      const ans = e && !it.problem ? ANSWER_LABEL[e.answer] : 'Not answered';
+      const basis = [
+        e?.answer === 'no' ? e.note.trim() : '',
+        e && !c.forClient ? `${displayName(e.by)} on ${fmtDate(e.at)}` : '',
+        it.hint ?? '',
+      ].filter(Boolean).join(' · ');
+      v.data(int(i + 1), wide(it.q.question, 2), { v: ans, align: 'center', bold: e?.answer === 'no' || !!it.problem }, basis);
+    });
+    sc.auto.forEach((a, i) => {
+      v.data(int(sc.items.length + i + 1), wide(a.label, 2), { v: a.ok ? '✓' : '✗', tick: true, align: 'center' }, `Checked by the app: ${a.detail}`);
+    });
+    const sub = c.docs.selfcheck?.submitted;
+    if (sub) {
+      const t = p.table([], { plain: true });
+      t.data('Submitted with Mark prepared', { v: `${c.forClient ? '' : `${displayName(sub.by)} on `}${fmtDate(sub.at)}`, span: 2 });
+    }
+  }
 
   p.h2('Status');
   const locked = so.stage === 'locked';

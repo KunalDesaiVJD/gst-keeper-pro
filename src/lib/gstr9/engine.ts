@@ -203,7 +203,13 @@ export interface DiffLine {
   justification: Justification | null;
   /** A justification exists but the difference has since moved by more than tolerance. */
   stale: boolean;
-  /** requiresReason && (no justification || stale). */
+  /**
+   * GSTR-9C lines only: the form's own reasons table for this difference (Table 6, 8, 10, 13
+   * or 15), e.g. "Table 6", when it is blank while the line needs a reason. The filed 9C
+   * carries those reasons, so the line stays open until they are typed.
+   */
+  remarkMissing?: string;
+  /** requiresReason && (no justification || stale || remarkMissing). */
   open: boolean;
 }
 
@@ -1334,7 +1340,11 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     label: string,
     a: ValTax,
     b: ValTax,
-    opts: { direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean; legacyFlip?: boolean },
+    opts: {
+      direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean; legacyFlip?: boolean;
+      /** The form's own reasons box for this line (GSTR-9C) and its table: blank = open. */
+      remark?: { table: string; text: string | null | undefined };
+    },
   ) => {
     const hasTaxable = opts.hasTaxable ?? false;
     const hasTax = opts.hasTax ?? true;
@@ -1352,12 +1362,14 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       if (stale && opts.legacyFlip) stale = movedBy(addV(diff, at)) > tol + 1e-9;
     }
     const hasText = !!j && !!j.text && !!j.text.trim();
+    const remarkMissing = requiresReason && opts.remark && !ctx.no9c && !(opts.remark.text ?? '').trim() ? `Table ${opts.remark.table}` : undefined;
     diffs.push({
       key, step, label, a, b, diff,
       direction: opts.direction, aLabel: opts.aLabel, bLabel: opts.bLabel,
       hasTaxable, hasTax, informational, requiresReason,
       justification: j, stale: hasText && stale,
-      open: requiresReason && (!hasText || stale),
+      ...(remarkMissing ? { remarkMissing } : {}),
+      open: requiresReason && (!hasText || stale || !!remarkMissing),
     });
   };
 
@@ -1509,21 +1521,21 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     });
   });
   push('gstr9c.5R', 'gstr9c', 'GSTR-9C 5R: un-reconciled turnover (Q − P)', val(t5Q), val(t5P), {
-    direction: 'Q − P', aLabel: 'As per GSTR-9 (Q)', bLabel: 'After adjustments (P)', hasTaxable: true, hasTax: false,
+    direction: 'Q − P', aLabel: 'As per GSTR-9 (Q)', bLabel: 'After adjustments (P)', hasTaxable: true, hasTax: false, remark: { table: '6', text: C.t6Reasons },
   });
   push('gstr9c.7G', 'gstr9c', 'GSTR-9C 7G: un-reconciled taxable turnover (F − E)', val(c7.F), val(c7.E), {
-    direction: 'F − E', aLabel: 'As per GSTR-9 (F)', bLabel: 'After adjustments (E)', hasTaxable: true, hasTax: false,
+    direction: 'F − E', aLabel: 'As per GSTR-9 (F)', bLabel: 'After adjustments (E)', hasTaxable: true, hasTax: false, remark: { table: '8', text: C.t8Reasons },
   });
   push('gstr9c.9R', 'gstr9c', 'GSTR-9C 9R: un-reconciled payment (Q − P)', withT(0, c9Q), withT(0, taxOf(c9P)), {
-    direction: 'Q − P', aLabel: 'As per GSTR-9 (Q)', bLabel: 'Rate-wise (P)',
+    direction: 'Q − P', aLabel: 'As per GSTR-9 (Q)', bLabel: 'Rate-wise (P)', remark: { table: '10', text: C.t10Reasons },
   });
   push('gstr9c.12F', 'gstr9c', 'GSTR-9C 12F: un-reconciled ITC (E − D)', withT(0, c12E), withT(0, c12D), {
-    direction: 'E − D', aLabel: 'Claimed in GSTR-9 (E)', bLabel: 'As per books (D)',
+    direction: 'E − D', aLabel: 'Claimed in GSTR-9 (E)', bLabel: 'As per books (D)', remark: { table: '13', text: C.t13Reasons },
   });
   // 14T is S − R as the form and the 9C utility read it (it was R − S before 23 Nov 2026; a
   // justification recorded against the old sign still stands, see `legacyFlip`).
   push('gstr9c.14T', 'gstr9c', 'GSTR-9C 14T: un-reconciled ITC by expense head (S − R)', withT(0, c14S), withT(0, taxOf(c14.R)), {
-    direction: 'S − R', aLabel: 'Claimed in GSTR-9 (S)', bLabel: 'Eligible ITC by head (R)', legacyFlip: true,
+    direction: 'S − R', aLabel: 'Claimed in GSTR-9 (S)', bLabel: 'Eligible ITC by head (R)', legacyFlip: true, remark: { table: '15', text: C.t15Reasons },
   });
 
   // Capital goods sold that cannot be computed as typed (Annexure-5).
@@ -1647,7 +1659,7 @@ export function diffStatus(d: DiffLine, tolerance: number): { kind: DiffStatusKi
   const text = d.justification?.text?.trim() ?? '';
   const mag = Math.max(d.hasTax ? maxAbs(d.diff) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
   if (d.stale) return { kind: 'recheck', label: 'Re-check' };
-  if (d.open) return { kind: 'open', label: 'Reason needed' };
+  if (d.open) return { kind: 'open', label: d.remarkMissing && text ? `${d.remarkMissing} reasons needed` : 'Reason needed' };
   if (text) return { kind: 'justified', label: 'Justified' };
   if (mag < 0.005) return { kind: 'matched', label: 'Matched' };
   if (d.informational) return { kind: 'info', label: 'For information' };

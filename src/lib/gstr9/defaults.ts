@@ -219,6 +219,7 @@ export const emptyDocs = (): AnnualReturnDocs => ({
   },
   justifications: { lines: {} },
   settings: { tolerance: 10 },
+  selfcheck: { answers: {}, submitted: null },
 });
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>

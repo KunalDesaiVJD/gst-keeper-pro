@@ -4,6 +4,7 @@ import {
   AlertTriangle, ArrowUpRight, CheckCircle2, ChevronDown, ClipboardCheck, CornerUpLeft, Loader2, Lock, LockOpen, ShieldCheck, Undo2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -24,6 +25,8 @@ import { ChangesList } from '../signoff/ChangesList';
 import { AllotChip, SignoffRail } from '../signoff/SignoffRail';
 import { StageTrack } from '../signoff/StageTrack';
 import { StaffPicker } from '../signoff/StaffPicker';
+import { SelfCheckPanel } from '../selfcheck/SelfCheckList';
+import { useSelfCheck } from '../selfcheck/useSelfCheck';
 import { diffTabParams, fmtWhen, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
 
 const SHOW_BLOCKERS = 6;
@@ -357,22 +360,49 @@ const PrepareDialog: React.FC<{ open: boolean; onOpenChange: (o: boolean) => voi
   open, onOpenChange, busy, again, verifier, onConfirm,
 }) => {
   const [note, setNote] = useState('');
+  const { status } = useSelfCheck();
+  // The questions still to answer when the dialog opened stay listed while they are answered, so the list does not jump.
+  const [asked, setAsked] = useState<string[]>([]);
   // Opened from a button (not a trigger), so start empty each time here — never resubmit an old note.
-  useEffect(() => { if (open) setNote(''); }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    setNote('');
+    setAsked(status.items.filter((i) => i.problem).map((i) => i.q.key));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const failing = status.auto.filter((a) => !a.ok);
+  const blocked = !status.ok;
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className={cn('max-h-[90vh] overflow-y-auto', asked.length || failing.length ? 'max-w-2xl' : 'max-w-md')}>
         <DialogHeader>
           <DialogTitle>{again ? 'Mark prepared again' : 'Mark prepared'}</DialogTitle>
-          <DialogDescription>Everything pending is saved first. {verifier ?? 'A GST manager'} then verifies it.</DialogDescription>
+          <DialogDescription>
+            Self-validate the working first: every question answered (a No with its remark) and every check passed. Everything pending is saved first. {verifier ?? 'A GST manager'} then verifies it.
+          </DialogDescription>
         </DialogHeader>
+        {(asked.length > 0 || failing.length > 0) ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium">
+              {status.pending
+                ? `${status.pending} question${status.pending === 1 ? '' : 's'} still to answer`
+                : failing.length ? 'Every question is answered' : 'Every question is answered and every check passes'}
+              {failing.length > 0 && ` · ${failing.length} check${failing.length === 1 ? '' : 's'} not passed`}
+            </p>
+            <SelfCheckPanel only={asked} />
+          </div>
+        ) : (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CheckCircle2 className="h-3.5 w-3.5 text-success-strong" aria-hidden /> Self-validation complete: {status.items.length} question{status.items.length === 1 ? '' : 's'} answered, every check passed.
+          </p>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="prepare-note" className="text-xs">Note for the verifier (optional)</Label>
           <Textarea id="prepare-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="e.g. 3B for March pulled again after the amendment; Table 13 agreed with the client." />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button onClick={() => onConfirm(note.trim())} disabled={busy}>
+          <Button onClick={() => onConfirm(note.trim())} disabled={busy || blocked} title={blocked ? 'Answer every question and clear every check first' : undefined}>
             {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <ClipboardCheck className="mr-1 h-3.5 w-3.5" />} Mark prepared
           </Button>
         </DialogFooter>
