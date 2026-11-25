@@ -206,8 +206,11 @@ sign-off covers GSTR-9 and GSTR-9C together.
   verifier and reviewer may not. Something must have been saved in the
   working.
 - **Verify.** The allotted verifier, or a GST manager or the superadmin —
-  never whoever prepared it or is allotted to prepare it, nor the allotted
-  reviewer. It needs no open difference, and is done inside the working
+  never the allotted reviewer, nor whoever prepared it or is allotted to
+  prepare it, except that a GST manager or the superadmin may verify their
+  own preparation with a reason (at least 5 characters, printed as the
+  verification note and logged "Verified own preparation"; the firm, 24 Nov
+  2026, `20261124120000`). Review & lock still needs a third person. It needs no open difference, and is done inside the working
   after its changes are saved, never from the register.
 - **Review & lock.** A GST manager or the superadmin who neither prepared
   nor verified it ticks the review checklist and locks the year
