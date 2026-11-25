@@ -9,6 +9,7 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { StepKey } from '@/lib/gstr9/engine';
+import type { FigTarget } from '@/lib/gstr9/figureLinks';
 import type { Gstr9cDoc, RateWiseRow, Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
@@ -77,7 +78,19 @@ export interface FormLine {
    * (SGST = CGST, grid/columns lockSgst). E.g. Table 16 B follows A.
    */
   follows?: string;
+  /**
+   * Where the row's computed figure comes from (sourceTargets.ts): the figure
+   * opens it. Shown on computed rows, and on override rows while they follow
+   * the computation (a typed figure has no source).
+   */
+  link?: FigTarget | ((h: FormHead) => FigTarget | undefined);
 }
+
+/** The source a cell's figure opens, if any. */
+export const lineLink = (l: FormLine, h: FormHead): FigTarget | undefined => {
+  if (!l.link || l.mode === 'typed' || (l.mode === 'override' && l.stored)) return undefined;
+  return typeof l.link === 'function' ? l.link(h) : l.link;
+};
 
 const EPS = 0.005;
 export const n0 = (v: number | null | undefined): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);

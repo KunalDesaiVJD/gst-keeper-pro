@@ -5,12 +5,16 @@
 // right-aligned with negatives in brackets and nil as a dash, bold totals with
 // a rule above. A table too wide for the page is split into parts that repeat
 // its label columns.
+//
+// Links: a figure linked to a row of another paper (SheetLink.anchor) goes to
+// the page that row is printed on, near its line; the links are added once
+// every paper is laid out and the contents moved in, so they may point forward.
 
 import jsPDF from 'jspdf';
 import autoTable, { type CellDef, type CellHookData, type RowInput, type Styles } from 'jspdf-autotable';
 import { drawFirmLogo } from '@/utils/reportTheme';
 import { drawChrome, GREY, INK, MUTED, NAVY, PAGE, pdfText, RULE, type RGB } from './chrome';
-import { cellOf, clean, tableWidth, type Cell, type PaperSet, type RowKind, type WorkingPaper, type WpCell, type WpTable } from './model';
+import { anchorChain, anchorsOf, cellOf, clean, liveLink, tableWidth, type Cell, type PaperSet, type RowKind, type SheetLink, type WorkingPaper, type WpCell, type WpTable } from './model';
 
 const BAND: RGB = [217, 225, 242];
 const LINK: RGB = [5, 99, 193];
@@ -65,6 +69,14 @@ interface St {
   /** Paper on each page. */
   pagePaper: Map<number, WorkingPaper>;
   current: WorkingPaper | null;
+  /** Sheets in the file (a link to any other is left out). */
+  sheets: Set<string>;
+  /** Page (as rendered) and y of the first line of each anchored row. */
+  anchorAt: Map<string, { page: number; y: number }>;
+  /** Internal links drawn so far, added once every page is placed. */
+  pending: Array<{ page: number; x: number; y: number; w: number; h: number; link: SheetLink }>;
+  /** False while the contents is laid out (its pages are rendered more than once). */
+  collect: boolean;
 }
 
 const bottom = (st: St) => st.H - PAGE.bottom;
@@ -116,6 +128,8 @@ interface NRow {
   /** The cell starting at each column, or 'covered' by a row-span from above. */
   at: Array<Placed | 'covered' | null>;
   cells: Placed[];
+  /** The row's link anchors (WpRow.anchor). */
+  anchors: string[];
 }
 
 function normalize(t: WpTable, ncol: number): { head: NRow[]; body: NRow[] } {
@@ -146,7 +160,7 @@ function normalize(t: WpTable, ncol: number): { head: NRow[]; body: NRow[] } {
       }
     }
     placed.sort((a, b) => a.col - b.col);
-    return { kind, struck, at, cells: placed };
+    return { kind, struck, at, cells: placed, anchors: [] };
   };
   const head: NRow[] = [];
   let pending: Array<{ col: number; span: number; rows: number }> = [];
@@ -161,7 +175,7 @@ function normalize(t: WpTable, ncol: number): { head: NRow[]; body: NRow[] } {
   const body = t.rows.map((r) =>
     r.kind === 'band'
       ? place([{ ...cellOf(r.cells[0]), span: ncol }], 'band', false, new Set())
-      : place(r.cells, r.kind, !!r.struck, new Set()),
+      : { ...place(r.cells, r.kind, !!r.struck, new Set()), anchors: anchorsOf(r) },
   );
   return { head, body };
 }
@@ -338,11 +352,15 @@ interface Tag {
   plain: boolean;
   /** Target page of an internal link (contents). */
   page?: number;
+  /** The row's anchors, on the row's first cell of the part. */
+  anchors?: string[];
+  /** The cell's link can be followed in this file. */
+  live: boolean;
 }
 
 type TaggedCell = CellDef & { tag: Tag };
 
-function styleFor(p: Placed, row: NRow, numeric: boolean, plain: boolean, fs: number): Partial<Styles> {
+function styleFor(p: Placed, row: NRow, numeric: boolean, plain: boolean, fs: number, sheets: Set<string>): Partial<Styles> {
   const c = p.cell;
   const isNum = typeof c.v === 'number';
   if (row.kind === 'head') {
@@ -360,7 +378,7 @@ function styleFor(p: Placed, row: NRow, numeric: boolean, plain: boolean, fs: nu
   if (c.tick) (style as { font?: string }).font = 'zapfdingbats';
   if (isNum && c.src && c.src !== 'computed') style.textColor = SRC_RGB[c.src];
   if (c.muted) style.textColor = MUTED;
-  if (c.link) style.textColor = LINK;
+  if (liveLink(c.link, sheets) && p.text) style.textColor = LINK;
   if (c.strike || row.struck) style.textColor = MUTED;
   if (row.kind === 'band') style.fillColor = BAND;
   if (c.fill) style.fillColor = FILL_RGB[c.fill];
@@ -368,10 +386,11 @@ function styleFor(p: Placed, row: NRow, numeric: boolean, plain: boolean, fs: nu
 }
 
 /** autotable rows for one part (a subset of the columns, in order). */
-function partRows(rows: NRow[], cols: number[], numeric: boolean[], plain: boolean, fs: number, pageOf?: (c: WpCell) => number | undefined): TaggedCell[][] {
+function partRows(rows: NRow[], cols: number[], numeric: boolean[], plain: boolean, fs: number, sheets: Set<string>, pageOf?: (c: WpCell) => number | undefined): TaggedCell[][] {
   const pos = new Map(cols.map((c, i) => [c, i]));
   return rows.map((row) => {
     const out: TaggedCell[] = [];
+    const anchors = () => (out.length === 0 ? row.anchors : undefined);
     cols.forEach((c) => {
       const a = row.at[c];
       if (!a || a === 'covered') {
@@ -380,7 +399,7 @@ function partRows(rows: NRow[], cols: number[], numeric: boolean[], plain: boole
           const coveredByHeadAbove = row.kind === 'head' && !row.cells.some((p) => p.col <= c && p.col + p.span > c);
           if (!coveredByHeadAbove) {
             const empty: Placed = { cell: { v: null }, col: c, span: 1, rowSpan: 1, text: '' };
-            out.push({ content: '', styles: styleFor(empty, row, numeric[c], plain, fs), tag: { kind: row.kind, struck: row.struck, cell: empty.cell, plain } });
+            out.push({ content: '', styles: styleFor(empty, row, numeric[c], plain, fs, sheets), tag: { kind: row.kind, struck: row.struck, cell: empty.cell, plain, anchors: anchors(), live: false } });
           }
         }
         return;
@@ -390,8 +409,8 @@ function partRows(rows: NRow[], cols: number[], numeric: boolean[], plain: boole
         content: a.text,
         colSpan: inPart,
         rowSpan: a.rowSpan,
-        styles: styleFor(a, row, numeric[c], plain, fs),
-        tag: { kind: row.kind, struck: row.struck, cell: a.cell, plain, page: pageOf?.(a.cell) },
+        styles: styleFor(a, row, numeric[c], plain, fs, sheets),
+        tag: { kind: row.kind, struck: row.struck, cell: a.cell, plain, page: pageOf?.(a.cell), anchors: anchors(), live: !!a.text && liveLink(a.cell.link, sheets) },
       };
       out.push(def);
     });
@@ -431,8 +450,8 @@ function renderTable(st: St, t: WpTable, excel: number[], opts: { pageOf?: (c: W
     part.widths.forEach((w, i) => { columnStyles[i] = { cellWidth: w }; });
     autoTable(doc, {
       startY: st.y,
-      head: partRows(head, part.cols, numeric, plain, lay.fs) as unknown as RowInput[],
-      body: partRows(body, part.cols, numeric, plain, lay.fs, opts.pageOf) as unknown as RowInput[],
+      head: partRows(head, part.cols, numeric, plain, lay.fs, st.sheets) as unknown as RowInput[],
+      body: partRows(body, part.cols, numeric, plain, lay.fs, st.sheets, opts.pageOf) as unknown as RowInput[],
       theme: 'plain',
       margin: { left: PAGE.margin, right: PAGE.margin, top: PAGE.top, bottom: PAGE.bottom },
       tableWidth: sum(part.widths),
@@ -454,6 +473,8 @@ function renderTable(st: St, t: WpTable, excel: number[], opts: { pageOf?: (c: W
         const tag = (d.cell.raw as TaggedCell | undefined)?.tag;
         if (!tag) return;
         const { x, y, width, height } = d.cell;
+        const page = doc.getCurrentPageInfo().pageNumber;
+        if (st.collect) tag.anchors?.forEach((a) => { if (!st.anchorAt.has(a)) st.anchorAt.set(a, { page, y }); });
         if (d.section === 'head') {
           // Hairline between head cells so grouped columns read as groups.
           doc.setDrawColor(142, 169, 219);
@@ -488,6 +509,7 @@ function renderTable(st: St, t: WpTable, excel: number[], opts: { pageOf?: (c: W
         const link = tag.cell.link;
         if (tag.page) doc.link(x, y, width, height, { pageNumber: tag.page });
         else if (link && 'url' in link) doc.link(x, y, width, height, { url: link.url });
+        else if (link && 'sheet' in link && tag.live && st.collect) st.pending.push({ page, x, y, w: width, h: height, link });
       },
     });
     st.y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? st.y) + 2;
@@ -632,7 +654,10 @@ export function renderWorkingPapersPdf(set: PaperSet): WorkingPapersPdf {
   const doc = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4', compress: true });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const st: St = { doc, set, y: PAGE.top, W, H, avail: W - 2 * PAGE.margin, startPage: new Map(), pagePaper: new Map(), current: null };
+  const st: St = {
+    doc, set, y: PAGE.top, W, H, avail: W - 2 * PAGE.margin, startPage: new Map(), pagePaper: new Map(), current: null,
+    sheets: new Set(set.papers.map((p) => p.sheet)), anchorAt: new Map(), pending: [], collect: true,
+  };
   const [cover, contents, ...rest] = set.papers;
 
   startPaper(st, cover, true);
@@ -644,6 +669,7 @@ export function renderWorkingPapersPdf(set: PaperSet): WorkingPapersPdf {
   });
 
   // The contents, at the end for now: its page numbers count the pages it will take once moved in after the cover.
+  st.collect = false;
   const bodyPages = doc.getNumberOfPages();
   const coverPages = (st.startPage.get(rest[0]?.ref ?? '') ?? 2) - 1;
   const at = coverPages + 1;
@@ -660,6 +686,21 @@ export function renderWorkingPapersPdf(set: PaperSet): WorkingPapersPdf {
     k = used;
   }
   for (let i = 0; i < k; i++) doc.movePage(bodyPages + 1 + i, at + i);
+
+  // Internal links of the papers, now that every page is where it stays: to the anchored row's page, else the paper's first.
+  const placed = (n: number) => (n < at ? n : n + k);
+  const refOfSheet = new Map(set.papers.map((p) => [p.sheet, p.ref]));
+  st.pending.forEach((l) => {
+    const hit = l.link.anchor ? anchorChain(l.link.anchor).map((a) => st.anchorAt.get(a)).find(Boolean) : undefined;
+    const ref = refOfSheet.get(l.link.sheet);
+    const first = ref ? st.startPage.get(ref) : undefined;
+    // An anchor of another paper (a fallback reaching a shorter anchor elsewhere) is never taken.
+    const own = hit && first !== undefined && st.pagePaper.get(hit.page)?.sheet === l.link.sheet ? hit : undefined;
+    const target = own ? placed(own.page) : first !== undefined ? placed(first) : undefined;
+    if (target === undefined) return;
+    doc.setPage(placed(l.page));
+    doc.link(l.x, l.y, l.w, l.h, { pageNumber: target, top: own ? Math.max(0, own.y - 14) : 0 });
+  });
 
   // Page → paper, after the move.
   const final = new Map<number, WorkingPaper>();

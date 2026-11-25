@@ -9,7 +9,8 @@ import { JustifyControl } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
-import { enterLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineValue } from './formLines';
+import { enterLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths, lineLink, lineValue } from './formLines';
+import { FigLink } from '../figure/FigLink';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
 import { CellIsland } from '../grid/CellIsland';
 
@@ -179,12 +180,13 @@ export const FormGrid: React.FC<{
         render: (l) => {
           if (!l.heads.includes(h)) return <span className="text-muted-foreground/60">—</span>;
           const v = lineValue(l, h);
-          if (l.mode === 'override' && !l.stored) return <span className="italic text-muted-foreground">{fmtMoney(v)}</span>;
+          const to = lineLink(l, h);
+          if (l.mode === 'override' && !l.stored) return <FigLink to={to}><span className="italic text-muted-foreground">{fmtMoney(v)}</span></FigLink>;
           const expr = formulaOf(l, h);
           return (
             <span className={cn('inline-flex items-center gap-1', l.emphasis && 'font-semibold')} title={expr}>
               {expr && <span className="text-[9px] font-semibold text-info" aria-label="entered as a formula">fx</span>}
-              {fmtMoney(v)}
+              <FigLink to={to}>{fmtMoney(v)}</FigLink>
             </span>
           );
         },

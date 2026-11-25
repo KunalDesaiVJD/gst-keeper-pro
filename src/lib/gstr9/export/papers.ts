@@ -5,6 +5,12 @@
 // order); the rest are new: the cover, index and sign-off, the portal figures
 // the working used, the official GSTR-9C tables, payables with their set-offs,
 // and the revision history.
+//
+// Links (GSTR-9 D1, GSTR-9C D2, Notice D3): a figure taken from another paper
+// links to the row it comes from there — and to the cell under its head — by
+// the anchors the source rows carry (`anchor`, `cols`; model.ts SheetLink).
+// Only a figure the working takes over unchanged, or totals from, links; a
+// figure typed on the GSTR-9 / 9C step itself, or added up on the form, does not.
 
 import { KIND_META, amountText, effectOutOfDate } from '../remarkEffects';
 import type { RemarkEffect } from '../types';
@@ -17,6 +23,8 @@ import {
   NON_TAX_NATURE_LABEL,
   OUTWARD_CATEGORY_LABEL,
   resolveHead,
+  salesBucket,
+  STANDARD_RATES,
   T4_ROWS,
   tin,
   type DiffLine,
@@ -54,7 +62,7 @@ import {
   type Tax,
   type ValTax,
 } from '../types';
-import { gstr9FormTables, noticeTables, type FormTable } from './formTables';
+import { gstr9FormTables, noticeTables, type FormRow, type FormTable } from './formTables';
 import {
   FIRM_NAME,
   fmtDate,
@@ -65,8 +73,10 @@ import {
   type Cell,
   type ExportMeta,
   type PaperSet,
+  anchorsOf,
   type Phase,
   type RowKind,
+  type SheetLink,
   type Src,
   type WorkingPaper,
   type WorkingPapersInput,
@@ -94,6 +104,15 @@ class TableBuilder {
   sub(...cells: Cell[]): this { return this.row('subtotal', cells); }
   total(...cells: Cell[]): this { return this.row('total', cells); }
   band(text: string): this { return this.row('band', [text]); }
+  /** Anchor the last row (a link target), with the columns of its figures when they differ from the table's. */
+  at(anchor: string | string[] | undefined | false, cols?: Record<string, number>): this {
+    const last = this.t.rows[this.t.rows.length - 1];
+    if (last && anchor) {
+      last.anchor = anchor;
+      if (cols) last.cols = cols;
+    }
+    return this;
+  }
 }
 
 class PaperBuilder {
@@ -216,7 +235,30 @@ interface Ctx {
   openOn: (prefixes: string[]) => number;
   /** Source of a portal field ("months.apr.outTax.i", "gstr9.table4.b2b.c"). */
   portalSrc: (path: string) => Src;
+  /** Every anchor of the papers built so far, and its paper's sheet (registered by paper()). */
+  anchors: Map<string, string>;
 }
+
+/**
+ * A link to the first of the anchors that a paper built so far carries, at
+ * the figure `col` of that row; none when no paper carries any of them.
+ */
+const linkTo = (c: Ctx, col: string | undefined, ...anchors: Array<string | false | null | undefined>): SheetLink | undefined => {
+  for (const a of anchors) {
+    if (!a) continue;
+    const sheet = c.anchors.get(a);
+    if (sheet) return col === undefined ? { sheet, anchor: a } : { sheet, anchor: a, col };
+  }
+  return undefined;
+};
+
+/** Figure columns of a "label … value, heads" row: the value at `t` (when given), the heads from `from`. */
+const figCols = (heads: Head[], from: number, t?: number): Record<string, number> => {
+  const out: Record<string, number> = {};
+  if (t !== undefined) out.t = t;
+  heads.forEach((h, i) => { out[h] = from + i; });
+  return out;
+};
 
 const taxCells = (t: Tax, heads: Head[]): number[] => heads.map((h) => t[h]);
 /** Ledger-row tax cells; the Sales / Purchases grids remember expressions under "tax.i" … "tax.x". */
@@ -246,11 +288,17 @@ interface Spec {
   freezeCols?: number;
 }
 
-const paper = (c: Ctx, s: Spec, p: PaperBuilder): WorkingPaper => ({
-  ...s,
-  blocks: p.blocks,
-  openDiffs: DIFF_PREFIX[s.ref] ? c.openOn(DIFF_PREFIX[s.ref]) : null,
-});
+const paper = (c: Ctx, s: Spec, p: PaperBuilder): WorkingPaper => {
+  p.blocks.forEach((b) => {
+    if (b.type !== 'table') return;
+    b.rows.forEach((r) => anchorsOf(r).forEach((a) => { if (!c.anchors.has(a)) c.anchors.set(a, s.sheet); }));
+  });
+  return {
+    ...s,
+    blocks: p.blocks,
+    openDiffs: DIFF_PREFIX[s.ref] ? c.openOn(DIFF_PREFIX[s.ref]) : null,
+  };
+};
 
 // ---------------------------------------------------------------------------
 // A — Summary papers
@@ -306,6 +354,7 @@ function index(c: Ctx, all: WorkingPaper[]): WorkingPaper {
   l.data({ v: 123456.78, src: 'typed' }, 'Typed by staff — ledger figures from the books, adjustments, overrides (blue)');
   l.data({ v: 123456.78, src: 'portal' }, 'Fetched from the GST portal — GSTR-9 system-computed, as-filed GSTR-3B (dark green); a portal figure typed over by hand shows blue');
   l.data({ v: 123456.78, src: 'computed' }, 'Computed by the working (black)');
+  l.data({ v: 123456.78, link: { sheet: 'A2 INDEX' } }, 'Underlined blue — a GSTR-9 / GSTR-9C / Notice figure taken from another paper: click it to go to the row (and the head) it comes from');
   p.h2('Symbols');
   const s = p.table([['SYMBOL', 'MEANING']]);
   s.data({ v: -1234.5 }, 'Negative figures are shown in brackets');
@@ -436,7 +485,9 @@ function plOutput(c: Ctx): WorkingPaper {
   p.h1('SALES BIFURCATION WORKING');
   p.h2('PART A - TAXABLE INCOME ONLY (INCLUDING ALL EXPORTS (WITH OR WITHOUT), SEZ SALES & DEEMED EXPORTS)');
   // Rates follow the amount (stated, then the rate the tax implies), then the heads.
-  const a = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', 'RATE (STATED)', 'RATE OF TAX', ...headRow(heads), 'GSTR-9 TABLE 4', 'SUPPLY']], { freeze: true, keyCols: 2 });
+  const a = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', 'RATE (STATED)', 'RATE OF TAX', ...headRow(heads), 'GSTR-9 TABLE 4', 'SUPPLY']], { freeze: true, keyCols: 2, cols: figCols(heads, 5, 2) });
+  // Anchors: the first ledger of each GSTR-9C Table 9 rate row (D2 links its rate rows here).
+  const seen = new Set<string>();
   docs.sales.partA.forEach((r, i) => {
     const cc = w.sales.rows[r.id];
     const t = cc?.tax ?? tin({ i: r.igst, c: r.cgst, s: r.sgst, x: r.cess });
@@ -446,20 +497,31 @@ function plOutput(c: Ctx): WorkingPaper {
       cc?.isReturn ? 'Credit note (4I)' : OUTWARD_CATEGORY_LABEL[r.category] ?? r.category,
       r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state',
     );
+    const key = `B1.partA.9c.${t9cSalesKey(r.category, r.rate, cc?.impliedRate ?? null)}`;
+    if (!seen.has(key)) a.at(key);
+    seen.add(key);
   });
-  a.total(lbl('TOTAL INCOME - PART A'), ...valRateCells(w.sales.partA, heads));
+  a.total(lbl('TOTAL INCOME - PART A'), ...valRateCells(w.sales.partA, heads)).at('B1.partA');
   p.note('NOTE : SHOW SALES RETURN OF EACH LEDGER IN A DIFFERENT ROW WITH NEGATIVE VALUES');
   p.h2('PART B - NON-TAXABLE INCOME ONLY');
   const bw = heads.length + 1;
-  const b = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', wide('BIFURCATION', bw)]], { keyCols: 2 });
+  const b = p.table([['SR NO', 'PARTICULARS', 'AMOUNT', wide('BIFURCATION', bw)]], { keyCols: 2, cols: { t: 2 } });
   // A negative row (a credit note) is reported in 5H, whatever its nature — say so, as Part A does for 4I.
-  docs.sales.partB.forEach((r, i) => b.data(
-    sr(i + 1), r.ledger, typed(r.amount, r.f, 'amount'),
-    wide((Number(r.amount) || 0) < 0 && r.nature !== 'not_in_gstr9' ? 'Credit note (5H)' : NON_TAX_NATURE_LABEL[r.nature] ?? r.nature, bw),
-  ));
-  b.total(lbl('TOTAL INCOME - PART B'), w.sales.partBTotal);
-  b.total(lbl('TOTAL INCOME - PART A+B'), w.sales.total, { ...muted('<<< THIS SHOULD BE MATCHED WITH AUDIT REPORT'), span: bw });
-  b.data(lbl('AS PER REPORT'), src(w.sales.auditReportTotal ?? null, 'typed'));
+  // Anchors: the first ledger of each nature (GSTR-9 Table 5, GSTR-9C 7B–7D1) and the first credit note (5H).
+  const seenB = new Set<string>();
+  docs.sales.partB.forEach((r, i) => {
+    const neg = (Number(r.amount) || 0) < 0 && r.nature !== 'not_in_gstr9';
+    b.data(
+      sr(i + 1), r.ledger, typed(r.amount, r.f, 'amount'),
+      wide(neg ? 'Credit note (5H)' : NON_TAX_NATURE_LABEL[r.nature] ?? r.nature, bw),
+    );
+    const keys = [neg ? 'B1.partB.cn' : `B1.partB.${r.nature}`, `B1.partB.net.${r.nature}`].filter((k) => !seenB.has(k));
+    keys.forEach((k) => seenB.add(k));
+    if (keys.length) b.at(keys);
+  });
+  b.total(lbl('TOTAL INCOME - PART B'), w.sales.partBTotal).at('B1.partB');
+  b.total(lbl('TOTAL INCOME - PART A+B'), w.sales.total, { ...muted('<<< THIS SHOULD BE MATCHED WITH AUDIT REPORT'), span: bw }).at('B1.total');
+  b.data(lbl('AS PER REPORT'), src(w.sales.auditReportTotal ?? null, 'typed')).at('B1.audit');
   b.sub(lbl('DIFFERENCE (REPORT - BOOKS)'), w.sales.auditDiff ?? null, wide(just('sales.audit'), bw));
   const n = heads.length;
   return paper(c, {
@@ -468,6 +530,21 @@ function plOutput(c: Ctx): WorkingPaper {
     widths: [8, 44, 18, 12, 12, ...Array(n).fill(16), 26, 14],
   }, p);
 }
+
+// GSTR-9C Table 9 rows by rate (as the engine keys workings.sales.byRate and the RCM categories) — link targets only.
+const RATE_9C: Record<string, string> = { '5': 'A', '6': 'B1', '12': 'C', '18': 'E', '28': 'G', '40': 'H1', '3': 'I', '0.25': 'J', '0.1': 'K' };
+const RC_9C: Record<string, string> = { '5': 'B', '12': 'D', '18': 'F', '28': 'H', '40': 'H2' };
+const snapRate = (r: number): string | null => {
+  let best: number | null = null;
+  STANDARD_RATES.forEach((x) => { if (Math.abs(Math.abs(r) - x) <= 0.5 && (best === null || Math.abs(Math.abs(r) - x) < Math.abs(Math.abs(r) - best))) best = x; });
+  return best === null ? null : String(best);
+};
+/** The GSTR-9C 9x row a Sales Part A ledger adds to. */
+const t9cSalesKey = (category: unknown, typedRate: number | null | undefined, implied: number | null): string => {
+  if (salesBucket(category, false) === 'ecom') return 'K2';
+  const r = typedRate !== null && typedRate !== undefined && STANDARD_RATES.includes(Number(typedRate)) ? String(Number(typedRate)) : snapRate(typedRate ?? implied ?? NaN);
+  return (r && RATE_9C[r]) || 'K1';
+};
 
 const SECTION_TITLE: Record<InputSection, [string, string]> = {
   purchase: ['(A) PURCHASE', 'TOTAL PURCHASE'],
@@ -479,7 +556,7 @@ function plInput(c: Ctx): WorkingPaper {
   const { docs, w, meta, heads, just } = c;
   const p = new PaperBuilder();
   p.h1('PURCHASE & ITC WORKING');
-  const t = p.table([['SR NO', 'HEAD IN BOOKS', 'TAXABLE VALUE', 'RATE (STATED)', 'RATE', ...headRow(heads), 'GSTR-9C EXPENSE HEAD', 'SUPPLY']], { freeze: true, keyCols: 2 });
+  const t = p.table([['SR NO', 'HEAD IN BOOKS', 'TAXABLE VALUE', 'RATE (STATED)', 'RATE', ...headRow(heads), 'GSTR-9C EXPENSE HEAD', 'SUPPLY']], { freeze: true, keyCols: 2, cols: figCols(heads, 5, 2) });
   (['purchase', 'expense', 'capital_goods'] as InputSection[]).forEach((sec) => {
     t.band(SECTION_TITLE[sec][0]);
     docs.purchases.rows.filter((r) => r.section === sec).forEach((r, i) => {
@@ -499,7 +576,7 @@ function plInput(c: Ctx): WorkingPaper {
   t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (Dr - Cr)'), 0, null, null, ...taxCells(P.suspended, heads));
   t.data(lbl('SUSPENDED ITC AS PER DUTIES & TAXES (OTHER ADJ)'), 0, null, null, ...srcTax(P.otherAdj, heads, () => 'typed'));
   t.data(lbl('RCM CREDIT (RCM SHEET PART B - AS PER BOOKS)'), ...valRateCells(P.rcmCredit, heads));
-  t.total(lbl(`NET ITC FOR ${meta.financialYear}`), ...valRateCells(P.netItc, heads));
+  t.total(lbl(`NET ITC FOR ${meta.financialYear}`), ...valRateCells(P.netItc, heads)).at('B2.netItc');
   t.data(lbl('AS PER DUTIES & TAXES-INPUT (NET)'), null, null, null, ...taxCells(P.dtNet, heads));
   t.sub(lbl('DIFFERENCE (P&L - D&T)'), null, null, null, ...taxCells(P.diffVsDt, heads), wide(just('purchases.dt'), 2));
   const n = heads.length;
@@ -604,11 +681,15 @@ function dti(c: Ctx): WorkingPaper {
     'PURCHASE', 'DEBIT NOTE', 'SUSPENDED ITC (REVERSED)', 'SUSPENDED ITC (REVERSED)-180DAYS', 'SUSPENDED ITC (RECLAIM)',
     'SUSPENDED ITC (RECLAIM)-180DAYS', 'NET PURCHASE', 'AS PER 3B', 'DIFF (BOOKS - 3B)',
   ];
-  const t = p.table(groupHead('MONTH', groups, heads, 'JUSTIFICATION'), { freeze: true, groups: groupCols(9, n, 1) });
+  // Figure columns of the anchored rows: "<group>.<head>" (D1 links 6A1, 6H and 7H1 to the TOTAL and LAST YEAR EFFECT rows).
+  const keys = ['purchase', 'dn', 'sr', 'sr180', 'rc', 'rc180', 'net', 'asPer3B', 'diff'];
+  const cols: Record<string, number> = {};
+  keys.forEach((k, g) => heads.forEach((h, i) => { cols[`${k}.${h}`] = 1 + g * n + i; }));
+  const t = p.table(groupHead('MONTH', groups, heads, 'JUSTIFICATION'), { freeze: true, groups: groupCols(9, n, 1), cols });
   const pad = (k: number) => Array(k * n).fill(null);
   const ty = (x: Tax) => srcTax(x, heads, () => 'typed');
   // Last Year Effect sits in NET PURCHASE only (no 3B month); its difference is carried so the column adds up.
-  t.data('LAST YEAR EFFECT', ...pad(6), ...ty(w.dti.lye), ...pad(1), ...taxCells(w.dti.lye, heads));
+  t.data('LAST YEAR EFFECT', ...pad(6), ...ty(w.dti.lye), ...pad(1), ...taxCells(w.dti.lye, heads)).at('B4.lye');
   FY_MONTHS.forEach((m) => {
     const x = w.dti.months[m];
     t.data(
@@ -619,7 +700,7 @@ function dti(c: Ctx): WorkingPaper {
     );
   });
   const T = w.dti.totals;
-  t.total('TOTAL', ...[T.purchase, T.dn, T.sr, T.sr180, T.rc, T.rc180, T.net, T.asPer3B, T.diff].flatMap((x) => taxCells(x, heads)));
+  t.total('TOTAL', ...[T.purchase, T.dn, T.sr, T.sr180, T.rc, T.rc180, T.net, T.asPer3B, T.diff].flatMap((x) => taxCells(x, heads))).at('B4.total');
   t.data(lbl('RCM TAX FIGURES ONLY', 1 + 6 * n), ...taxCells(w.dti.rcmBooks, heads), ...taxCells(w.dti.rcmPortal, heads), ...taxCells(w.dti.rcmDiff, heads));
   t.sub(lbl('TOTAL ITC FOR THE YEAR (TO BE MATCHED WITH ANNUAL GSTR-3B)', 1 + 6 * n), ...taxCells(w.dti.totalItcBooks, heads), ...taxCells(w.dti.totalItcPortal, heads), ...taxCells(w.dti.totalItcDiff, heads));
   t.data(lbl('LAST YEAR EFFECT', 1 + 6 * n), ...taxCells(w.dti.lye, heads));
@@ -642,6 +723,7 @@ function rcm(c: Ctx): WorkingPaper {
   const { w, docs, heads, just } = c;
   const p = new PaperBuilder();
   const hdr = (extra?: string): Cell[][] => [['SR NO', 'MONTH', 'TAXABLE', ...headRow(heads), ...(extra ? [extra] : [])]];
+  const cols = figCols(heads, 3, 2);
   const allV: Array<'t' | Head> = ['t', ...heads];
   const months = (t: TableBuilder, get: (m: MonthKey) => ValTax, extra?: (m: MonthKey) => string, cellSrc?: (m: MonthKey, h: 't' | Head) => Src) =>
     FY_MONTHS.forEach((m, i) => {
@@ -651,14 +733,14 @@ function rcm(c: Ctx): WorkingPaper {
 
   const source = w.rcm.partASource;
   p.h2(`PART A - AS PER GST PORTAL (${source === 'monthly' ? 'as-filed GSTR-3B 3.1(d)' : source === 'gstr9' ? 'GSTR-9 Table 4G, annual' : 'not fetched'})`);
-  const a = p.table(hdr(), { keyCols: 2 });
+  const a = p.table(hdr(), { keyCols: 2, cols });
   if (source === 'gstr9') a.data('', 'ANNUAL (GSTR-9 4G)', ...allV.map((h) => src(w.rcm.partA[h], c.portalSrc(`gstr9.table4.rchrg.${h}`))));
   else months(a, (m) => w.rcm.partAMonths[m], undefined, (m, h) => c.portalSrc(`months.${m}.rcm.${h}`));
-  a.total(lbl('TOTAL'), ...valCells(w.rcm.partA, heads));
+  a.total(lbl('TOTAL'), ...valCells(w.rcm.partA, heads)).at('B5.partA');
   p.h2('PART B - AS PER BOOKS');
-  const b = p.table(hdr(), { keyCols: 2 });
+  const b = p.table(hdr(), { keyCols: 2, cols });
   months(b, (m) => w.rcm.partBMonths[m]);
-  b.total(lbl('TOTAL'), ...valCells(w.rcm.partB, heads));
+  b.total(lbl('TOTAL'), ...valCells(w.rcm.partB, heads)).at('B5.partB');
   p.h2('DIFFERENCE (PART B - PART A: BOOKS - PORTAL)');
   const d = p.table(hdr('JUSTIFICATION'), { keyCols: 2 });
   if (source === 'gstr9') d.data('', 'ANNUAL', ...valCells(w.rcm.diff, heads), just('rcm.annual'));
@@ -669,14 +751,17 @@ function rcm(c: Ctx): WorkingPaper {
     const calc = w.rcm.categories[cat.id];
     if (!calc) return;
     p.h2(`${(cat.name || 'RCM EXPENSE').toUpperCase()} (${cat.rate}% · ${cat.supplyType === 'inter' ? 'INTER-STATE' : 'INTRA-STATE'} · ${cat.itcTable === 'none' ? 'NO ITC' : `GSTR-9 TABLE ${cat.itcTable || '6C'}${cat.itcType === 'ip' ? ' INPUTS' : cat.itcType === 'cg' ? ' CAPITAL GOODS' : ''}`})`);
-    const k = p.table(hdr(), { keyCols: 2 });
+    const k = p.table(hdr(), { keyCols: 2, cols });
     // Taxable is typed; tax is computed from the rate unless typed (RCM F52 `=D52*2.5%`).
     months(k, (m) => calc.months[m], undefined, (m, h) => {
       if (h === 't') return 'typed';
       const cell = cat.months?.[m];
       return cell && cell[h] !== null && cell[h] !== undefined ? 'typed' : 'computed';
     });
-    k.total(lbl('TOTAL'), ...valCells(calc.total, heads));
+    // Anchors (as the engine files the category): GSTR-9 6C / 6D by type, 6F, and the GSTR-9C 9x reverse-charge row by rate.
+    const tbl = cat.itcTable && ['6C', '6D', '6F', 'none'].includes(cat.itcTable) ? cat.itcTable : '6C';
+    const type = cat.itcType === 'ip' || cat.itcType === 'cg' ? cat.itcType : 'is';
+    k.total(lbl('TOTAL'), ...valCells(calc.total, heads)).at([`B5.cat.${tbl}.${type}`, `B5.cat.${tbl}`, `B5.9c.${RC_9C[String(Number(cat.rate))] ?? 'K1'}`]);
   });
   return paper(c, {
     ref: 'B5', title: 'RCM — Reverse charge, portal vs books', sheet: 'B5 RCM', phase: 'collect', master: 'RCM',
@@ -705,8 +790,8 @@ function portalData(c: Ctx): WorkingPaper {
 
   const allV: Array<'t' | Head> = ['t', ...heads];
   p.h3('Table 4 — outward supplies on which tax is payable, as auto-populated', '4');
-  const t4 = p.table([['TABLE', 'NATURE OF SUPPLIES', 'TAXABLE', ...headRow(heads)]], { keyCols: 2 });
-  T4_ROWS.forEach((r) => t4.data(r.table, r.label, ...allV.map((h) => src(g.table4[r.key][h], c.portalSrc(`gstr9.table4.${r.key}.${h}`)))));
+  const t4 = p.table([['TABLE', 'NATURE OF SUPPLIES', 'TAXABLE', ...headRow(heads)]], { keyCols: 2, cols: figCols(heads, 3, 2) });
+  T4_ROWS.forEach((r) => t4.data(r.table, r.label, ...allV.map((h) => src(g.table4[r.key][h], c.portalSrc(`gstr9.table4.${r.key}.${h}`)))).at(`B6.t4.${r.key}`));
   t4.total(lbl('TOTAL (EXCLUDING 4G; 4I AND 4L DEDUCTED) — GSTR 9-OUTPUT COLUMN B'), ...valCells(w.outward.portalTotal, heads));
 
   p.h3('Table 5 — outward supplies on which tax is not payable, as auto-populated (cross-check only)', '5');
@@ -719,15 +804,17 @@ function portalData(c: Ctx): WorkingPaper {
   t5.total('5M', 'Turnover on which tax is not to be paid (5G + 5L)', w.g9.t5PortalTotals.M);
 
   p.h3('Tables 6 and 8 — ITC figures filled by the portal', '6/8');
-  const itc = p.table([['TABLE', 'DETAILS', ...headRow(ALL_HEADS)]], { keyCols: 2 });
-  ITC_ROWS(meta.financialYear).forEach((r) => itc.data(r.table, r.label, ...srcTax(g[r.key], ALL_HEADS, (h) => c.portalSrc(`gstr9.${r.key}.${h}`))));
+  const itc = p.table([['TABLE', 'DETAILS', ...headRow(ALL_HEADS)]], { keyCols: 2, cols: figCols(ALL_HEADS, 2) });
+  ITC_ROWS(meta.financialYear).forEach((r) => itc.data(r.table, r.label, ...srcTax(g[r.key], ALL_HEADS, (h) => c.portalSrc(`gstr9.${r.key}.${h}`))).at(`B6.itc.${r.key}`));
 
   p.h3('Table 9 — tax paid as declared in the returns', '9');
-  const t9 = p.table([['TABLE', 'DESCRIPTION', 'TAX PAYABLE', 'PAID IN CASH', 'PAID BY ITC: IGST', 'PAID BY ITC: CGST', 'PAID BY ITC: SGST', 'PAID BY ITC: CESS']], { keyCols: 2 });
+  const t9 = p.table([['TABLE', 'DESCRIPTION', 'TAX PAYABLE', 'PAID IN CASH', 'PAID BY ITC: IGST', 'PAID BY ITC: CGST', 'PAID BY ITC: SGST', 'PAID BY ITC: CESS']], {
+    keyCols: 2, cols: { payable: 2, cash: 3, itcI: 4, itcC: 5, itcS: 6, itcX: 7 },
+  });
   T9_ROWS.forEach((r) => {
     const row = g.table9[r.key] as unknown as Record<string, number>;
     const fields = r.tax ? ['payable', 'cash', 'itcI', 'itcC', 'itcS', 'itcX'] : ['payable', 'cash'];
-    t9.data(`9${r.code}`, r.label, ...fields.map((f) => src(row[f], c.portalSrc(`gstr9.table9.${r.key}.${f}`))));
+    t9.data(`9${r.code}`, r.label, ...fields.map((f) => src(row[f], c.portalSrc(`gstr9.table9.${r.key}.${f}`)))).at(`B6.t9.${r.key}`);
   });
 
   p.h2('AS-FILED GSTR-3B, MONTH BY MONTH (gst_filed_returns · GSTR3B)');
@@ -747,12 +834,16 @@ function portalData(c: Ctx): WorkingPaper {
     ];
     let at = 2;
     const groups = cols.map((hs) => hs.map(() => at++));
-    const t = p.table(head, { keyCols: 2, groups });
+    // The TOTAL row is anchored "B6.m.<field>", its figures "<field>.<head>" (D1 / D3 link the year's 4A, 4B(1), 4A(5), 4B(2), 4D here).
+    const figs: Record<string, number> = {};
+    keys.forEach((k, i) => cols[i].forEach((h, j) => { figs[`${String(k)}.${h}`] = groups[i][j]; }));
+    const t = p.table(head, { keyCols: 2, groups, cols: figs });
     FY_MONTHS.forEach((k) => {
       const row = P.months[k];
       t.data(lbl(monthTitle(k, meta.financialYear)), ...keys.flatMap((f, i) => cols[i].map((h) => src((row[f] as unknown as Record<string, number>)[h], c.portalSrc(`months.${k}.${f}.${h}`)))));
     });
-    t.total(lbl('TOTAL'), ...keys.flatMap((f, i) => cols[i].map((h) => FY_MONTHS.reduce((s, k) => s + ((P.months[k][f] as unknown as Record<string, number>)[h] || 0), 0))));
+    t.total(lbl('TOTAL'), ...keys.flatMap((f, i) => cols[i].map((h) => FY_MONTHS.reduce((s, k) => s + ((P.months[k][f] as unknown as Record<string, number>)[h] || 0), 0))))
+      .at(keys.map((k) => `B6.m.${String(k)}`));
   };
   monthTable(['outTax', 'itcExclRcm', 'rcm'], 'Figures the reconciliation compares');
   monthTable(['itc4aTotal', 'itc4a5', 'itc4b1', 'itc4b2', 'itc4d'], 'Other figures (GSTR-9 6A fallback, 7E, Notice format)');
@@ -826,7 +917,7 @@ function rule42Paper(c: Ctx): WorkingPaper {
   t.total('TOTAL', R.periodsE, R.periodsF, null, ...taxCells(A.t, heads), ...taxCells(addT(A.t1, A.t2, A.t3), heads), ...taxCells(A.t4, heads), ...taxCells(A.c2, heads),
     ...taxCells(R.provisional, heads), ...taxCells(R.reversed, heads), ...taxCells(subT(R.provisional, R.reversed), heads), ...taxCells(R.interestShort, heads));
   p.h2('FINAL FOR THE YEAR AND TRUE-UP');
-  const f = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1 });
+  const f = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1, cols: figCols(heads, 1) });
   f.data('E ÷ F FOR THE YEAR', ...Array(n).fill(null), `${A.e.toLocaleString('en-IN')} ÷ ${A.f.toLocaleString('en-IN')} = ${(A.ratio * 100).toFixed(2)}% (${A.ratioSource === 'books' ? 'Sales, books' : 'Σ periods'})`);
   f.data('C2 COMMON CREDIT', ...taxCells(A.c2, heads), '');
   f.data('D1 = E ÷ F × C2', ...taxCells(A.d1, heads), '');
@@ -834,7 +925,7 @@ function rule42Paper(c: Ctx): WorkingPaper {
   const BR = w.builderRev;
   if (!w.r42Turnover) f.data('TURNOVER METHOD', ...Array(n).fill(null), 'Switched off: builder project credit only');
   BR.workings.forEach((b) => f.data(`BUILDER: ${b.project.toUpperCase()} (POSTED ${b.postingPeriod})`, ...taxCells(b.r42, heads), `Approved carpet-area working, completion ${b.completionDate.split('-').reverse().join('-')}`));
-  f.total('GSTR-9 TABLE 7C', ...taxCells(w.g9.t7.C, heads), R.t7CSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? (w.r42Turnover ? 'Final above + builder working' : 'Builder working') : 'From this working');
+  f.total('GSTR-9 TABLE 7C', ...taxCells(w.g9.t7.C, heads), R.t7CSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? (w.r42Turnover ? 'Final above + builder working' : 'Builder working') : 'From this working').at('C2A.7C');
   if (heads.some((h) => BR.recredit[h] > 0.005)) f.data('BUILDER RE-CREDIT IN 4(A)(5)', ...taxCells(BR.recredit, heads), 'Check GSTR-9 Table 6H');
   f.data('PROVISIONAL (Σ PERIODS)', ...taxCells(R.provisional, heads), '');
   f.sub('TRUE-UP: FINAL LESS PROVISIONAL', ...taxCells(R.trueUp, heads), `Post by ${R.latestPeriod}; chosen ${R.postingPeriod}`);
@@ -869,9 +960,9 @@ function rule42Paper(c: Ctx): WorkingPaper {
     pt.data(x.label, `${(x.ratio * 100).toFixed(2)}%`, ...taxCells(x.tr, heads), ...taxCells(x.te, heads), ...taxCells(x.reversed, heads), ...taxCells(x.short, heads), ...taxCells(x.interest, heads));
   });
   pt.total('TOTAL', null, ...taxCells(Q.tr, heads), ...taxCells(Q.te, heads), ...taxCells(Q.reversed, heads), ...taxCells(Q.net, heads), ...taxCells(Q.interest, heads));
-  const q = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1 });
+  const q = p.table([['PARTICULARS', ...headRow(heads), 'NOTE']], { freeze: true, keyCols: 1, cols: figCols(heads, 1) });
   BR.workings.forEach((b) => q.data(`BUILDER: ${b.project.toUpperCase()} (POSTED ${b.postingPeriod})`, ...taxCells(b.r43, heads), 'Approved carpet-area working'));
-  q.total('GSTR-9 TABLE 7D', ...taxCells(w.g9.t7.D, heads), Q.t7DSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? 'Σ Te + builder working' : 'Σ Te, this working');
+  q.total('GSTR-9 TABLE 7D', ...taxCells(w.g9.t7.D, heads), Q.t7DSource === 'override' ? 'Typed over by a superadmin' : BR.workings.length ? 'Σ Te + builder working' : 'Σ Te, this working').at('C2A.7D');
   q.data('REVERSED IN THE GSTR-3Bs', ...taxCells(Q.reversed, heads), '');
   q.total('STILL TO REVERSE (PAYABLES)', ...taxCells(Q.payable, heads), just('itc.r43Net'));
   q.data('REVERSED MORE THAN TE', ...taxCells(Q.recredit, heads), '');
@@ -908,13 +999,13 @@ function builderAdvPaper(c: Ctx): WorkingPaper {
   k.data(`LESS: SALES ACCOUNTED UP TO THE END OF FY ${fy}`, B.salesToDate, `Before: ${B.salesBefore.toLocaleString('en-IN')}`);
   k.total(`UNADJUSTED ADVANCES AT THE END OF FY ${fy}`, B.unadjustedEnd, Math.abs(B.unadjustedEnd - B.closingAdvance) > 0.5 ? 'Does not equal the closing advance' : 'Equals the closing advance');
   p.h2('JUSTIFICATION OF DIFFERENCE IN GSTR-9C (TABLE 5)');
-  const j = p.table([['NO.', 'PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 2 });
+  const j = p.table([['NO.', 'PARTICULARS', 'AMOUNT', 'NOTE']], { keyCols: 2, cols: { t: 2 } });
   j.data('5A', 'Turnover as per audit report', w.gstr9c.t5.A, Math.abs(w.gstr9c.t5.A - B.revenue) > 0.5 ? `Revenue recognised is ${B.revenue.toLocaleString('en-IN')}` : '');
-  j.data('5B', 'Add: unbilled revenue at the beginning', B.t5.B, '');
-  j.data('5C', 'Add: unadjusted advances at the end (closing advance)', B.t5.C, '');
-  j.data('5H', 'Less: unbilled revenue at the end', B.t5.H, '');
-  j.data('5I', 'Less: unadjusted advances at the beginning (opening advance)', B.t5.I, '');
-  (doc?.adjustments ?? []).forEach((a) => j.data(`5${a.row}`, `${a.row === 'J' ? 'Less' : 'Add'}: ${a.label}`, { v: a.amount, src: 'typed' }, a.reason));
+  j.data('5B', 'Add: unbilled revenue at the beginning', B.t5.B, '').at('D2A.5B');
+  j.data('5C', 'Add: unadjusted advances at the end (closing advance)', B.t5.C, '').at('D2A.5C');
+  j.data('5H', 'Less: unbilled revenue at the end', B.t5.H, '').at('D2A.5H');
+  j.data('5I', 'Less: unadjusted advances at the beginning (opening advance)', B.t5.I, '').at('D2A.5I');
+  (doc?.adjustments ?? []).forEach((a) => j.data(`5${a.row}`, `${a.row === 'J' ? 'Less' : 'Add'}: ${a.label}`, { v: a.amount, src: 'typed' }, a.reason).at(`D2A.5${a.row}`));
   j.total('5P', 'Annual turnover after adjustments', w.gstr9c.t5.P, '');
   j.data('5Q', 'Turnover as per GSTR-9', w.gstr9c.t5.Q, '');
   j.total('5R', 'Difference (Q − P)', w.gstr9c.t5.R, just('gstr9c.5R'));
@@ -944,25 +1035,25 @@ function gstr9Input(c: Ctx): WorkingPaper {
   const I = w.itc;
   const sum = (t: Tax) => heads.reduce((a, h) => a + t[h], 0);
   p.h1('ITC WORKING FOR GSTR 9');
-  const t = p.table([['PARTICULARS', 'TAXABLE', ...headRow(heads), 'TOTAL TAX', 'NOTE']], { freeze: true, keyCols: 1 });
+  const t = p.table([['PARTICULARS', 'TAXABLE', ...headRow(heads), 'TOTAL TAX', 'NOTE']], { freeze: true, keyCols: 1, cols: figCols(heads, 2, 1) });
   const vrow = (kind: RowKind, label: string, v: ValTax | null, x: Tax, note: Cell = '', s?: Src) =>
     t.row(kind, [label, v ? v.t : null, ...(s ? srcTax(x, heads, () => s) : taxCells(x, heads)), sum(x), note]);
-  vrow('data', 'INPUT (6B INPUTS)', I.inputs, I.inputs);
-  vrow('data', 'INPUT SERVICES (6B INPUT SERVICES — BALANCING FIGURE)', I.inputServices, I.inputServices, muted('Tax = 6A2 less every other row, so 6(O) ties to 6A2'));
+  vrow('data', 'INPUT (6B INPUTS)', I.inputs, I.inputs).at('C2.inputs');
+  vrow('data', 'INPUT SERVICES (6B INPUT SERVICES — BALANCING FIGURE)', I.inputServices, I.inputServices, muted('Tax = 6A2 less every other row, so 6(O) ties to 6A2')).at('C2.inputServices');
   vrow('data', '   of which: ITC booked on these ledgers (for reference)', null, I.inputServicesBooks);
-  vrow('data', 'IMPORT OF GOODS (6E)', I.importGoods, I.importGoods);
-  vrow('data', 'CAPITAL GOODS (6B CAPITAL GOODS)', I.capitalGoods, I.capitalGoods);
-  vrow('data', 'RCM (RCM SHEET PART B - AS PER BOOKS)', I.rcm, I.rcm);
-  vrow('data', 'ITC RECLAIM (6H)', null, I.reclaim);
-  vrow('data', 'ISD (6G)', null, I.isd);
-  vrow('data', 'TRAN-1 / TRAN-2 / ITC-01, 02, 02A (6N)', null, I.t6N);
-  vrow('subtotal', 'AS PER 3B (6A2 = 6A - 6A1)', null, I.asPer3B);
-  vrow('total', 'TOTAL (SHOULD BE MATCHED WITH 6(O) OF GSTR 9)', I.total, I.total);
-  vrow('data', 'ITC REVERSAL (7H1 - SUSPENDED ITC REVERSED)', null, I.reversal7H1);
-  vrow('data', 'AS PER SECTION 17(5) (7E)', null, I.s17_5);
+  vrow('data', 'IMPORT OF GOODS (6E)', I.importGoods, I.importGoods).at('C2.importGoods');
+  vrow('data', 'CAPITAL GOODS (6B CAPITAL GOODS)', I.capitalGoods, I.capitalGoods).at('C2.capitalGoods');
+  vrow('data', 'RCM (RCM SHEET PART B - AS PER BOOKS)', I.rcm, I.rcm).at('C2.rcm');
+  vrow('data', 'ITC RECLAIM (6H)', null, I.reclaim).at('C2.reclaim');
+  vrow('data', 'ISD (6G)', null, I.isd).at('C2.isd');
+  vrow('data', 'TRAN-1 / TRAN-2 / ITC-01, 02, 02A (6N)', null, I.t6N).at('C2.t6N');
+  vrow('subtotal', 'AS PER 3B (6A2 = 6A - 6A1)', null, I.asPer3B).at('C2.asPer3B');
+  vrow('total', 'TOTAL (SHOULD BE MATCHED WITH 6(O) OF GSTR 9)', I.total, I.total).at('C2.total');
+  vrow('data', 'ITC REVERSAL (7H1 - SUSPENDED ITC REVERSED)', null, I.reversal7H1).at('C2.reversal7H1');
+  vrow('data', 'AS PER SECTION 17(5) (7E)', null, I.s17_5).at('C2.s17_5');
   vrow('data', 'OTHER REVERSALS (7A-7D, 7F, 7G, OTHER 7H)', null, I.otherReversals);
   if (nz(w.cg.reversal)) vrow('data', '   of which: reversal u/s 18(6), capital goods sold (C6 Annexure-5)', null, w.cg.reversal);
-  vrow('total', 'TOTAL (SHOULD BE MATCHED WITH 7(J) OF GSTR 9)', null, I.total7J);
+  vrow('total', 'TOTAL (SHOULD BE MATCHED WITH 7(J) OF GSTR 9)', null, I.total7J).at('C2.total7J');
   if (nz(I.cgNotInBooks)) {
     vrow('data', 'DUTIES & TAXES NET, AFTER LAST YEAR EFFECT', null, I.asPerBookLedger);
     vrow('data', '   Less: s.18(6) reversal not yet in the ITC ledger (C6 Annexure-5)', null, I.cgNotInBooks);
@@ -970,9 +1061,9 @@ function gstr9Input(c: Ctx): WorkingPaper {
   vrow('data', nz(I.cgNotInBooks) ? 'AS PER BOOK (AFTER THE s.18(6) REVERSAL)' : 'AS PER BOOK (DUTIES & TAXES NET, AFTER LAST YEAR EFFECT)', null, I.asPerBook);
   vrow('subtotal', 'DIFFERENCE (7J - BOOK)', null, I.residual, just('itc.books'));
   vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12; 8C AS NEGATIVE) — SUGGESTED', null, I.t12Suggested);
-  vrow('data', `   Table 12 used (${w.g9.t12Source === 'override' ? 'typed' : 'computed'})`, null, w.g9.t12, '', w.g9.t12Source === 'override' ? 'typed' : undefined);
+  vrow('data', `   Table 12 used (${w.g9.t12Source === 'override' ? 'typed' : 'computed'})`, null, w.g9.t12, '', w.g9.t12Source === 'override' ? 'typed' : undefined).at('C2.t12');
   vrow('data', 'ITC TO BE CLAIMED IN NEXT YEAR (TABLE 13; 8C) — SUGGESTED', null, I.t13Suggested);
-  vrow('data', '   Table 13 typed', null, w.g9.t13, '', 'typed');
+  vrow('data', '   Table 13 typed', null, w.g9.t13, '', 'typed').at('C2.t13');
   return paper(c, {
     ref: 'C2', title: 'GSTR 9-INPUT — ITC working for GSTR-9', sheet: 'C2 GSTR 9-INPUT', phase: 'reconcile', master: 'GSTR 9-INPUT',
     source: 'Source: books ITC (B2 PL-INPUT, B4 D&T INPUT, B5 RCM) against GSTR-9 6A from the portal — GSTR 9-INPUT of MASTER_PMS',
@@ -1012,7 +1103,7 @@ function gstr9cHeads(c: Ctx): WorkingPaper {
     (ledgers[h] ||= []).push(r.ledger || '(unnamed)');
   });
   p.h1('ITC WORKING FOR THE PURPOSE OF GSTR 9C');
-  const t = p.table([['SR NO', 'PARTICULARS', 'VALUE', ...headRow(heads), 'TOTAL TAX', 'LEDGERS (PL-INPUT)']], { freeze: true, keyCols: 2 });
+  const t = p.table([['SR NO', 'PARTICULARS', 'VALUE', ...headRow(heads), 'TOTAL TAX', 'LEDGERS (PL-INPUT)']], { freeze: true, keyCols: 2, cols: figCols(heads, 3, 2) });
   C14_ROWS.forEach(([k, label, head]) => {
     const v = w.c14.rows[k];
     if (!v) return;
@@ -1020,13 +1111,13 @@ function gstr9cHeads(c: Ctx): WorkingPaper {
     if (k === 'A1') note = 'Duties & Taxes suspended ITC (reversed - reclaimed)';
     if (k === 'P') note = 'RCM sheet Part B';
     if (k === 'Q') note = [note, `balancing figure ${round2(w.c14.qBalancing.t)} value / ${round2(sum(w.c14.qBalancing))} tax`].filter(Boolean).join(' · ');
-    t.row(k === 'A2' ? 'subtotal' : 'data', [k, label, ...valCells(v, heads), sum(v), note]);
+    t.row(k === 'A2' ? 'subtotal' : 'data', [k, label, ...valCells(v, heads), sum(v), note]).at(`C3.${k}`);
   });
-  t.total('R', 'TOTAL AMOUNT OF ELIGIBLE ITC AVAILED', ...valCells(w.c14.rows.R, heads), sum(w.c14.rows.R));
+  t.total('R', 'TOTAL AMOUNT OF ELIGIBLE ITC AVAILED', ...valCells(w.c14.rows.R, heads), sum(w.c14.rows.R)).at('C3.R');
   t.data('', 'NET ITC AS PER PL-INPUT', ...valCells(w.purchases.netItc, heads), sum(w.purchases.netItc));
   t.sub('', 'CHECK (PL-INPUT - R)', ...valCells(w.c14.check, heads), sum(w.c14.check));
-  t.data('S', 'ITC CLAIMED IN GSTR-9 (7J)', null, ...taxCells(w.c14.S, heads), sum(w.c14.S));
-  t.total('T', 'UN-RECONCILED ITC (R - S)', null, ...taxCells(w.c14.T, heads), sum(w.c14.T), just('gstr9c.14T'));
+  t.data('S', 'ITC CLAIMED IN GSTR-9 (7J)', null, ...taxCells(w.c14.S, heads), sum(w.c14.S)).at('C3.S');
+  t.total('T', 'UN-RECONCILED ITC (R - S)', null, ...taxCells(w.c14.T, heads), sum(w.c14.T), just('gstr9c.14T')).at('C3.T');
   return paper(c, {
     ref: 'C3', title: 'GSTR 9C — ITC by expense head (Table 14)', sheet: 'C3 GSTR 9C', phase: 'reconcile', master: 'GSTR 9C',
     source: 'Source: books ITC by GSTR-9C expense head (B2 PL-INPUT, B5 RCM) against GSTR-9 7J — GSTR 9C of MASTER_PMS',
@@ -1095,8 +1186,8 @@ function annexure(c: Ctx): WorkingPaper {
 
   // Annexure-4
   p.h2('ANNEXURE-4 (DETAILS OF PREVIOUS YEAR GSTR-09 CLAUSE-8, 10, 11, 12 & 13)');
-  const a4 = p.table([['SR NO', 'PARTICULAR', ...headRow(all)]], { keyCols: 2 });
-  (['c8', 'c10', 'c11', 'c12', 'c13'] as const).forEach((k, i) => a4.data(sr(i + 1), `CLAUSE -${k.slice(1)}`, ...srcTax(tin(docs.annexures.a4[k]), all, () => 'typed')));
+  const a4 = p.table([['SR NO', 'PARTICULAR', ...headRow(all)]], { keyCols: 2, cols: figCols(all, 2) });
+  (['c8', 'c10', 'c11', 'c12', 'c13'] as const).forEach((k, i) => a4.data(sr(i + 1), `CLAUSE -${k.slice(1)}`, ...srcTax(tin(docs.annexures.a4[k]), all, () => 'typed')).at(`C4.a4.${k}`));
   return paper(c, {
     ref: 'C4', title: 'ANNEXURE — Income, ITC, DRC-03 and previous-year reconciliations', sheet: 'C4 ANNEXURE', phase: 'reconcile', master: 'ANNEXURE',
     source: 'Source: the reconciliations above (B1–B5, C1–C3) and GSTR-9 — ANNEXURE 1–4 of MASTER_PMS',
@@ -1150,16 +1241,16 @@ function capitalGoodsSold(c: Ctx): WorkingPaper {
     });
 
     p.h2('WHERE THE FIGURES GO');
-    const g = p.table([['PARTICULARS', 'VALUE', ...headRow(heads), 'WHERE']], { keyCols: 1 });
+    const g = p.table([['PARTICULARS', 'VALUE', ...headRow(heads), 'WHERE']], { keyCols: 1, cols: figCols(heads, 2, 1) });
     g.data('Sales outside the Sales ledgers — registered buyers', cg.table4.b2b.t, ...taxCells(cg.table4.b2b, heads), 'GSTR-9 4B (C1), 9C Table 9');
     g.data('Sales outside the Sales ledgers — unregistered buyers', cg.table4.b2c.t, ...taxCells(cg.table4.b2c, heads), 'GSTR-9 4A (C1), 9C Table 9');
-    g.data('Shortfall reported as ITC reversal', null, ...taxCells(cg.reversal, heads), 'GSTR-9 7H (C2), Annexure-2 G2');
+    g.data('Shortfall reported as ITC reversal', null, ...taxCells(cg.reversal, heads), 'GSTR-9 7H (C2), Annexure-2 G2').at('C6.reversal');
     g.data('   of which reversed in GSTR-3B 4(B)(2)', null, ...taxCells(cg.reversed3b, heads), '');
     g.data('   of which paid by DRC-03', null, ...taxCells(cg.drc03, heads), '');
     g.data('   of which not yet dealt with', null, ...taxCells(cg.notDone, heads), 'Annexure-3 row 5, Payables input side (E1)');
     g.data('Shortfall paid as output tax on the invoice', null, ...taxCells(cg.asOutputTax, heads), 'GSTR-9 Table 4');
     g.data('Shortfall not yet in the books’ ITC ledger', null, ...taxCells(cg.notInBooks, heads), 'ITC reco (C2), Annexure-2 A3');
-    g.data('Sale value outside the P&L revenue', cg.valueOutsidePl, ...heads.map(() => null), 'Annexure-1 (C4), GSTR-9C 5O (D2)');
+    g.data('Sale value outside the P&L revenue', cg.valueOutsidePl, ...heads.map(() => null), 'Annexure-1 (C4), GSTR-9C 5O (D2)').at('C6.outsidePl');
   }
   p.note('Firm positions (23 Nov 2026, docs/GSTR9_9C_WORKINGS.md §6 items 34–38): the higher of is compared on the total, the shortfall split over the heads of the ITC as reduced; ITC taken is the credit availed before any Rule 42/43 reversal; TRAN-1 credit counts from the original invoice date; a quarter is three months from the invoice date and a part counts in full.');
   return paper(c, {
@@ -1228,8 +1319,31 @@ function differences(c: Ctx): WorkingPaper {
 // D — Returns
 // ---------------------------------------------------------------------------
 
+/** The figure each column of a form table holds ("t", "c", "s", "i", "x", "payable", "cash" …), by its head. */
+const FORM_COL_KEY: Record<string, string> = {
+  'Taxable Value': 't', 'Central Tax': 'c', 'State Tax / UT Tax': 's', 'Integrated Tax': 'i', Cess: 'x',
+  'Tax Payable': 'payable', 'Paid through cash': 'cash', 'ITC: Central Tax': 'itcC', 'ITC: State Tax / UT Tax': 'itcS',
+  'ITC: Integrated Tax': 'itcI', 'ITC: Cess': 'itcX', 'Total tax paid': 'paid', Difference: 'diff', Payable: 'payable', Paid: 'paid',
+  Interest: 'interest', Penalty: 'penalty', 'Late Fee / Others': 'lateFee', Type: 'type',
+  SGST: 's', CGST: 'c', IGST: 'i', CESS: 'x', TOTAL: 'total',
+};
+const formColKeys = (t: FormTable): string[] => t.head.map((h) => FORM_COL_KEY[h] ?? h);
+
+/** Form-table links: the anchor of each form row ("D1.<table>.<row>"), and where a figure of a row comes from. */
+interface FormLinks {
+  /** Anchor prefix ("D1"); rows anchor as "<prefix>.<table no>.<row key or code>". */
+  prefix: string;
+  /** Where the figure under `key` of row `row` comes from. */
+  link: (t: FormTable, row: FormRow, key: string) => SheetLink | undefined;
+}
+
+const formAnchor = (prefix: string, t: FormTable, row: FormRow): string | undefined => {
+  const k = row.key ?? row.code;
+  return t.no && k ? `${prefix}.${t.no}.${k}` : undefined;
+};
+
 /** A form-table paper (GSTR-9, NOTICE FORMATE): part heading, table title, header row, rows. */
-function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: boolean; cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined } = {}): void {
+function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: boolean; cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined; links?: FormLinks } = {}): void {
   let part: string | undefined;
   tables.forEach((t) => {
     if (t.part && t.part !== part) {
@@ -1241,13 +1355,18 @@ function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: bo
     if (t.note) p.note(t.note);
     const head: Cell[][] = [[t.no ? 'No.' : 'S.No', t.labelHead ?? 'Description', ...t.head]];
     if (opts.numberRow) head.push(Array.from({ length: 2 + t.head.length }, (_, i) => sr(i + 1)));
-    const b = p.table(head, { keyCols: 2 });
+    const keys = formColKeys(t);
+    const cols: Record<string, number> = {};
+    keys.forEach((k, i) => { if (!(k in cols)) cols[k] = 2 + i; });
+    const b = p.table(head, { keyCols: 2, cols });
     t.rows.forEach((row, ri) => {
       const cells: Cell[] = [row.code, row.label, ...row.cells.map((v, ci) => {
-        const s = typeof v === 'number' ? opts.cellSrc?.(t, ri, ci) : undefined;
-        return s ? src(v as number, s) : v;
+        if (typeof v !== 'number') return v;
+        const s = opts.cellSrc?.(t, ri, ci);
+        const link = opts.links?.link(t, row, keys[ci]);
+        return s || link ? { v, src: s, link } : v;
       })];
-      b.row(row.bold ? 'subtotal' : 'data', cells);
+      b.row(row.bold ? 'subtotal' : 'data', cells).at(opts.links && formAnchor(opts.links.prefix, t, row));
     });
   });
 }
@@ -1312,11 +1431,105 @@ function gstr9CellSrc(c: Ctx): (t: FormTable, rowIdx: number, col: number) => Sr
   };
 }
 
+const D1_SHEET = 'D1 GSTR-9';
+const TAX_KEYS: ReadonlySet<string> = new Set(['t', 'i', 'c', 's', 'x']);
+const NATURE_5: Record<string, string> = { A: 'export_wo', B: 'sez_wo', C: 'rcm_outward', C1: 'ecom_95', D: 'exempt', E: 'nil', F: 'non_gst' };
+
+/**
+ * Where each GSTR-9 figure is taken from (docs/GSTR9_9C_WORKINGS.md §4–5):
+ * the paper and row the engine reads it off, never a figure typed on the
+ * GSTR-9 step or added up on the form (H, M, N, 5G, 6I …), which stays a value.
+ */
+function gstr9CellLink(c: Ctx): FormLinks['link'] {
+  const { docs, w } = c;
+  const G = docs.gstr9;
+  const T4_KEY: Record<string, string> = { A: 'b2c', B: 'b2b', C: 'exp', D: 'sez', E: 'deemed', F: 'at', G1: 'ecom', I: 'cr_nt', J: 'dr_nt', K: 'amd_pos', L: 'amd_neg' };
+  const HEAD9: Record<string, string> = { A: 'igst', B: 'cgst', C: 'sgst', D: 'cess' };
+  const OTHER9: Record<string, string> = { E: 'interest', F: 'lateFee', G: 'penalty', H: 'other' };
+  const HEAD_OF9: Record<string, Head> = { igst: 'i', cgst: 'c', sgst: 's', cess: 'x' };
+  const self = (anchor: string, col?: string): SheetLink => ({ sheet: D1_SHEET, anchor, ...(col ? { col } : {}) });
+  const unset = (v: unknown) => v === null || v === undefined;
+  return (t, row, key) => {
+    const code = row.key ?? row.code;
+    const head = TAX_KEYS.has(key) ? key : undefined;
+    switch (t.no) {
+      case '4':
+        if (T4_KEY[code]) return linkTo(c, head, `B6.t4.${T4_KEY[code]}`);
+        // 4G is RCM Part A: the annual GSTR-9 4G, or Σ the as-filed 3.1(d) (B5 Part A).
+        if (code === 'G') return w.rcm.partASource === 'gstr9' ? linkTo(c, head, 'B6.t4.rchrg', 'B5.partA') : linkTo(c, head, 'B5.partA');
+        return undefined;
+      case '5':
+        if (key !== 't') return undefined;
+        if (NATURE_5[code]) return linkTo(c, 't', `B1.partB.${NATURE_5[code]}`, 'B1.partB');
+        if (code === 'H') return linkTo(c, 't', 'B1.partB.cn', 'B1.partB');
+        return undefined;
+      case '6':
+        if (!head) return undefined;
+        switch (code) {
+          case 'A':
+            if (w.g9.t6ASource === 'gstr9') return linkTo(c, head, 'B6.itc.t6A');
+            if (w.g9.t6ASource === 'monthly_3b') return linkTo(c, `itc4aTotal.${head}`, 'B6.m.itc4aTotal');
+            return undefined;
+          case 'A1': return unset(G.t6A1) ? linkTo(c, `net.${head}`, 'B4.lye') : undefined;
+          case 'A2': return linkTo(c, head, 'C2.asPer3B');
+          case 'B_ip': return linkTo(c, head, 'C2.inputs');
+          case 'B_cg': return linkTo(c, head, 'C2.capitalGoods');
+          case 'B_is': return linkTo(c, head, 'C2.inputServices');
+          case 'C_ip': case 'C_cg': case 'C_is': case 'D_ip': case 'D_cg': case 'D_is':
+            return linkTo(c, head, `B5.cat.6${code[0]}.${code.slice(2)}`, `B5.cat.6${code[0]}`);
+          case 'E_ip': case 'E_cg': return linkTo(c, head, 'C2.importGoods');
+          case 'F': return linkTo(c, head, 'B5.cat.6F');
+          case 'G': return unset(G.t6G) ? linkTo(c, head, 'B6.itc.t6G') : undefined;
+          case 'H': return linkTo(c, `rc.${head}`, 'B4.total');
+          case 'O': return linkTo(c, head, 'C2.total');
+          default: return undefined;
+        }
+      case '7': {
+        if (!head) return undefined;
+        if (code === 'C' && w.r42.enabled) return linkTo(c, head, 'C2A.7C');
+        if (code === 'D' && w.r42.enabled) return linkTo(c, head, 'C2A.7D');
+        if (code === 'E') return unset(G.t7.s17_5) ? linkTo(c, `itc4b1.${head}`, 'B6.m.itc4b1') : undefined;
+        if (code === 'J') return linkTo(c, head, 'C2.total7J');
+        const h = /^H(\d+)$/.exec(code);
+        const line = h ? w.g9.t7H[Number(h[1]) - 1] : undefined;
+        // 7H1 is the suspended ITC reversed (D&T input, both columns); the s.18(6) line is Annexure-5's.
+        if (line?.id === 'h1') return linkTo(c, `sr.${head}`, 'B4.total');
+        if (line?.id === 'cg186') return linkTo(c, head, 'C6.reversal');
+        return undefined;
+      }
+      case '8':
+        if (!head) return undefined;
+        if (code === 'A') return linkTo(c, head, 'B6.itc.t8A');
+        if (code === 'C') return unset(G.t8C) ? self('D1.10–13.13', head) : undefined;
+        if (code === 'H') return linkTo(c, head, 'C2.importGoods');
+        return undefined;
+      case '9': {
+        if (HEAD9[code]) {
+          const k = HEAD9[code];
+          if (key === 'payable') {
+            const s9 = w.g9.t9[k as 'igst'].payableSource;
+            return s9 === 'portal' ? linkTo(c, 'payable', `B6.t9.${k}`) : s9 === '4N' ? self('D1.4.N', HEAD_OF9[k]) : undefined;
+          }
+          return ['cash', 'itcC', 'itcS', 'itcI', 'itcX'].includes(key) ? linkTo(c, key, `B6.t9.${k}`) : undefined;
+        }
+        if (OTHER9[code]) return key === 'payable' || key === 'cash' ? linkTo(c, key, `B6.t9.${OTHER9[code]}`) : undefined;
+        return undefined;
+      }
+      case '10–13':
+        if (code === '12' && head) return linkTo(c, head, 'C2.t12');
+        return undefined;
+      default:
+        return undefined;
+    }
+  };
+}
+
 function gstr9Form(c: Ctx): WorkingPaper {
   const { w } = c;
   const p = new PaperBuilder();
   p.note('(Amount in ₹ in all tables)');
-  formBlocks(p, gstr9FormTables(w), { cellSrc: gstr9CellSrc(c) });
+  p.note('A figure underlined in blue comes from another paper: click it to go to the row it is taken from.');
+  formBlocks(p, gstr9FormTables(w), { cellSrc: gstr9CellSrc(c), links: { prefix: 'D1', link: gstr9CellLink(c) } });
   return paper(c, {
     ref: 'D1', title: 'GSTR-9 — Annual return, Tables 4 to 19', sheet: 'D1 GSTR-9', phase: 'returns', master: 'GSTR-9',
     source: 'Source: the reconciliations (C1–C4), GSTR-9 system-computed figures (B6) and the cells typed on the GSTR-9 step — GSTR-9 of MASTER_PMS',
@@ -1418,12 +1631,20 @@ function gstr9c(c: Ctx): WorkingPaper {
   const W = w.gstr9c;
   const p = new PaperBuilder();
   const n0 = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const amt = (v: number, s?: Src): Cell => (s ? src(v, s) : v);
-  /** Value + tax in the form's column order (Value, Central, State/UT, Integrated, Cess). */
-  const vt = (r: Partial<ValTax> | null | undefined, s?: Src, withValue = true): Cell[] => {
+  const amt = (v: number, s?: Src, link?: SheetLink): Cell => (s || link ? { v, src: s, link } : v);
+  /** Where a figure comes from, by its head ("t", "c", "s", "i", "x"). */
+  type At = (h: 't' | Head) => SheetLink | undefined;
+  /** Value + tax in the form's column order (Value, Central, State/UT, Integrated, Cess), each linked to its source when `at` says. */
+  const vt = (r: Partial<ValTax> | null | undefined, s?: Src, withValue = true, at?: At): Cell[] => {
     const x = r ?? {};
-    return [withValue ? amt(n0(x.t), s) : null, amt(n0(x.c), s), amt(n0(x.s), s), amt(n0(x.i), s), amt(n0(x.x), s)];
+    return [withValue ? amt(n0(x.t), s, at?.('t')) : null, amt(n0(x.c), s, at?.('c')), amt(n0(x.s), s, at?.('s')), amt(n0(x.i), s, at?.('i')), amt(n0(x.x), s, at?.('x'))];
   };
+  const unset = (v: unknown) => v === null || v === undefined;
+  /** The same figure of the row anchored `anchor` (the first that a paper carries). */
+  const from = (...anchors: Array<string | false | undefined>): At => (h) => linkTo(c, h, ...anchors);
+  const self = (anchor: string): SheetLink => ({ sheet: 'D2 GSTR-9C', anchor, col: 't' });
+  /** Part B of Sales, first ledger of the first nature that has one (GSTR-9C 7B–7D1 default to the natures' net). */
+  const partB = (...natures: string[]) => linkTo(c, 't', ...natures.map((n) => `B1.partB.net.${n}`), 'B1.partB');
   const reasons = (code: string, title: string, text: string | undefined, diffKey: string) => {
     p.h3(title, code);
     const r = p.table([], { plain: true });
@@ -1434,33 +1655,41 @@ function gstr9c(c: Ctx): WorkingPaper {
 
   p.h2('Pt. II   Reconciliation of turnover declared in audited annual financial statement with turnover declared in annual return (GSTR-9)');
   p.h3('Reconciliation of gross turnover', '5');
-  const t5 = p.table([['No.', 'Description', 'Amount', wide('Justification', 5)]], { keyCols: 2 });
-  t5.data('5A', T5_LABEL.A, amt(W.t5.A, C.t5A === null || C.t5A === undefined ? undefined : 'typed'));
+  const t5 = p.table([['No.', 'Description', 'Amount', wide('Justification', 5)]], { keyCols: 2, cols: { t: 2 } });
+  // 5A defaults to the audit-report total typed on Sales, else the books' Part A + B.
+  t5.data('5A', T5_LABEL.A, unset(C.t5A) ? amt(W.t5.A, undefined, linkTo(c, 't', w.sales.auditReportTotal !== null && w.sales.auditReportTotal !== undefined ? 'B1.audit' : 'B1.total')) : amt(W.t5.A, 'typed'));
   GSTR9C_T5_KEYS.forEach((k) => {
     const sign = T5_EITHER.includes(k) ? '(+/−)' : GSTR9C_T5_SUB.includes(k) ? '(−)' : '(+)';
-    t5.data(`5${k}`, `${T5_LABEL[k]} ${sign}`, amt(n0(W.t5.rows[k]), 'typed'));
+    // A builder's roll-forward fills its rows (D2A); 5O also carries capital goods sold outside the P&L (C6).
+    const link = (W.builderAdv && linkTo(c, 't', `D2A.5${k}`)) || (k === 'O' && Math.abs(w.cg.valueOutsidePl) >= 0.005 && unset(C.t5OCg) ? linkTo(c, 't', 'C6.outsidePl') : undefined);
+    t5.data(`5${k}`, `${T5_LABEL[k]} ${sign}`, amt(n0(W.t5.rows[k]), 'typed', link));
   });
-  t5.total('5P', `${T5_LABEL.P} (A + B + C + D − E + F − G − H − I + J − K − L + M + N + O)`, W.t5.P);
-  t5.data('5Q', T5_LABEL.Q, amt(W.t5.Q, C.t5Q === null || C.t5Q === undefined ? undefined : 'typed'));
+  t5.total('5P', `${T5_LABEL.P} (A + B + C + D − E + F − G − H − I + J − K − L + M + N + O)`, W.t5.P).at('D2.5P');
+  t5.data('5Q', T5_LABEL.Q, unset(C.t5Q) ? amt(W.t5.Q, undefined, linkTo(c, 't', 'D1.10–13.total')) : amt(W.t5.Q, 'typed'));
   t5.total('5R', `${T5_LABEL.R} (Q − P)`, W.t5.R, wide(just('gstr9c.5R'), 5));
   reasons('6', 'Reasons for un-reconciled difference in annual gross turnover', C.t6Reasons, 'gstr9c.5R');
 
   p.h3('Reconciliation of taxable turnover', '7');
   const t7 = p.table([['No.', 'Description', 'Amount', wide('Justification', 5)]], { keyCols: 2 });
-  t7.data('7A', T7_LABEL.A, W.t7.A);
-  (['B', 'C', 'D', 'D1'] as const).forEach((k) => t7.data(`7${k}`, T7_LABEL[k], amt(W.t7[k], C.t7?.[k] === null || C.t7?.[k] === undefined ? undefined : 'typed')));
+  t7.data('7A', T7_LABEL.A, amt(W.t7.A, undefined, self('D2.5P')));
+  const natures7: Record<'B' | 'C' | 'D' | 'D1', string[]> = { B: ['exempt', 'nil', 'non_gst'], C: ['export_wo', 'sez_wo'], D: ['rcm_outward'], D1: ['ecom_95'] };
+  (['B', 'C', 'D', 'D1'] as const).forEach((k) => t7.data(`7${k}`, T7_LABEL[k], unset(C.t7?.[k]) ? amt(W.t7[k], undefined, partB(...natures7[k])) : amt(W.t7[k], 'typed')));
   t7.sub('7E', `${T7_LABEL.E} (A − B − C − D − D1)`, W.t7.E);
-  t7.data('7F', T7_LABEL.F, amt(W.t7.F, C.t7F === null || C.t7F === undefined ? undefined : 'typed'));
+  // 7F defaults to 4N − 4G − 4G1 + 10 − 11 of GSTR-9: linked to 4N, where it starts.
+  t7.data('7F', T7_LABEL.F, unset(C.t7F) ? amt(W.t7.F, undefined, linkTo(c, 't', 'D1.4.N')) : amt(W.t7.F, 'typed'));
   t7.total('7G', `${T7_LABEL.G} (F − E)`, W.t7.G, wide(just('gstr9c.7G'), 5));
   reasons('8', 'Reasons for un-reconciled difference in taxable turnover', C.t8Reasons, 'gstr9c.7G');
 
   p.h2('Pt. III   Reconciliation of tax paid');
   p.h3('Reconciliation of rate-wise liability and amount payable thereon', '9');
   const t9 = p.table([['No.', 'Description', ...V_HEAD, 'Justification']], { keyCols: 2 });
-  GSTR9C_T9_RATE_KEYS.forEach((k) => t9.data(`9${k}`, T9_LABEL[k], ...vt(W.t9.rows[k], W.t9.derived[k] ? undefined : 'typed')));
+  // A derived rate row adds the Sales Part A ledgers (B1) and RCM categories (B5) of that rate: linked to the first of them.
+  GSTR9C_T9_RATE_KEYS.forEach((k) => t9.data(`9${k}`, T9_LABEL[k], ...(W.t9.derived[k] ? vt(W.t9.rows[k], undefined, true, from(`B1.partA.9c.${k}`, `B5.9c.${k}`)) : vt(W.t9.rows[k], 'typed'))));
   GSTR9C_T9_OTHER_KEYS.forEach((k) => t9.data(`9${k}`, T9_LABEL[k], ...vt(W.t9.rows[k], 'typed', false)));
   t9.total('9P', T9_LABEL.P, ...vt(W.t9.P));
-  t9.data('9Q', T9_LABEL.Q, ...vt(W.t9.Q, C.t9Q === null || C.t9Q === undefined ? undefined : 'typed', false));
+  // 9Q defaults to the tax paid of GSTR-9 Table 9, head by head.
+  const paid9: Record<string, string> = { i: 'D1.9.A', c: 'D1.9.B', s: 'D1.9.C', x: 'D1.9.D' };
+  t9.data('9Q', T9_LABEL.Q, ...(unset(C.t9Q) ? vt(W.t9.Q, undefined, false, (h) => (h === 't' ? undefined : linkTo(c, 'paid', paid9[h]))) : vt(W.t9.Q, 'typed', false)));
   t9.total('9R', `${T9_LABEL.R} (Q − P)`, ...vt(W.t9.R, undefined, false), just('gstr9c.9R'));
   reasons('10', 'Reasons for un-reconciled payment of amount', C.t10Reasons, 'gstr9c.9R');
 
@@ -1480,19 +1709,22 @@ function gstr9c(c: Ctx): WorkingPaper {
   p.h3('Reconciliation of net input tax credit (ITC)', '12');
   const t12 = p.table([['No.', 'Description', ...V_HEAD, 'Justification']], { keyCols: 2 });
   const over12 = (k: 'A' | 'B' | 'C'): Src | undefined => (C[`t12${k}`] === null || C[`t12${k}`] === undefined ? undefined : 'typed');
-  t12.data('12A', T12_LABEL.A, ...vt(W.t12.A, over12('A'), false));
+  // 12A defaults to the books' net ITC (B2), 12C to GSTR-9 Table 13; 12E is 7J. 12B (last-year effect less 6A1) is a difference, not linked.
+  t12.data('12A', T12_LABEL.A, ...vt(W.t12.A, over12('A'), false, over12('A') ? undefined : from('B2.netItc')));
   t12.data('12B', `${T12_LABEL.B} (+)`, ...vt(W.t12.B, over12('B'), false));
-  t12.data('12C', `${T12_LABEL.C} (−)`, ...vt(W.t12.C, over12('C'), false));
+  t12.data('12C', `${T12_LABEL.C} (−)`, ...vt(W.t12.C, over12('C'), false, over12('C') ? undefined : from('D1.10–13.13')));
   t12.sub('12D', `${T12_LABEL.D} (A + B − C)`, ...vt(W.t12.D, undefined, false));
-  t12.data('12E', T12_LABEL.E, ...vt(W.t12.E, undefined, false));
+  t12.data('12E', T12_LABEL.E, ...vt(W.t12.E, undefined, false, from('D1.7.J')));
   t12.total('12F', `${T12_LABEL.F} (E − D)`, ...vt(W.t12.F, undefined, false), just('gstr9c.12F'));
   reasons('13', 'Reasons for un-reconciled difference in ITC', C.t13Reasons, 'gstr9c.12F');
 
   p.h3('Reconciliation of ITC declared in annual return (GSTR-9) with ITC availed on expenses as per audited annual financial statement or books of account', '14');
   const t14 = p.table([['No.', 'Description', ...V_HEAD, 'Justification']], { keyCols: 2 });
-  T14_ROWS.forEach((r) => t14.row(r.k === 'A2' ? 'subtotal' : 'data', [`14${r.k}`, r.label, ...vt(W.t14.rows[r.k])]));
-  t14.total('14R', 'Total amount of eligible ITC availed', ...vt(W.t14.R));
-  t14.data('14S', 'ITC claimed in annual return (GSTR-9)', ...vt(W.t14.S, undefined, false));
+  // Table 14 is the ITC by expense head of the GSTR 9C working (C3), row for row.
+  T14_ROWS.forEach((r) => t14.row(r.k === 'A2' ? 'subtotal' : 'data', [`14${r.k}`, r.label, ...vt(W.t14.rows[r.k], undefined, true, from(`C3.${r.k}`))]));
+  t14.total('14R', 'Total amount of eligible ITC availed', ...vt(W.t14.R, undefined, true, from('C3.R')));
+  t14.data('14S', 'ITC claimed in annual return (GSTR-9)', ...vt(W.t14.S, undefined, false, from('D1.7.J')));
+  // 14T is S − R, the sign C3's T (R − S) reverses: computed here, not linked.
   t14.total('14T', 'Un-reconciled ITC (S − R)', ...vt(W.t14.T, undefined, false), just('gstr9c.14T'));
   reasons('15', 'Reasons for un-reconciled difference in ITC', C.t15Reasons, 'gstr9c.14T');
 
@@ -1544,10 +1776,39 @@ function notice(c: Ctx): WorkingPaper {
     '1': 'portal', '2': 'typed', '4': N.ineligible4D ? 'typed' : 'portal', '5': 'typed',
     '7': N.itcUsed4A5 ? 'typed' : 'portal', '8': N.reversed4B2 ? 'typed' : 'portal',
   };
+  // Links (head columns only; the TOTAL column adds them): the GSTR-9 row a figure is read from (D1), or the year's as-filed GSTR-3B total (B6).
+  const ROW9: Record<string, string> = { i: 'A', c: 'B', s: 'C', x: 'D' };
+  const ROW14: Record<string, string> = { i: 'igst', c: 'cgst', s: 'sgst', x: 'cess' };
+  const unset = (v: unknown) => !v;
+  const outLink = (code: string, h: string): SheetLink | undefined => {
+    switch (code) {
+      case '1': return linkTo(c, h, 'D1.4.N');
+      case '3': return unset(N.deemedSupplies) ? linkTo(c, h, 'D1.16.B') : undefined;
+      case '4': return unset(N.unreturnedGoods) ? linkTo(c, h, 'D1.16.C') : undefined;
+      case '5': return unset(N.pendingDemands) ? linkTo(c, h, 'D1.15.G') : undefined;
+      case '7': return linkTo(c, 'cash', `D1.9.${ROW9[h]}`);
+      // Row 8 adds the four ITC columns of the head's Table 9 row: to the row.
+      case '8': return linkTo(c, undefined, `D1.9.${ROW9[h]}`);
+      case '9': return linkTo(c, 'paid', `D1.14.${ROW14[h]}`);
+      default: return undefined;
+    }
+  };
+  const inLink = (code: string, h: string): SheetLink | undefined => {
+    switch (code) {
+      case '1': return linkTo(c, h, 'D1.8.A');
+      case '2': return unset(N.prevYear8C) ? linkTo(c, h, 'C4.a4.c8') : undefined;
+      case '3': return linkTo(c, h, 'D1.8.C');
+      case '4': return unset(N.ineligible4D) ? linkTo(c, `itc4d.${h}`, 'B6.m.itc4d') : undefined;
+      case '7': return unset(N.itcUsed4A5) ? linkTo(c, `itc4a5.${h}`, 'B6.m.itc4a5') : undefined;
+      case '8': return unset(N.reversed4B2) ? linkTo(c, `itc4b2.${h}`, 'B6.m.itc4b2') : undefined;
+      default: return undefined;
+    }
+  };
   formBlocks(p, [outward, inward], {
     numberRow: true,
     // The TOTAL column adds the heads; only the head columns carry a source.
     cellSrc: (t, ri, col) => (col >= 1 && col <= 4 ? (t === outward ? outSrc : inSrc)[t.rows[ri].code] : undefined),
+    links: { prefix: 'D3', link: (t, row, key) => (TAX_KEYS.has(key) ? (t === outward ? outLink : inLink)(row.code, key) : undefined) },
   });
   return paper(c, {
     ref: 'D3', title: 'NOTICE FORMATE — Outward and inward summary', sheet: 'D3 NOTICE FORMATE', phase: 'returns', master: 'NOTICE FORMATE',
@@ -1733,13 +1994,22 @@ export function buildWorkingPapers(input: WorkingPapersInput): PaperSet {
       if (s === 'manual') return 'typed';
       return s ? 'portal' : 'computed';
     },
+    anchors: new Map(),
   };
-  const papers = [
+  // Built in this order so a form's links find the rows they point at (paper() registers them): the
+  // sources first, then GSTR-9 (D1), the builder roll-forward (D2A), GSTR-9C (D2, reads both) and the Notice format (D3).
+  const head = [
     cover(ctx),
     signOff(ctx),
     plOutput(ctx), plInput(ctx), dto(ctx), dti(ctx), rcm(ctx), portalData(ctx),
     gstr9Output(ctx), gstr9Input(ctx), ...(w.r42.enabled ? [rule42Paper(ctx)] : []), gstr9cHeads(ctx), annexure(ctx), differences(ctx), capitalGoodsSold(ctx),
-    gstr9Form(ctx), gstr9c(ctx), ...(w.gstr9c.builderAdv ? [builderAdvPaper(ctx)] : []), notice(ctx),
+  ];
+  const d1 = gstr9Form(ctx);
+  const d2a = w.gstr9c.builderAdv ? [builderAdvPaper(ctx)] : [];
+  const d2 = gstr9c(ctx);
+  const papers = [
+    ...head,
+    d1, d2, ...d2a, notice(ctx),
     payables(ctx),
     revisionHistory(ctx),
   ];

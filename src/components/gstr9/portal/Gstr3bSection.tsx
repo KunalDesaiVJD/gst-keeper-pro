@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ChevronDown, ClipboardCheck, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -92,7 +93,14 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [polling, setPolling] = useState<{ tries: number; fresh: number } | null>(null);
   const [preview, setPreview] = useState<Gstr3bImport | null>(null);
-  const [tab, setTab] = useState('reco');
+  // Kept in the URL (g3btab) so a figure link on the GSTR-9 step can open the right grid.
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('g3btab') === 'other' ? 'other' : 'reco';
+  const setTab = (v: string) => {
+    const next = new URLSearchParams(params);
+    next.set('g3btab', v);
+    setParams(next, { replace: true });
+  };
   const [details, setDetails] = useState(false);
   const anyCess = FY_MONTHS.some((m) => Object.values(portal.months[m]).some((t) => Math.abs(t.x) > 0.004));
   const [showCess, setShowCess] = useState<boolean>(anyCess);

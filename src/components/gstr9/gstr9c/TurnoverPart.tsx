@@ -8,6 +8,8 @@ import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox } from './bits';
 import { FormGrid } from './FormGrid';
 import { amount, C9_GRID_MAX_H, FormLine, n0, useGoToStep } from './formLines';
+import { builderAdvance, c9Row, g9T4N, g9T5, g9TotalTurnover, salesAudit, salesCapitalGoods } from './sourceTargets';
+import type { FigTarget } from '@/lib/gstr9/figureLinks';
 
 const T5_LABEL: Record<'A' | Gstr9cT5Key | 'P' | 'Q' | 'R', string> = {
   A: 'Turnover (including exports) as per audited financial statement',
@@ -48,6 +50,9 @@ const T7_LABEL = {
   G: 'Unreconciled taxable turnover',
 } as const;
 
+/** Where 7B–7D1 come from: the GSTR-9 Table 5 row (the first of a sum). */
+const T7_LINK: Record<'B' | 'C' | 'D' | 'D1', FigTarget> = { B: g9T5('5D'), C: g9T5('5A'), D: g9T5('5C'), D1: g9T5('5C1') };
+
 const T7_SOURCE: Record<'B' | 'C' | 'D' | 'D1', { short: string; title: string }> = {
   B: { short: 'GSTR-9 5D+5E+5F', title: 'GSTR-9 5D exempted + 5E nil rated + 5F non-GST (books, Sales Part B)' },
   C: { short: 'GSTR-9 5A+5B', title: 'GSTR-9 5A exports + 5B SEZ supplies without payment of tax (books, Sales Part B)' },
@@ -80,6 +85,7 @@ export const Table5Card: React.FC = () => {
         def: { t: def.t5A },
         fKey: 't5A',
         write: (d, v) => ({ ...d, t5A: v ? n0(v.t) : null }),
+        link: salesAudit(auditMissing ? 'total' : 'report'),
         source: auditMissing ? 'Books A+B' : 'Audit report',
         sourceTitle: auditMissing
           ? 'Books: Sales Part A + Part B (PL-OUTPUT D52) — no audit-report total entered on the Sales step'
@@ -97,6 +103,7 @@ export const Table5Card: React.FC = () => {
           mode: 'computed',
           heads: ['t'],
           shown: { t: n0(BA.t5[k as keyof typeof BA.t5]) },
+          link: builderAdvance(k),
           source: 'Advances',
           sourceTitle: 'From the Builder advance roll-forward (Sales › Advances)',
         });
@@ -124,6 +131,7 @@ export const Table5Card: React.FC = () => {
           def: { t: def.t5OCg },
           fKey: 't5OCg',
           write: (d, v) => ({ ...d, t5OCg: v ? n0(v.t) : null }),
+          link: salesCapitalGoods,
           source: 'Annexure-5',
           sourceTitle: 'Sale value of capital goods sold this year that are not in a Sales ledger (Sales · Capital goods sold)',
         });
@@ -150,6 +158,7 @@ export const Table5Card: React.FC = () => {
         def: { t: def.t5Q },
         fKey: 't5Q',
         write: (d, v) => ({ ...d, t5Q: v ? n0(v.t) : null }),
+        link: g9TotalTurnover,
         source: 'GSTR-9 5N+10−11',
         sourceTitle: 'GSTR-9 total turnover: 5N + Table 10 − Table 11',
       },
@@ -225,11 +234,12 @@ export const Table7Card: React.FC = () => {
       def: { t: def.t7[k] },
       fKey: `t7.${k}`,
       write: (d, v) => ({ ...d, t7: { ...d.t7, [k]: v ? n0(v.t) : null } }),
+      link: T7_LINK[k],
       source: T7_SOURCE[k].short,
       sourceTitle: T7_SOURCE[k].title,
     });
     return [
-      { id: 'A', code: '7A', label: T7_LABEL.A, mode: 'computed', heads: ['t'], shown: { t: W.t7.A }, source: '= 5P' },
+      { id: 'A', code: '7A', label: T7_LABEL.A, mode: 'computed', heads: ['t'], shown: { t: W.t7.A }, source: '= 5P', link: c9Row('5', 'P', 't') },
       over('B'),
       over('C'),
       over('D'),
@@ -245,6 +255,7 @@ export const Table7Card: React.FC = () => {
         def: { t: def.t7.F },
         fKey: 't7F',
         write: (d, v) => ({ ...d, t7F: v ? n0(v.t) : null }),
+        link: g9T4N,
         source: 'GSTR-9 4N−4G−4G1+10−11',
         sourceTitle: 'GSTR-9 taxable turnover: 4N − 4G − 4G1 + Table 10 − Table 11',
       },

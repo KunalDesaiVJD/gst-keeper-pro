@@ -106,8 +106,11 @@ export interface WpCell {
   src?: Src;
   /** Cell comment (Excel) — the "=a+b" staff typed. */
   note?: string;
-  /** Internal link to another paper (its sheet name) or an external URL. */
-  link?: { sheet: string } | { url: string };
+  /**
+   * Internal link to another paper (its sheet name) — to the row anchored
+   * `anchor` there, at its column `col`, when given — or an external URL.
+   */
+  link?: WpLink;
   bold?: boolean;
   italic?: boolean;
   muted?: boolean;
@@ -123,6 +126,17 @@ export interface WpCell {
   tick?: boolean;
 }
 
+/**
+ * Where an internal link goes: a paper (Excel A1 / its first PDF page) or, with
+ * `anchor`, the row of that paper anchored so (WpRow.anchor) — the cell under
+ * its column `col` (WpRow.cols / WpTable.cols), else its first cell. An anchor
+ * no row carries falls back to the shorter anchor before its last ".part"
+ * ("B6.t4.b2b" → "B6.t4"), then to the paper; a link to a paper not in the
+ * file (a one-step export) is left out, the figure kept as a plain value.
+ */
+export type SheetLink = { sheet: string; anchor?: string; col?: string };
+export type WpLink = SheetLink | { url: string };
+
 export type Cell = WpCell | string | number | null | undefined;
 
 export type RowKind = 'data' | 'subtotal' | 'total' | 'band';
@@ -132,6 +146,10 @@ export interface WpRow {
   cells: Cell[];
   /** Greyed and struck through (a removed set-off). */
   struck?: boolean;
+  /** Names this row as a link target (SheetLink.anchor); an anchor two rows carry names the first. */
+  anchor?: string | string[];
+  /** Column (0-based, spans counted) of each named figure of an anchored row; overrides the table's. */
+  cols?: Record<string, number>;
 }
 
 export interface WpTable {
@@ -156,6 +174,8 @@ export interface WpTable {
   tall?: boolean;
   /** index = the list of papers (the PDF adds page numbers); log = the revision log (the PDF may shorten it). */
   role?: 'index' | 'log';
+  /** Column (0-based, spans counted) of each named figure ("t", "i", "c", "s", "x", "rc.i" …) of the anchored rows. */
+  cols?: Record<string, number>;
 }
 
 export type WpBlock =
@@ -225,6 +245,25 @@ export interface PaperSet {
 // ---------------------------------------------------------------------------
 
 export const cellOf = (c: Cell): WpCell => (c !== null && typeof c === 'object' ? c : { v: c as WpCell['v'] });
+
+/** An anchor and the shorter ones it falls back to ("B6.t4.b2b", "B6.t4", "B6"). */
+export const anchorChain = (anchor: string): string[] => {
+  const out: string[] = [];
+  let a = anchor;
+  while (a) {
+    out.push(a);
+    const k = a.lastIndexOf('.');
+    a = k > 0 ? a.slice(0, k) : '';
+  }
+  return out;
+};
+
+/** A row's anchors as a list. */
+export const anchorsOf = (row: { anchor?: string | string[] }): string[] => (row.anchor === undefined ? [] : ([] as string[]).concat(row.anchor));
+
+/** A link the file can follow: an URL, or a paper that is in it. */
+export const liveLink = (link: WpLink | undefined, sheets: Set<string>): boolean =>
+  !!link && ('url' in link || sheets.has(link.sheet));
 
 /** Columns a row occupies (spans counted). */
 export const rowWidth = (cells: Cell[]): number => cells.reduce<number>((n, c) => n + Math.max(1, cellOf(c).span ?? 1), 0);

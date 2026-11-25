@@ -8,6 +8,9 @@ import { useWorkspace } from '../WorkspaceContext';
 import { FORM_HEAD_LABELS, FORM_HEADS, particularsCol } from './helpers';
 import { FixedRow, FixedRowDef, lockFollowerRows, useFixedRows } from './hooks';
 import { RowSrc, Src, StepLink } from './shared';
+import { FigLink } from '../figure/FigLink';
+import { fmtMoney } from '../grid/money';
+import { gstr9T10or11, gstr9T5N, itcNextYear } from './sourceTargets2';
 
 const VT_ORDER: Array<keyof ValTax & string> = ['t', 'c', 's', 'i', 'x'];
 
@@ -59,12 +62,13 @@ export const Tables10to13: React.FC = () => {
       <RowSrc step="itc" src={<Src kind="computed" title="MAX(7J − ITC as per books, 0) per head (GSTR 9-INPUT row 27)" />} />
     );
   const matrix: MatrixRow[] = [
-    { key: '12', code: '12', label: 'ITC of the financial year reversed in the next financial year', value: g.t12, note: t12Src },
+    { key: '12', code: '12', label: 'ITC of the financial year reversed in the next financial year', value: g.t12, note: t12Src, link: (h) => (h === 't' ? undefined : itcNextYear('t12', h)) },
     {
       key: '13',
       code: '13',
       label: 'ITC of the financial year availed in the next financial year',
       value: g.t13,
+      link: (h) => (h === 't' ? undefined : itcNextYear('t13', h)),
       note: <RowSrc step="itc" src={<Src kind="typed" title="Typed in ITC reco (suggestion shown there)" />} />,
     },
     {
@@ -73,6 +77,8 @@ export const Tables10to13: React.FC = () => {
       label: 'Total turnover (5N + 10 − 11)',
       value: g.totalTurnover,
       total: true,
+      // 5N + 10 − 11: opens 5N, the base of the figure (10 and 11 are typed just above).
+      link: (h) => gstr9T5N(h),
       note: <Src kind="computed" />,
     },
   ];
@@ -133,10 +139,17 @@ export const Table14: React.FC = () => {
     lockFollowerRows(moneyCol<T14Row>('payable', 'Payable', (r) => r.v.payable, (r, v) => ({ ...r, v: { ...r.v, payable: v ?? 0 } }))),
     lockFollowerRows(moneyCol<T14Row>('paid', 'Paid', (r) => r.v.paid, (r, v) => ({ ...r, v: { ...r.v, paid: v ?? 0 } }))),
     displayCol<T14Row>('diff', 'Payable − Paid', (r) => diff(r), { tone: (r) => diffTone(diff(r), tol) }),
-    displayCol<T14Row>('ref', 'Tax in 10 − 11 (ref.)', (r) => (T14_TAX[r.id as T14Key] ? ref[T14_TAX[r.id as T14Key]!] : null), {
-      width: 140,
-      tone: () => 'muted',
-    }),
+    {
+      ...displayCol<T14Row>('ref', 'Tax in 10 − 11 (ref.)', (r) => (T14_TAX[r.id as T14Key] ? ref[T14_TAX[r.id as T14Key]!] : null), {
+        width: 140,
+        tone: () => 'muted',
+      }),
+      // Opens Tables 10 and 11 (the Next FY tab), at the head's column of Table 10.
+      render: (r) => {
+        const h = T14_TAX[r.id as T14Key];
+        return h ? <FigLink to={gstr9T10or11('t10', h)}>{fmtMoney(ref[h])}</FigLink> : null;
+      },
+    },
   ];
 
   return (

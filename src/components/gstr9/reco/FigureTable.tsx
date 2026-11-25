@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { CellTone } from '../grid/SheetGrid';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
 import { fmtMoney } from '../grid/money';
 import { toneClass } from './helpers';
 
@@ -84,7 +85,7 @@ export const FigureTable: React.FC<{
     const strong = r.kind === 'total' || inFooter;
     const rowBg = strong ? 'bg-muted' : 'bg-card';
     return (
-      <tr key={r.key} className={cn(strong && 'font-semibold', r.muted && 'text-muted-foreground')}>
+      <tr key={r.key} data-fig={figAnchor(label, inFooter ? `footer:${r.key}` : r.key)} className={cn(strong && 'font-semibold', r.muted && 'text-muted-foreground')}>
         <th
           scope="row"
           className={cn(
@@ -108,6 +109,7 @@ export const FigureTable: React.FC<{
           return (
             <td
               key={c.key}
+              data-col={c.key}
               className={cn(
                 'border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap',
                 strong && 'bg-muted',
