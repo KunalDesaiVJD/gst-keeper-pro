@@ -1,4 +1,6 @@
 import React, { useMemo, useState } from 'react';
+import { RemarkEffectPanel } from './remarks/RemarkEffectPanel';
+import { useRemarkEffects } from './remarks/useRemarkEffects';
 import { AlertTriangle, CheckCircle2, CircleDot, EqualApproximately, Info, MessageSquareText, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -179,6 +181,7 @@ const diffSummary = (d: DiffLine): string => {
  */
 export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; className?: string }> = ({ lineKey, compact, className }) => {
   const { justify, readOnly, workings } = useWorkspace();
+  const { read: readRemark } = useRemarkEffects();
   const d = useDiffLine(lineKey);
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
@@ -216,7 +219,7 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
           </Badge>
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-96 space-y-2" align="end">
+      <PopoverContent className="max-h-[80vh] w-96 space-y-2 overflow-y-auto" align="end">
         <div className="text-sm font-semibold">{d.label}</div>
         <div className="text-xs text-muted-foreground">
           {d.direction}: <span className="font-medium text-foreground">{diffSummary(d)}</span>
@@ -237,13 +240,30 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
         {!readOnly && (
           <div className="flex justify-end gap-2">
             {text && (
-              <Button size="sm" variant="ghost" onClick={() => { justify(d.key, '', d.diff); setOpen(false); }}>Clear</Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={d.justification?.effect?.status === 'applied'}
+                title={d.justification?.effect?.status === 'applied' ? 'Undo the applied effect first' : undefined}
+                onClick={() => { justify(d.key, '', d.diff); setOpen(false); }}
+              >
+                Clear
+              </Button>
             )}
-            <Button size="sm" onClick={() => { justify(d.key, draft, d.diff); setOpen(false); }} disabled={!draft.trim()}>
+            <Button
+              size="sm"
+              onClick={() => {
+                justify(d.key, draft, d.diff);
+                // The remark is read at once (rules, then the GST Assistant); the pop-over stays open to show the effect.
+                if (draft.trim() && draft.trim() !== text) void readRemark(d, draft);
+              }}
+              disabled={!draft.trim()}
+            >
               Save reason
             </Button>
           </div>
         )}
+        <RemarkEffectPanel line={d} draftText={draft} onUseReason={(t) => setDraft(t)} />
       </PopoverContent>
     </Popover>
   );

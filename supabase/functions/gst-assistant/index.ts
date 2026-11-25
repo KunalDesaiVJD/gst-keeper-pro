@@ -18,12 +18,18 @@
 // fields once the user approves; the screen's own Save stores them, so every
 // lock, guard and the change log hold). Every request's tokens are recorded per
 // user in assistant_usage.
+//
+// Mode 'remark_effect' (body.mode, 25 Nov 2026): { actorId, sessionsEndedAt,
+// mode, clientId, financialYear, line, remark, figures, carried } → the GSTR-9
+// effect of an Annual Return difference line's remark, { ok, effect } (one
+// tool, record_effect; remarkEffect.ts). Same staff check, switch and key.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveClaudeKey } from '../_shared/claudeKey.ts';
 import { AI_MODEL } from '../_shared/aiModel.ts';
 import { assistantTurn, makeClient, scrub, type Msg, type SystemBlock, type Tool, type TurnUsage } from './claude.ts';
 import { checkFilters, cleanRows, searchDocs, selectList, tableAllowed, type DocSection } from './readRules.ts';
+import { parseRemarkRequest, RECORD_EFFECT_TOOL, remarkSystemPrompt, remarkUserText, validateEffect, type RemarkEffect } from './remarkEffect.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -276,15 +282,13 @@ function compactHistory(msgs: Msg[]): Msg[] {
   });
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST') return json(405, { ok: false, error: 'Use POST.' });
-  let body: Record<string, unknown>;
-  try { body = await req.json(); } catch { return json(400, { ok: false, error: 'The request was not JSON.' }); }
+// ── Shared by both modes: who is asking, the firm's switch, and the key.
+interface Gate { actorId: string; role: string; who: { name: string; role: string }; settings: { enabled?: boolean; allow_fill?: boolean } | null }
 
+/** Staff only, not signed out everywhere since, and the assistant switched on. */
+async function staffGate(sb: SupabaseClient, body: Record<string, unknown>): Promise<Gate | Response> {
   const actorId = typeof body.actorId === 'string' ? body.actorId : '';
   if (!UUID_RE.test(actorId)) return json(401, { ok: false, error: 'Please log in to use the assistant.' });
-  const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
   // Who is asking: staff only, and not signed out everywhere since.
   const { data: roleRows } = await sb.from('user_roles').select('role').eq('user_id', actorId);
@@ -299,6 +303,89 @@ Deno.serve(async (req) => {
 
   const { data: settings } = await sb.from('assistant_settings').select('enabled, allow_fill').eq('id', true).maybeSingle();
   if (settings && !settings.enabled) return json(200, { ok: false, error: 'The GST Assistant is switched off (Settings → AI Assistant).' });
+  return { actorId, role, who, settings: settings ?? null };
+}
+
+/** The Claude client with the saved key (or the secret), or the answer saying none is saved. */
+async function claudeClient(sb: SupabaseClient): Promise<ReturnType<typeof makeClient> | Response> {
+  const key = await resolveClaudeKey(async () => (await sb.rpc('ai_api_key_read')).data as { key?: string | null } | null);
+  if (!key.key) return json(200, { ok: false, error: 'No Claude API key is saved. A GST Manager or the superadmin saves it under Notices → Reply Factory → AI → Claude API key.' });
+  return makeClient(key.key);
+}
+
+// ── Mode 'remark_effect' (25 Nov 2026): the GSTR-9 effect of an Annual Return
+// difference line's remark (remarkEffect.ts). One question, one tool, no reads,
+// no assistant_actions; it never writes a working: the app applies the
+// suggestion only when the user presses Apply.
+async function remarkEffectMode(sb: SupabaseClient, body: Record<string, unknown>, gate: Gate): Promise<Response> {
+  const parsed = parseRemarkRequest(body);
+  if ('error' in parsed) return json(200, { ok: false, error: parsed.error });
+  const blocked = await optedOut(sb);
+  if (blocked.has(parsed.clientId)) return json(200, { ok: false, error: 'This client opted out of AI: the remark is not sent to the assistant.' });
+
+  const client = await claudeClient(sb);
+  if (client instanceof Response) return client;
+
+  const system = remarkSystemPrompt(parsed.financialYear);
+  const tools = [RECORD_EFFECT_TOOL];
+  const messages: Msg[] = [{ role: 'user', content: remarkUserText(parsed) }];
+  const total: TurnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let calls = 0;
+  let model = AI_MODEL;
+  let effect: RemarkEffect | null = null;
+  let failure: string | null = null;
+
+  try {
+    // One call; a second only when the first did not call record_effect with a usable input.
+    for (let attempt = 0; attempt < 2 && !effect; attempt += 1) {
+      const { msg, usage, model: m } = await assistantTurn(client, { system, tools, messages });
+      calls += 1;
+      model = m;
+      total.input += usage.input; total.output += usage.output; total.cacheRead += usage.cacheRead; total.cacheWrite += usage.cacheWrite;
+      const uses = msg.content.filter((b) => b.type === 'tool_use') as { id: string; name: string; input: unknown }[];
+      const use = uses.find((u) => u.name === 'record_effect');
+      if (use) {
+        const v = validateEffect(use.input);
+        if (!('error' in v)) { effect = v; break; }
+        failure = `The suggestion could not be used: ${v.error}`;
+        messages.push({ role: 'assistant', content: msg.content as never });
+        messages.push({ role: 'user', content: [
+          ...uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: u.id === use.id, content: u.id === use.id ? `Refused: ${v.error} Call record_effect again with a corrected input.` : 'Unknown tool.' })),
+        ] });
+      } else {
+        failure = 'The assistant did not give an effect.';
+        messages.push({ role: 'assistant', content: msg.content as never });
+        messages.push({ role: 'user', content: uses.length
+          ? uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: true, content: 'Unknown tool. Call record_effect.' }))
+          : 'Call record_effect now with your decision.' });
+      }
+    }
+    if (effect) failure = null;
+  } catch (e) {
+    failure = scrub(String((e as Error)?.message ?? e)).slice(0, 400);
+  }
+
+  await sb.from('assistant_usage').insert({
+    user_id: gate.actorId, user_name: gate.who.name, user_role: gate.role, conversation_id: crypto.randomUUID(), route: '/annual-return', model, calls,
+    input_tokens: total.input, output_tokens: total.output, cache_read_tokens: total.cacheRead, cache_write_tokens: total.cacheWrite,
+    status: effect ? 'ok' : 'error', error: effect ? null : failure,
+  });
+
+  if (!effect) return json(200, { ok: false, error: `The assistant could not read the remark: ${failure ?? 'no effect given.'}` });
+  return json(200, { ok: true, effect });
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method !== 'POST') return json(405, { ok: false, error: 'Use POST.' });
+  let body: Record<string, unknown>;
+  try { body = await req.json(); } catch { return json(400, { ok: false, error: 'The request was not JSON.' }); }
+
+  const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const gate = await staffGate(sb, body);
+  if (gate instanceof Response) return gate;
+  const { actorId, role, who, settings } = gate;
+  if (body.mode === 'remark_effect') return remarkEffectMode(sb, body, gate);
   const allowFill = settings?.allow_fill !== false;
 
   const question = typeof body.question === 'string' ? body.question.trim().slice(0, 4000) : '';
@@ -309,9 +396,8 @@ Deno.serve(async (req) => {
   const page = (body.page && typeof body.page === 'object' ? body.page : {}) as Record<string, unknown>;
   const route = typeof page.route === 'string' ? page.route.slice(0, 200) : null;
 
-  const key = await resolveClaudeKey(async () => (await sb.rpc('ai_api_key_read')).data as { key?: string | null } | null);
-  if (!key.key) return json(200, { ok: false, error: 'No Claude API key is saved. A GST Manager or the superadmin saves it under Notices → Reply Factory → AI → Claude API key.' });
-  const client = makeClient(key.key);
+  const client = await claudeClient(sb);
+  if (client instanceof Response) return client;
 
   const kn = await loadKnowledge(sb);
   const blocked = await optedOut(sb);

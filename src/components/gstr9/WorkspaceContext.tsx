@@ -468,8 +468,10 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const justify = useCallback<WorkspaceValue['justify']>((lineKey, text, diffAt) => {
     update('justifications', (j) => {
       const lines = { ...j.lines };
+      // The effect read from the remark stays with it (an applied one can only be undone from there); a changed remark is read again.
+      const effect = lines[lineKey]?.effect;
       if (!text.trim()) delete lines[lineKey];
-      else lines[lineKey] = { text, diffAt, by: userName, at: new Date().toISOString() } satisfies Justification;
+      else lines[lineKey] = { text, diffAt, by: userName, at: new Date().toISOString(), ...(effect ? { effect } : {}) } satisfies Justification;
       return { ...j, lines };
     }, { action: text.trim() ? 'Reason written' : 'Reason cleared' });
   }, [update, userName]);

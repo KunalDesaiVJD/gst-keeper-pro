@@ -719,12 +719,56 @@ export interface NoticeDoc {
 // Justifications + settings
 // ---------------------------------------------------------------------------
 
+/**
+ * What a remark on a difference line means for GSTR-9 (remarkEffects.ts, §10 of
+ * docs/GSTR9_9C_WORKINGS.md). next_fy_* are this FY's Part V tables (10, 11, 12,
+ * 13): given effect in next FY's returns, and carried into next FY's working.
+ */
+export type RemarkEffectKind =
+  | 'next_fy_t10'
+  | 'next_fy_t11'
+  | 'next_fy_t12'
+  | 'next_fy_t13'
+  | 'prev_fy_itc'
+  | 'pay_drc03'
+  | 'timing'
+  | 'no_effect';
+
+export interface RemarkEffect {
+  kind: RemarkEffectKind;
+  /** Positive amounts; taxable value only for Tables 10 / 11. */
+  amount: ValTax;
+  summary: string;
+  /** Where it goes in this FY's GSTR-9. */
+  thisFy: string;
+  /** What next FY's GSTR-9 does with it (null: nothing). */
+  nextFy: string | null;
+  source: 'ai' | 'rules';
+  confidence: 'high' | 'medium' | 'low';
+  /** What the reading leaves unclear, if anything. */
+  question?: string;
+  /** The remark as it read when suggested — a changed remark is read again. */
+  remark: string;
+  suggestedAt: string;
+  status: 'suggested' | 'applied' | 'dismissed';
+  /** Applied: whether the amount was added to the table (false: it was already in it, recorded only). */
+  wrote?: boolean;
+  /** Applied: the amount added to the table, taken off again by Undo. */
+  written?: ValTax;
+  /** Applied to a Table 12 still on its computed figure: Undo puts it back on the computed figure. */
+  restoreComputed?: boolean;
+  decidedBy?: string | null;
+  decidedAt?: string;
+}
+
 export interface Justification {
   text: string;
   /** The difference (per head) the justification was written against — reopens when it moves. */
   diffAt: ValTax;
   by: string | null;
   at: string;
+  /** The effect read from the remark (suggested, applied or dismissed). Optional: older reasons have none. */
+  effect?: RemarkEffect;
 }
 
 export interface JustificationsDoc {

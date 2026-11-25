@@ -717,3 +717,14 @@ the figures as §6 items 34–37 say. **Annexure-5** (Annexures step, and paper
 C6 of the Excel / PDF working papers) is the per-asset computation schedule.
 Checks: `node --experimental-strip-types scripts/verify-capital-goods-sold.mjs`.
 
+
+## 10. Remarks read into GSTR-9 effects (25 Nov 2026)
+
+Kunal asked (25 Nov 2026) that a remark written on a difference line be read and its GSTR-9 effect suggested, and that a remark saying the effect was given in the next FY be carried into the next FY's GSTR-9.
+
+- **Reading.** Saving a reason reads it at once: first by rules (`src/lib/gstr9/remarkEffects.ts`, `suggestFromRules`: months or FYs named against the FY, ITC or outward by the line, reversed / credit note / DRC-03 / timing words, the line's difference or one named amount spread over its heads), then by the GST Assistant (Edge Function `gst-assistant`, mode `remark_effect`, `remarkEffect.ts`), whose reading replaces the rules' if the remark is unchanged. A client with `ai_opt_out`, the assistant switched off or no key: the rules' reading stays. The reading is stored on the reason (`Justification.effect`) and shown in the reason pop-over and the Differences list.
+- **Effects.** `next_fy_t10` (Table 10), `next_fy_t11` (Table 11), `next_fy_t12` (Table 12), `next_fy_t13` (Table 13, and 8C follows it), `prev_fy_itc` (6A1), `pay_drc03` (Payables), `timing`, `no_effect`.
+- **Nothing changes until a person applies it.** The kind and amount can be edited first. *Add to Table N* adds the amount to that table of this FY's GSTR-9 (a Table 12 still on its computed figure is fixed as typed at computed + amount); *Already in Table N* records it without writing; *Dismiss* drops it. *Undo* takes off exactly what was added (and puts Table 12 back on its computed figure). A reason with an applied effect cannot be cleared before Undo; a changed remark is flagged and read again. Both writes go through the working's own saves (locks, source locks, change log).
+- **Next FY.** The FY after reads the previous FY's *applied* next-FY effects (`carriedEffects`): a card on the Overview and Annexure-4 lists them with where each goes this year (Table 13: 6A1, not 6B; Table 12: out of Table 7; Tables 10 / 11: out of Table 4) and compares their totals with Annexure-4 (fill it from last year's working, which now holds them); and the reason pop-over of an ITC or outward line offers a ready reason built from them (*Use as reason*). Nothing in the next FY is written by itself.
+- **Exports.** C5 Differences carries the effect, its next-FY treatment and its status (Big4 papers, same layout).
+- Check: `node --experimental-strip-types scripts/verify-remark-effects.mjs`.

@@ -576,7 +576,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "Note",
     "title": null,
     "tabs": [],
-    "buttons": []
+    "buttons": [
+     "Use as reason",
+     "Read the remark",
+     "Undo",
+     "Read again",
+     "Dismiss",
+     "Already in",
+     "Add to",
+     "Accept"
+    ]
    }
   ]
  },
@@ -611,7 +620,16 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "SectionCard",
     "title": null,
     "tabs": [],
-    "buttons": []
+    "buttons": [
+     "Use as reason",
+     "Read the remark",
+     "Undo",
+     "Read again",
+     "Dismiss",
+     "Already in",
+     "Add to",
+     "Accept"
+    ]
    },
    {
     "tab": "Projects",

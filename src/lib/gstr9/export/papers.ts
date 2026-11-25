@@ -6,6 +6,8 @@
 // the working used, the official GSTR-9C tables, payables with their set-offs,
 // and the revision history.
 
+import { KIND_META, amountText, effectOutOfDate } from '../remarkEffects';
+import type { RemarkEffect } from '../types';
 import { describeChange, hiddenFromClients, SHEET_LABEL, type ChangeLogEntry } from '../audit';
 import {
   addT,
@@ -1149,12 +1151,23 @@ const statusLabel = (d: DiffLine, tolerance: number): WpCell => {
   return { v: text, fill };
 };
 
+/** The effect read from a line's remark (remarkEffects.ts): what, next FY, and who decided. */
+function effectCells(text: string | undefined, e: RemarkEffect | undefined): [string, string, string] {
+  if (!e || !text?.trim()) return ['', '', ''];
+  const m = KIND_META[e.kind];
+  const what = `${m.label}${m.target ? `: ${amountText(e.amount, m.withTaxable)}` : ''}`;
+  const status = e.status === 'applied'
+    ? `${e.wrote ? `Added to ${m.short}` : 'Recorded'}${e.decidedBy ? ` by ${e.decidedBy}` : ''}${e.decidedAt ? `, ${fmtDateTime(e.decidedAt)}` : ''}`
+    : e.status === 'dismissed' ? 'Dismissed' : `Suggested (${e.source === 'ai' ? 'GST Assistant' : 'rules'}), not applied`;
+  return [what, m.nextFy ? e.nextFy || m.nextFy : '', effectOutOfDate(text, e) ? `${status}; remark changed since` : status];
+}
+
 function differences(c: Ctx): WorkingPaper {
   const { w } = c;
   const p = new PaperBuilder();
   p.h1(`EVERY DIFFERENCE LINE — a line needs a reason when any head exceeds ₹${w.tolerance}. Open lines: ${w.openCount}.`);
-  const t = p.table([['STEP', 'LINE', 'DIRECTION', 'LEFT SIDE', 'RIGHT SIDE', 'VALUE DIFF', 'IGST', 'CGST', 'SGST', 'CESS', 'STATUS', 'JUSTIFICATION', 'BY', 'WHEN', 'LINE KEY']], {
-    freeze: true, autoFilter: true, keyCols: 2, groups: [[2, 3, 4], [5, 6, 7, 8, 9], [10, 11], [12, 13, 14]],
+  const t = p.table([['STEP', 'LINE', 'DIRECTION', 'LEFT SIDE', 'RIGHT SIDE', 'VALUE DIFF', 'IGST', 'CGST', 'SGST', 'CESS', 'STATUS', 'JUSTIFICATION', 'EFFECT OF THE REMARK', 'NEXT FY', 'EFFECT STATUS', 'BY', 'WHEN', 'LINE KEY']], {
+    freeze: true, autoFilter: true, keyCols: 2, groups: [[2, 3, 4], [5, 6, 7, 8, 9], [10, 11], [12, 13, 14], [15, 16, 17]],
   });
   w.diffs.forEach((d) => {
     const j = d.justification;
@@ -1168,6 +1181,7 @@ function differences(c: Ctx): WorkingPaper {
       ...(d.hasTax ? [d.diff.i, d.diff.c, d.diff.s, d.diff.x] : [null, null, null, null]),
       statusLabel(d, w.tolerance),
       j?.text?.trim() ?? '',
+      ...effectCells(j?.text, j?.effect),
       j?.text?.trim() ? j.by ?? '' : '',
       j?.text?.trim() ? fmtDateTime(j.at) : '',
       d.key,
@@ -1176,7 +1190,7 @@ function differences(c: Ctx): WorkingPaper {
   return paper(c, {
     ref: 'C5', title: 'Differences and reasons', sheet: 'C5 DIFFERENCES', phase: 'reconcile', master: 'DIFFERENCES',
     source: 'Source: every difference line of the working (books − portal), its status and the reason recorded against it',
-    widths: [30, 60, 18, 26, 26, 16, 16, 16, 16, 14, 26, 70, 16, 20, 18],
+    widths: [30, 60, 18, 26, 26, 16, 16, 16, 16, 14, 26, 70, 48, 48, 26, 16, 20, 18],
   }, p);
 }
 

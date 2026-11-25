@@ -7,6 +7,7 @@ import { computeWorkings, taxOf, tin } from '@/lib/gstr9/engine';
 import { loadPreviousYear } from '@/lib/gstr9/store';
 import type { AnnexuresDoc } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
+import { CarriedEffectsCard } from '../remarks/CarriedEffectsCard';
 import { MatrixTable, SectionCard, useDiffLine } from '../ui';
 import { FixedTaxGrid, type FixedTaxRow } from './FixedTaxGrid';
 import { explicitTaxIn, hasAmount, previousFY } from './taxRows';
@@ -111,6 +112,7 @@ const Annexure4: React.FC = () => {
           Last Year Effect on the Duties &amp; Taxes step. The status is for information and never blocks the lock.
         </p>
       </div>
+      <CarriedEffectsCard />
     </SectionCard>
   );
 };
