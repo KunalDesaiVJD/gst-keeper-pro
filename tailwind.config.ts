@@ -52,6 +52,10 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        "cell-input": {
+          DEFAULT: "hsl(var(--cell-input))",
+          foreground: "hsl(var(--cell-input-foreground))",
+        },
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",

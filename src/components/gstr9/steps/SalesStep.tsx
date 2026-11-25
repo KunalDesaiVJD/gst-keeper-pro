@@ -13,6 +13,8 @@ import AuditReconciliation from '../sales/AuditReconciliation';
 import Table5Preview from '../sales/Table5Preview';
 import { CapitalGoodsSold } from '../sales/CapitalGoodsSold';
 import BuilderAdvances from '../sales/BuilderAdvances';
+import { FigLink } from '../figure/FigLink';
+import { salesAuditLine, salesPartATotal, salesPartBTotal } from '../figure/targetsData';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -49,20 +51,20 @@ const SalesKpis: React.FC = () => {
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
       <KpiTile
         label="Part A — taxable value"
-        value={fmtMoney(s.partA.t)}
+        value={<FigLink to={salesPartATotal('taxable')}>{fmtMoney(s.partA.t)}</FigLink>}
         hint={`${plural(docs.sales.partA.length, 'ledger')}${returns ? ` · ${plural(returns, 'return')}` : ''}`}
       />
-      <KpiTile label="Part B — non-taxable" value={fmtMoney(s.partBTotal)} hint={plural(docs.sales.partB.length, 'ledger')} />
-      <KpiTile label="Books total (A + B)" value={fmtMoney(s.total)} hint="PL-OUTPUT D52" />
+      <KpiTile label="Part B — non-taxable" value={<FigLink to={salesPartBTotal}>{fmtMoney(s.partBTotal)}</FigLink>} hint={plural(docs.sales.partB.length, 'ledger')} />
+      <KpiTile label="Books total (A + B)" value={<FigLink to={salesAuditLine('total')}>{fmtMoney(s.total)}</FigLink>} hint="PL-OUTPUT D52" />
       <KpiTile
         label="As per audit report"
-        value={s.auditReportTotal === null ? <span className="text-muted-foreground">Not entered</span> : fmtMoney(s.auditReportTotal)}
+        value={s.auditReportTotal === null ? <span className="text-muted-foreground">Not entered</span> : <FigLink to={salesAuditLine('report')}>{fmtMoney(s.auditReportTotal)}</FigLink>}
         hint="PL-OUTPUT D54"
         tone={s.auditReportTotal === null ? 'warn' : 'neutral'}
       />
       <KpiTile
         label="Difference (Report − Books)"
-        value={s.auditDiff === null ? <span className="text-muted-foreground">—</span> : fmtMoney(s.auditDiff)}
+        value={s.auditDiff === null ? <span className="text-muted-foreground">—</span> : <FigLink to={salesAuditLine('diff')}>{fmtMoney(s.auditDiff)}</FigLink>}
         hint={diffHint}
         tone={diffTone}
       />

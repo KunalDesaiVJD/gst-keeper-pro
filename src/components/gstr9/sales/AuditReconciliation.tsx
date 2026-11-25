@@ -3,6 +3,7 @@ import { useWorkspace } from '../WorkspaceContext';
 import { JustifyControl, SectionCard, useDiffLine } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
+import { linkedMoney, salesPartATotal, salesPartBTotal } from '../figure/targetsData';
 
 interface AuditRow {
   id: 'partA' | 'partB' | 'total' | 'report';
@@ -60,10 +61,21 @@ const AuditReconciliation: React.FC = () => {
       nullable: true,
       editable: (r) => r.id === 'report',
     });
+    // Parts A and B are the grids' totals: they open them. The report total stays a typed cell.
+    const partLink = { partA: salesPartATotal('taxable'), partB: salesPartBTotal } as const;
     return [
       { key: 'label', header: 'Particulars', type: 'display', align: 'left', width: 230, value: (r) => r.label },
       { key: 'cell', header: 'Excel', type: 'display', align: 'left', width: 52, value: (r) => r.cell, tone: () => 'muted' },
-      { ...amount, placeholder: (r) => (r.id === 'report' ? 'Type the audit report total' : null) },
+      {
+        ...amount,
+        placeholder: (r) => (r.id === 'report' ? 'Type the audit report total' : null),
+        render: (r) =>
+          r.id === 'partA' || r.id === 'partB'
+            ? linkedMoney(r.value, partLink[r.id])
+            : r.value === null
+              ? <span className="italic text-muted-foreground">{r.id === 'report' ? 'Type the audit report total' : ''}</span>
+              : linkedMoney(r.value, undefined, r.f?.amount),
+      },
       {
         key: 'status',
         header: 'Status',

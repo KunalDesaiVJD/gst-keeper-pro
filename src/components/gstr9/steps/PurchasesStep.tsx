@@ -15,6 +15,8 @@ import { PurchaseSectionGrid } from '../purchases/PurchaseSectionGrid';
 import { PurchasesSummary } from '../purchases/PurchasesSummary';
 import { fillFromRate, rateFlag, SECTION_META, SECTIONS } from '../purchases/purchaseRows';
 import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
+import { FigLink } from '../figure/FigLink';
+import { dutiesInputFooter, purchasesSummaryRow } from '../figure/targetsData';
 
 const HEAD_NAMES = { i: 'IGST', c: 'CGST', s: 'SGST', x: 'Cess' } as const;
 
@@ -96,10 +98,10 @@ const PurchasesStep: React.FC = () => {
       <OpenDifferences step="purchases" />
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
-        <KpiTile label="ITC as per P&L (row 71)" value={fmtMoney(totalTax(p.totalPl))} hint={`${rows.length} ledger${rows.length === 1 ? '' : 's'} · value ${fmtMoney(p.totalPl.t)}`} />
-        <KpiTile label="Net ITC for the year (row 79)" value={fmtMoney(totalTax(p.netItc))} hint="After suspended ITC and RCM" />
-        <KpiTile label="As per Duties & Taxes (row 80)" value={fmtMoney(totalTax(p.dtNet))} hint="Net, after last-year effect" />
-        <KpiTile label="Difference P&L − D&T (row 81)" value={fmtMoney(totalTax(diff))} hint={diffHint} tone={diffTone} />
+        <KpiTile label="ITC as per P&L (row 71)" value={<FigLink to={purchasesSummaryRow('71')}>{fmtMoney(totalTax(p.totalPl))}</FigLink>} hint={`${rows.length} ledger${rows.length === 1 ? '' : 's'} · value ${fmtMoney(p.totalPl.t)}`} />
+        <KpiTile label="Net ITC for the year (row 79)" value={<FigLink to={purchasesSummaryRow('79')}>{fmtMoney(totalTax(p.netItc))}</FigLink>} hint="After suspended ITC and RCM" />
+        <KpiTile label="As per Duties & Taxes (row 80)" value={<FigLink to={dutiesInputFooter('netItc')}>{fmtMoney(totalTax(p.dtNet))}</FigLink>} hint="Net, after last-year effect" />
+        <KpiTile label="Difference P&L − D&T (row 81)" value={<FigLink to={purchasesSummaryRow('81')}>{fmtMoney(totalTax(diff))}</FigLink>} hint={diffHint} tone={diffTone} />
         <KpiTile
           label="Rate checks"
           value={flagged.length}

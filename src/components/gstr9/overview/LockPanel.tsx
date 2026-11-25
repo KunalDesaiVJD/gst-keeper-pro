@@ -27,7 +27,9 @@ import { StageTrack } from '../signoff/StageTrack';
 import { StaffPicker } from '../signoff/StaffPicker';
 import { SelfCheckPanel } from '../selfcheck/SelfCheckList';
 import { useSelfCheck } from '../selfcheck/useSelfCheck';
-import { diffTabParams, fmtWhen, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax, useGoToStep } from './steps';
+import { useGoFigure } from '../figure/FigLink';
+import { diffTarget } from '../figure/targetsFinish';
+import { fmtWhen, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax } from './steps';
 
 const SHOW_BLOCKERS = 6;
 /** ?signoff=verify|lock — the register's "Verify in working" / "Review & lock in working" open the dialog. */
@@ -48,7 +50,7 @@ export const LockPanel: React.FC = () => {
   const {
     workings: w, client, financialYear, isStaff, signoffState: s, me, signoff, setStatus, refreshSignoff, period,
   } = useWorkspace();
-  const go = useGoToStep();
+  const goFig = useGoFigure();
   const [params, setParams] = useSearchParams();
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -305,7 +307,7 @@ export const LockPanel: React.FC = () => {
             <ul className="mt-1 space-y-0.5">
               {blockers.slice(0, SHOW_BLOCKERS).map((d) => (
                 <li key={d.key}>
-                  <button type="button" onClick={() => go(d.step, diffTabParams(d))}
+                  <button type="button" onClick={() => goFig(diffTarget(d))}
                     className="inline-flex items-center gap-1 text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}
                     <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden />

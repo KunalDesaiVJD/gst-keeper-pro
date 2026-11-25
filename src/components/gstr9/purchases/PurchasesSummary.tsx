@@ -7,6 +7,7 @@ import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
 import { taxInCols } from '../grid/columns';
 import { MatrixTable, Note, SectionCard, type MatrixRow } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { dutiesInputFooter, dutiesSuspendedNet, rcmPartB } from '../figure/targetsData';
 
 /** Small inline link to another step (keeps the client in the URL — the caller builds the params). */
 export const StepLink: React.FC<{ onClick: () => void; children: React.ReactNode }> = ({ onClick, children }) => (
@@ -30,6 +31,8 @@ type AdjRow = { id: string; v: TaxIn; f?: Formulas };
 export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo }) => {
   const { docs, workings, update, readOnly, financialYear } = useWorkspace();
   const p = workings.purchases;
+  // Row 77 is RCM Part B less the expenses with no ITC; Part B's own total still holds them.
+  const rcmNoItc = Object.values(workings.rcm.byItcTable.none).some((v) => Math.abs(Number(v) || 0) > 0.004);
 
   const rows: MatrixRow[] = [
     { key: '71', code: '71', label: 'Total ITC as per P&L', value: p.totalPl, total: true },
@@ -39,6 +42,7 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
       label: 'Less: suspended ITC as per Duties & Taxes (Dr − Cr)',
       value: p.suspended,
       indent: true,
+      link: (h) => dutiesSuspendedNet(h),
       note: <StepLink onClick={() => onGo('duties')}>from the Duties &amp; Taxes step</StepLink>,
     },
     {
@@ -55,6 +59,7 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
       label: 'Add: RCM credit (books — RCM Part B)',
       value: p.rcmCredit,
       indent: true,
+      link: (h) => rcmPartB('total', `b.${h}`, rcmNoItc),
       note: <StepLink onClick={() => onGo('rcm')}>from the RCM step</StepLink>,
     },
     { key: '79', code: '79', label: `Net ITC for FY ${financialYear}`, value: p.netItc, total: true },
@@ -63,6 +68,7 @@ export const PurchasesSummary: React.FC<{ onGo: (step: StepKey) => void }> = ({ 
       code: '80',
       label: 'As per Duties & Taxes (net, after last-year effect)',
       value: p.dtNet,
+      link: (h) => dutiesInputFooter('netItc', h),
       note: <StepLink onClick={() => onGo('duties')}>Duties &amp; Taxes</StepLink>,
     },
     { key: '81', code: '81', label: 'Difference (P&L − D&T)', value: p.diffVsDt, signed: true, total: true, diffKey: 'purchases.dt' },

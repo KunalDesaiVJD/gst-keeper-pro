@@ -10,6 +10,7 @@ import { displayCol } from '../grid/columns';
 import { fmtRate } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { linkedMoney, rcmPartB } from '../figure/targetsData';
 import { CREDIT_USE_LABEL } from '@/lib/gstr9/rule42';
 import type { CreditUse } from '@/lib/gstr9/types';
 import { ITC_TABLE_OPTIONS, ITC_TYPE_OPTIONS, itcTableOf, newRcmCategory, previousFY, SHEET_BLOCKS, SUPPLY_OPTIONS } from './rcmShared';
@@ -131,7 +132,11 @@ const RcmCategoriesCard: React.FC = () => {
         return e.text && e.text !== 'common' && e.text in CREDIT_USE_LABEL ? { ...rest, use: e.text as CreditUse } : rest;
       },
     },
-    displayCol<RcmCategory>('taxable', 'Taxable (year)', (r) => workings.rcm.categories[r.id]?.total.t ?? 0, { width: 130 }),
+    {
+      ...displayCol<RcmCategory>('taxable', 'Taxable (year)', (r) => workings.rcm.categories[r.id]?.total.t ?? 0, { width: 130 }),
+      // The expense's column total on Part B.
+      render: (r) => linkedMoney(workings.rcm.categories[r.id]?.total.t ?? 0, rcmPartB('total', `cat:${r.id}`)),
+    },
     {
       key: 'rate',
       header: 'Rate %',

@@ -10,6 +10,8 @@ import { displayCol, lockSgst, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { fmtIsoDate, parseDateInput } from '../sales/CapitalGoodsSold';
 import { taxToIn, withFormulas } from './helpers';
+import { FigLink } from '../figure/FigLink';
+import { rule42Period } from '../figure/targetsReco';
 
 // ITC reco › Rule 42/43 — the Rule 43 working (src/lib/gstr9/rule43.ts): the
 // client's capital goods register (shared with s.18(6) on Sales › Capital
@@ -157,7 +159,8 @@ const Rule43Card: React.FC = () => {
   const pCols: GridColumn<PRow>[] = [
     { key: 'period', header: 'Period', type: 'display', align: 'left', width: 120, sticky: true, value: (r) => r.p.label },
     displayCol<PRow>('tr', 'Tr = Σ Tm', (r) => r.p.tr[head], { group: 'Rule 43', width: 116 }),
-    { key: 'ratio', header: 'E ÷ F', type: 'display', group: 'Rule 43', width: 90, value: (r) => pct(r.p.ratio), title: () => 'The period’s E ÷ F from the Rule 42 working' },
+    { key: 'ratio', header: 'E ÷ F', type: 'display', group: 'Rule 43', width: 90, value: (r) => pct(r.p.ratio), title: () => 'The period’s E ÷ F from the Rule 42 working',
+      render: (r) => <FigLink to={rule42Period(r.id, 'ratio')}>{pct(r.p.ratio)}</FigLink> },
     displayCol<PRow>('te', 'Te = E ÷ F × Tr', (r) => r.p.te[head], { group: 'Rule 43', width: 124 }),
     moneyCol<PRow>(`rev.${head}`, 'Reversed', (r) => (r.doc.reversed43 ? r.doc.reversed43[head] : null), (r, n) => {
       if (n === null) return { ...r, doc: { ...r.doc, reversed43: null } };

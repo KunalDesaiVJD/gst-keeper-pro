@@ -35,6 +35,8 @@ import { StepTab, StepTabsList } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { ImportPreviewDialog } from './ImportPreviewDialog';
 import { PortalFieldCol, PortalFieldGrid, PortalFieldRow } from './PortalFieldGrid';
+import { FigLink } from '../figure/FigLink';
+import { portalG9Itc, portalG9T4, portalG9T9, salesT5Books, T5_BOOKS_CODE } from '../figure/targetsData';
 
 /** The browser-extension bridge the Portal step shares between its two sections. */
 export interface PullBridge {
@@ -426,26 +428,28 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             heads={['t', 'i', 'c', 's', 'x']}
             headLabels={{ t: 'Value', s: 'SGST' }}
             rows={[
-              { key: 't4', code: '4', label: 'Outward supplies as auto-populated (excl. 4G), net of credit notes', value: workings.outward.portalTotal, note: flowNote('→ Outward reco') },
+              { key: 't4', code: '4', label: 'Outward supplies as auto-populated (excl. 4G), net of credit notes', value: workings.outward.portalTotal, note: flowNote('→ Outward reco'), link: (h) => portalG9T4('total', h) },
               {
-                key: 't4g', code: '4G', label: 'Reverse charge (portal)', value: g.table4.rchrg,
+                key: 't4g', code: '4G', label: 'Reverse charge (portal)', value: g.table4.rchrg, link: (h) => portalG9T4('rchrg', h),
                 note: flowNote(workings.rcm.partASource === 'gstr9' ? '→ RCM Part A (no monthly 3B yet)' : '→ fallback only; 4G uses 3.1(d) month-wise'),
               },
               {
-                key: 't6a', code: '6A', label: 'ITC availed through GSTR-3B', value: g.t6A,
+                key: 't6a', code: '6A', label: 'ITC availed through GSTR-3B', value: g.t6A, link: (h) => portalG9Itc('t6A', h),
                 note: flowNote(workings.g9.t6ASource === 'gstr9' ? '→ GSTR-9 6A' : workings.g9.t6ASource === 'monthly_3b' ? 'not in use — 6A is Σ 4A of the as-filed 3B' : '→ GSTR-9 6A'),
               },
-              { key: 't6g', code: '6G', label: 'ITC received from ISD', value: g.t6G, note: flowNote('→ 6G unless typed in the GSTR-9 step') },
-              { key: 't8a', code: '8A', label: ITC_ROWS(financialYear)[2].label, value: g.t8A, note: flowNote('→ 8A / 8D') },
+              { key: 't6g', code: '6G', label: 'ITC received from ISD', value: g.t6G, link: (h) => portalG9Itc('t6G', h), note: flowNote('→ 6G unless typed in the GSTR-9 step') },
+              { key: 't8a', code: '8A', label: ITC_ROWS(financialYear)[2].label, value: g.t8A, link: (h) => portalG9Itc('t8A', h), note: flowNote('→ 8A / 8D') },
               {
                 key: 't9p', code: '9', label: 'Tax payable (portal)',
                 value: { i: g.table9.igst.payable, c: g.table9.cgst.payable, s: g.table9.sgst.payable, x: g.table9.cess.payable },
                 note: flowNote('→ Table 9 payable'),
+                link: (h) => portalG9T9('payable', h),
               },
               {
                 key: 't9paid', code: '9', label: 'Total tax paid (cash + ITC)',
                 value: { i: t9.igst.paid, c: t9.cgst.paid, s: t9.sgst.paid, x: t9.cess.paid },
                 note: flowNote('→ Table 9, Annexure-1'),
+                link: (h) => portalG9T9('paid', h),
               },
             ]}
           />
@@ -493,7 +497,15 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             extra={{
               header: 'Books (Part B)',
               width: 140,
-              render: (row) => <Money value={workings.g9.t5[T5_BOOKS_ROW[row.id as T5Key]].t} className="block text-right" />,
+              // The books side is Sales › GSTR-9 Table 5 from Part B (5I–5K have no books row there).
+              render: (row) => {
+                const code = T5_BOOKS_CODE[row.id as T5Key];
+                return (
+                  <FigLink to={code ? salesT5Books(code) : undefined} className="block w-full">
+                    <Money value={workings.g9.t5[T5_BOOKS_ROW[row.id as T5Key]].t} className="block text-right" />
+                  </FigLink>
+                );
+              },
             }}
           />
           <p className="text-[11px] text-muted-foreground">Table 5 is not compared line by line in the sheet; it is kept here so the books side (Sales step, Part B) can be checked against what the portal shows.</p>

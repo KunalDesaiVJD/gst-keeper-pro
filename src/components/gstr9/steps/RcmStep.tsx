@@ -13,6 +13,8 @@ import { useRcmTab } from '../rcm/rcmShared';
 import { CountBadge, OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 import { KpiTile, Money, OpenDifferences } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { FigLink } from '../figure/FigLink';
+import { portalG9T4, rcmDiffTotal, rcmPartA, rcmPartB } from '../figure/targetsData';
 
 const PART_A_SOURCE: Record<'monthly' | 'gstr9' | 'none', string> = {
   monthly: 'GSTR-3B 3.1(d), month by month',
@@ -28,16 +30,16 @@ const RcmSummary: React.FC = () => {
   const diffMag = maxAbs(W.diff, true);
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-      <KpiTile label="Part B — books (value)" value={<Money value={W.partB.t} />} hint={`Tax ${fmtMoney(totalTax(W.partB))}`} />
+      <KpiTile label="Part B — books (value)" value={<FigLink to={rcmPartB('total', 'b.t')}><Money value={W.partB.t} /></FigLink>} hint={`Tax ${fmtMoney(totalTax(W.partB))}`} />
       <KpiTile
         label="Part A — portal (value)"
-        value={<Money value={W.partA.t} />}
+        value={<FigLink to={W.partASource === 'gstr9' ? portalG9T4('rchrg', 't') : rcmPartA('total', 't')}><Money value={W.partA.t} /></FigLink>}
         hint={`Tax ${fmtMoney(totalTax(W.partA))} · ${PART_A_SOURCE[W.partASource]}`}
         tone={W.partASource === 'none' ? 'warn' : 'neutral'}
       />
       <KpiTile
         label="Difference (Books − Portal)"
-        value={<Money value={totalTax(W.diff)} />}
+        value={<FigLink to={rcmDiffTotal}><Money value={totalTax(W.diff)} /></FigLink>}
         hint={`Tax · value ${fmtMoney(W.diff.t)}`}
         tone={diffMag < 0.005 ? 'ok' : diffMag > tol ? 'error' : 'neutral'}
       />

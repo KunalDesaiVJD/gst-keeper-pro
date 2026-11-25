@@ -10,12 +10,15 @@ import AdjustmentsGrid from './AdjustmentsGrid';
 import PortalNote from './PortalNote';
 import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
+import { FigLink } from '../figure/FigLink';
+import { dutiesLyeRow, itcReco6A1, portal3b, portalG9T4, purchasesSummaryRow, rcmPartA, rcmPartB } from '../figure/targetsData';
 import {
   computedCols,
   diffCells,
   diffCols,
   footerStatusLabel,
   headsFor,
+  linkCells,
   mirroredTaxCols,
   monthCol,
   monthRowF,
@@ -162,6 +165,8 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
   );
 
   const lineKeys = useMemo(() => new Set(workings.diffs.map((d) => d.key)), [workings.diffs]);
+  const rcmNoItc = Object.values(workings.rcm.byItcTable.none).some((v) => Math.abs(Number(v) || 0) > 0.004);
+  const rcmAnnual = workings.rcm.partASource === 'gstr9';
 
   // ------------------------------------------------------------------ Rate-wise breakup (Purchase / Debit note)
   const [rateMonth, setRateMonth] = useState<MonthKey | null>(null);
@@ -251,7 +256,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         cells: {
           ...booksCells,
           ...taxFooter('net', t.net, cess),
-          ...taxFooter('itcExclRcm', t.asPer3B, cess),
+          ...linkCells(taxFooter('itcExclRcm', t.asPer3B, cess), (h) => portal3b('itcExclRcm', 'total', h)),
           ...diffCells('diff', t.diff, cess, tol),
         },
       },
@@ -264,11 +269,16 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           'dti.rcm',
         ),
         tone: 'total',
-        cells: soft({
-          ...taxFooter('net', dti.rcmBooks, cess),
-          ...taxFooter('itcExclRcm', dti.rcmPortal, cess),
-          ...diffCells('diff', dti.rcmDiff, cess, tol),
-        }),
+        cells: {
+          // RCM Part B / Part A totals; both leave out the expenses with no ITC (taken in neither 4A nor the books' ITC).
+          ...linkCells(taxFooter('net', dti.rcmBooks, cess), (h) => rcmPartB('total', `b.${h}`, rcmNoItc), true),
+          ...linkCells(
+            taxFooter('itcExclRcm', dti.rcmPortal, cess),
+            (h) => (rcmAnnual ? portalG9T4('rchrg', h) : rcmPartA('total', h, rcmNoItc)),
+            true,
+          ),
+          ...soft(diffCells('diff', dti.rcmDiff, cess, tol)),
+        },
       },
       {
         key: 'itc',
@@ -288,7 +298,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           </FooterLabel>
         ),
         tone: 'total',
-        cells: soft(taxFooter('net', dti.lye, cess)),
+        cells: linkCells(taxFooter('net', dti.lye, cess), (h) => dutiesLyeRow(h), true),
       },
       {
         key: 'netItc',
@@ -304,7 +314,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           </FooterLabel>
         ),
         tone: 'total',
-        cells: soft(taxFooter('net', dti.asPerPl, cess)),
+        cells: linkCells(taxFooter('net', dti.asPerPl, cess), (h) => purchasesSummaryRow('79', h), true),
       },
       {
         key: 'plDiff',
@@ -318,7 +328,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         cells: diffCells('net', dti.plDiff, cess, tol),
       },
     ];
-  }, [dti, compact, cess, tol]);
+  }, [dti, compact, cess, tol, rcmNoItc, rcmAnnual]);
 
   // ------------------------------------------------------------------ Suspended ITC strip
   const heads: MatrixHead[] = headsFor(cess).map(([h]) => h);
@@ -348,7 +358,8 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           GSTR-9 6A1:{' '}
           {t6A1Typed ? (
             <>
-              typed on the ITC reco step (IGST <Money value={workings.g9.t6.A1.i} />, CGST <Money value={workings.g9.t6.A1.c} />), so it does not
+              typed on the ITC reco step (IGST <FigLink to={itcReco6A1('i')}><Money value={workings.g9.t6.A1.i} /></FigLink>, CGST{' '}
+              <FigLink to={itcReco6A1('c')}><Money value={workings.g9.t6.A1.c} /></FigLink>), so it does not
               follow this figure.{' '}
             </>
           ) : (

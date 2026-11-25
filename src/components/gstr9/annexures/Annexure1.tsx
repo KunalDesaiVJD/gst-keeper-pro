@@ -10,6 +10,7 @@ import { moneyCol, lockSgst } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { HEAD_NAME, pickFormulas, putFormulas } from './taxRows';
 import { StepLink } from './StepLink';
+import { ann1Entry, ann1Income, g9T9, g9T9Table, portalT4Total, rcmPartBTotal, salesCg, salesPartA } from '../figure/targetsFinish';
 
 /** The two lines of Annexure-1 that staff type (the rest is computed). */
 interface EntryRow {
@@ -64,26 +65,26 @@ const Annexure1: React.FC = () => {
 
   // ------------------------------------------------------------ Income reco (ANNEXURE B5:G15)
   const incomeRows: MatrixRow[] = [
-    { key: 'A', code: 'A', label: 'Gross taxable income as per P/L', value: a.A, note: <span className="text-[11px] text-muted-foreground">Sales · Part A</span> },
+    { key: 'A', code: 'A', label: 'Gross taxable income as per P/L', value: a.A, link: salesPartA, note: <span className="text-[11px] text-muted-foreground">Sales · Part A</span> },
     {
-      key: 'A+', code: '', label: 'Net non-GST income as per P/L', value: { t: a.nonGst }, indent: true,
+      key: 'A+', code: '', label: 'Net non-GST income as per P/L', value: { t: a.nonGst }, indent: true, link: (h) => ann1Entry('nongst', h),
       note: A.a1NonGstIncome ? <Entered /> : <span className="text-[11px] text-muted-foreground">only if included in Table 4</span>,
     },
     ...(a.CG.t || totalTax(a.CG)
       ? [{
-        key: 'A+cg', code: '', label: 'Capital goods sold outside the P/L revenue (Annexure-5)', value: a.CG, indent: true,
+        key: 'A+cg', code: '', label: 'Capital goods sold outside the P/L revenue (Annexure-5)', value: a.CG, indent: true, link: salesCg(),
         note: <span className="text-[11px] text-muted-foreground">Sales · Capital goods sold</span>,
       } as MatrixRow]
       : []),
     {
-      key: 'B', code: 'B', label: 'Sale return as per P/L', value: a.B,
+      key: 'B', code: 'B', label: 'Sale return as per P/L', value: a.B, link: (h) => ann1Entry('return', h),
       note: totalTax(sr) || sr.t ? <Entered /> : <span className="text-[11px] text-muted-foreground">only if not netted in Sales</span>,
     },
     { key: 'C', code: 'C', label: a.CG.t || totalTax(a.CG) ? 'Total income from P/L (A + non-GST + capital goods sold − B)' : 'Total income from P/L (A + non-GST − B)', value: a.C, total: true },
-    { key: 'D', code: 'D', label: 'Tax paid on RCM as per books', value: a.D, note: <span className="text-[11px] text-muted-foreground">RCM · Part B</span> },
+    { key: 'D', code: 'D', label: 'Tax paid on RCM as per books', value: a.D, link: rcmPartBTotal, note: <span className="text-[11px] text-muted-foreground">RCM · Part B</span> },
     { key: 'E', code: 'E', label: 'Total as per books (C + D) — "total as per new GSTR-9"', value: a.E, total: true },
     {
-      key: 'F', code: 'F', label: 'Total as per auto-calculated GSTR-9 (Table 4 total + RCM Part A)', value: a.F,
+      key: 'F', code: 'F', label: 'Total as per auto-calculated GSTR-9 (Table 4 total + RCM Part A)', value: a.F, link: portalT4Total,
       note: <SourceChip meta={docs.portal.gstr9Meta} />,
     },
     { key: 'G', code: 'G', label: 'Difference (E − F)', value: a.G, total: true, signed: true, diffKey: 'ann1.income' },
@@ -97,12 +98,15 @@ const Annexure1: React.FC = () => {
       label: HEAD_NAME[h],
       value: { t: a.payable[h], i: a.paid[h], c: a.payDiff[h] },
       cells: { c: <PayDiff value={a.payDiff[h]} tolerance={workings.tolerance} /> },
+      // Payable is row E above, paid is GSTR-9 Table 9's total paid of the head.
+      link: (col) => (col === 't' ? ann1Income('E', h) : col === 'i' ? g9T9(h, 'paid') : undefined),
     })),
     {
       key: 'total',
       label: 'Total',
       value: { t: totalTax(a.payable), i: totalTax(a.paid), c: totalTax(a.payDiff) },
       cells: { c: <PayDiff value={totalTax(a.payDiff)} tolerance={workings.tolerance} /> },
+      link: (col) => (col === 't' ? ann1Income('E') : col === 'i' ? g9T9Table : undefined),
       total: true,
       diffKey: 'ann1.paid',
     },

@@ -3,6 +3,10 @@ import { Badge } from '@/components/gstr9/badge';
 import { useWorkspace } from '../WorkspaceContext';
 import { MatrixTable, Note, SectionCard, SourceChip, type MatrixRow } from '../ui';
 import { StepLink } from './StepLink';
+import { dtiFooter, dutiesLye, dutiesSuspended, dutiesSuspendedNet, g9Row, itcWorkingLine, portal3bTotal, portalItc, salesCg } from '../figure/targetsFinish';
+
+type TaxHead = 'i' | 'c' | 's' | 'x';
+const tax = (h: string): h is TaxHead => h === 'i' || h === 'c' || h === 's' || h === 'x';
 
 const Muted: React.FC<{ children: React.ReactNode }> = ({ children }) => <span className="text-[11px] text-muted-foreground">{children}</span>;
 
@@ -20,24 +24,26 @@ const Annexure2: React.FC = () => {
       <SourceChip meta={null} />
     );
 
+  // Figure links (figure/targetsFinish.ts): each carried line opens the row it is read from.
+  const link6A = src === 'monthly_3b' ? (h: 't' | TaxHead) => portal3bTotal('itc4aTotal', h) : src === 'gstr9' ? (h: 't' | TaxHead) => portalItc('t6A', h) : (h: 't' | TaxHead) => g9Row('6', '6A', h);
   const rows: MatrixRow[] = [
-    { key: 'A', code: 'A', label: 'Dr. balance of ITC ledger', value: w.A, note: <Muted>Duties &amp; Taxes · purchases</Muted> },
-    { key: 'A1', code: 'A1', label: 'RCM — ITC', value: w.A1, note: <Muted>RCM · Part B</Muted> },
-    { key: 'A2', code: 'A2', label: 'Debit notes', value: w.A2 },
+    { key: 'A', code: 'A', label: 'Dr. balance of ITC ledger', value: w.A, link: (h) => (tax(h) ? dtiFooter('total', 'purchase', h) : undefined), note: <Muted>Duties &amp; Taxes · purchases</Muted> },
+    { key: 'A1', code: 'A1', label: 'RCM — ITC', value: w.A1, link: (h) => (tax(h) ? dtiFooter('rcm', 'net', h) : undefined), note: <Muted>RCM · Part B</Muted> },
+    { key: 'A2', code: 'A2', label: 'Debit notes', value: w.A2, link: (h) => (tax(h) ? dtiFooter('total', 'debitNote', h) : undefined) },
     ...(w.A3.i || w.A3.c || w.A3.s || w.A3.x
-      ? [{ key: 'A3', code: 'A3', label: 's.18(6) reversal on capital goods sold, not yet in the ITC ledger (Annexure-5)', value: w.A3, note: <Muted>Sales · Capital goods sold</Muted> } as MatrixRow]
+      ? [{ key: 'A3', code: 'A3', label: 's.18(6) reversal on capital goods sold, not yet in the ITC ledger (Annexure-5)', value: w.A3, link: salesCg(), note: <Muted>Sales · Capital goods sold</Muted> } as MatrixRow]
       : []),
-    { key: 'B', code: 'B', label: 'Other adjustment in Dr./Cr. side (suspended ITC, net)', value: w.B },
+    { key: 'B', code: 'B', label: 'Other adjustment in Dr./Cr. side (suspended ITC, net)', value: w.B, link: dutiesSuspendedNet },
     { key: 'C', code: 'C', label: 'Net ITC availed (A + A1 − A2 − A3 − B)', value: w.C, total: true },
     {
-      key: 'D', code: 'D', label: 'ITC of this year claimed in next year (7J − books) — effect in Tables 12 & 13', value: w.D, signed: true,
+      key: 'D', code: 'D', label: 'ITC of this year claimed in next year (7J − books) — effect in Tables 12 & 13', value: w.D, signed: true, link: (h) => itcWorkingLine('res', h),
       note: <StepLink step="itc" className="text-[11px]">ITC reco</StepLink>,
     },
     { key: 'E', code: 'E', label: 'Total (C + D)', value: w.E, total: true },
-    { key: 'F', code: 'F', label: 'As per portal — Table 6A (includes previous-year ITC claimed this year)', value: w.F, note: sixA },
-    { key: 'G1', code: 'G1', label: 'Reversal as per 7H1', value: w.G1 },
-    { key: 'G2', code: 'G2', label: 'Other Table 7 reversals (7A–7G and further 7H lines)', value: w.G2, note: <Muted>firm position</Muted> },
-    { key: 'H', code: 'H', label: 'ITC of previous year claimed this year (Last Year Effect)', value: w.H },
+    { key: 'F', code: 'F', label: 'As per portal — Table 6A (includes previous-year ITC claimed this year)', value: w.F, link: link6A, note: sixA },
+    { key: 'G1', code: 'G1', label: 'Reversal as per 7H1', value: w.G1, link: (h) => dutiesSuspended('rev', h) },
+    { key: 'G2', code: 'G2', label: 'Other Table 7 reversals (7A–7G and further 7H lines)', value: w.G2, link: (h) => ({ ...g9Row('7', '7I', h), label: 'GSTR-9 › Table 7 (7I less 7H1)' }), note: <Muted>firm position</Muted> },
+    { key: 'H', code: 'H', label: 'ITC of previous year claimed this year (Last Year Effect)', value: w.H, link: dutiesLye },
     { key: 'I', code: 'I', label: 'Net ITC (F − G1 − G2 − H)', value: w.I, total: true },
     { key: 'J', code: 'J', label: 'Excess ITC claimed / to be claimed (E − I)', value: w.J, total: true, signed: true, diffKey: 'ann2.J' },
   ];

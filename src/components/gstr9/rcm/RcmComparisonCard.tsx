@@ -6,6 +6,8 @@ import { fmtMoney } from '../grid/money';
 import { JustifyControl, Note, SectionCard, useDiffLine } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { monthLabel, RCM_GRID_MAX_HEIGHT, TAX_HEAD_LABEL } from './rcmShared';
+import { FigLink } from '../figure/FigLink';
+import { linkedMoney, portalG9T4, rcmPartA, rcmPartB } from '../figure/targetsData';
 
 interface CmpRow {
   id: MonthKey;
@@ -36,8 +38,14 @@ const RcmComparisonCard: React.FC = () => {
   const rows: CmpRow[] = FY_MONTHS.map((m) => ({ id: m }));
   const columns: GridColumn<CmpRow>[] = [
     { key: 'month', header: 'Month', type: 'display', align: 'left', sticky: true, width: 92, value: (r) => monthLabel(r.id, financialYear) },
-    displayCol<CmpRow>('books', 'Books (Part B)', (r) => W.partBMonths[r.id].t, { group: VALUE, width: 130 }),
-    displayCol<CmpRow>('portal', 'Portal (Part A)', (r) => (annual ? null : W.partAMonths[r.id].t), { group: VALUE, width: 130, title: annualTitle }),
+    {
+      ...displayCol<CmpRow>('books', 'Books (Part B)', (r) => W.partBMonths[r.id].t, { group: VALUE, width: 130 }),
+      render: (r) => linkedMoney(W.partBMonths[r.id].t, rcmPartB(r.id, 'b.t')),
+    },
+    {
+      ...displayCol<CmpRow>('portal', 'Portal (Part A)', (r) => (annual ? null : W.partAMonths[r.id].t), { group: VALUE, width: 130, title: annualTitle }),
+      render: (r) => (annual ? null : linkedMoney(W.partAMonths[r.id].t, rcmPartA(r.id, 't'))),
+    },
     displayCol<CmpRow>('d.t', 'Value', noMonthly('t'), { group: DIFF, width: 120, tone: tone('t'), title: annualTitle }),
     ...heads.map((h) => displayCol<CmpRow>(`d.${h}`, TAX_HEAD_LABEL[h], noMonthly(h), { group: DIFF, width: 110, tone: tone(h), title: annualTitle })),
     {
@@ -70,8 +78,8 @@ const RcmComparisonCard: React.FC = () => {
             label: annual ? 'Total (portal = 4G)' : 'Total',
             tone: 'total',
             cells: {
-              books: W.partB.t,
-              portal: W.partA.t,
+              books: <FigLink to={rcmPartB('total', 'b.t')}>{fmtMoney(W.partB.t)}</FigLink>,
+              portal: <FigLink to={annual ? portalG9T4('rchrg', 't') : rcmPartA('total', 't')}>{fmtMoney(W.partA.t)}</FigLink>,
               'd.t': W.diff.t,
               ...taxFooter('d', W.diff, withCess),
             },

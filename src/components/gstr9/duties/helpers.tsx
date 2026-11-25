@@ -12,6 +12,10 @@ import type { GridColumn } from '../grid/SheetGrid';
 import { diffTone, moneyCol, taxDisplayCols, taxInCols, type TaxColsOpts } from '../grid/columns';
 import { JustifyControl } from '../ui';
 import { DiffValue, HeaderTip, MonthSource, SoftMoney } from './parts';
+import { FigLink } from '../figure/FigLink';
+import type { FigTarget } from '@/lib/gstr9/figureLinks';
+import { fmtMoney } from '../grid/money';
+import { linkedMoney, portal3b } from '../figure/targetsData';
 
 export const HEADS: Array<[keyof Tax, string]> = [
   ['i', 'IGST'],
@@ -238,7 +242,12 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
     value: () => null,
     width: 112,
     align: 'left',
-    render: (r) => <MonthSource meta={portal.monthMeta[r.id]} typedHeads={typedHeadCount(portal, r.id, field)} />,
+    // The month's row on Portal data › As-filed GSTR-3B (the link a superadmin, who types the cells, still has).
+    render: (r) => (
+      <FigLink to={portal3b(field, r.id)} className="text-left no-underline">
+        <MonthSource meta={portal.monthMeta[r.id]} typedHeads={typedHeadCount(portal, r.id, field)} />
+      </FigLink>
+    ),
   };
   const lockNote = canEdit ? '' : ' Locked — only a superadmin can type over it.';
   const cellTitle = (r: R, h: keyof Tax): string => {
@@ -257,7 +266,12 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
         title: (r) => cellTitle(r, h),
         tone: (r) => (!portal.monthMeta[r.id]?.source && Math.abs(get(r)[h]) < EPS ? 'muted' : undefined),
       }),
-    ),
+    ).map((col, idx) => {
+      // Locked for everyone but the superadmin: the figure opens its month on Portal data.
+      if (canEdit) return col;
+      const h = headsFor(cess)[idx][0];
+      return { ...col, render: (r: R) => linkedMoney(get(r)[h], portal3b(field, r.id, h), portal.f?.[portalPath(r.id, field, h)]) };
+    }),
   ];
 }
 
@@ -285,6 +299,24 @@ export const diffCells = (prefix: string, t: Tax, cess: boolean, tolerance: numb
 /** Footer cells of a secondary line: plain figures rendered soft (normal weight, muted). */
 export const soft = (cells: Record<string, React.ReactNode>): Record<string, React.ReactNode> =>
   Object.fromEntries(Object.entries(cells).map(([k, v]) => [k, typeof v === 'number' ? <SoftMoney key={k} value={v} /> : v]));
+
+/**
+ * Footer cells (as taxFooter makes them, keyed "<prefix>.<head>") whose
+ * figures open their source; `softly` renders them as a secondary line.
+ */
+export const linkCells = (
+  cells: Record<string, number>,
+  to: (head: keyof Tax) => FigTarget | undefined,
+  softly = false,
+): Record<string, React.ReactNode> =>
+  Object.fromEntries(
+    Object.entries(cells).map(([k, v]) => [
+      k,
+      <FigLink key={k} to={to(k.split('.').pop() as keyof Tax)}>
+        {softly ? <SoftMoney value={v} /> : fmtMoney(v)}
+      </FigLink>,
+    ]),
+  );
 
 /** A footer-row label with the line's justification control beside it, in the sticky month column. */
 export const footerStatusLabel = (label: React.ReactNode, lineKey: string): React.ReactNode => (

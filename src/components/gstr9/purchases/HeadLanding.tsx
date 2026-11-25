@@ -7,6 +7,10 @@ import type { ExpenseHead, ValTax } from '@/lib/gstr9/types';
 import { Money, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { suggestHead } from './purchaseRows';
+import { figAnchor } from '@/lib/gstr9/figureLinks';
+
+/** Accessible label of the head table; figure links (reco/targetsReco.ts) anchor on its rows (expense head, or 'Q.bal'). */
+export const HEAD_LANDING_LABEL = 'Ledgers per GSTR-9C expense head';
 
 const HEADS = Object.keys(EXPENSE_HEAD_LABEL) as ExpenseHead[];
 
@@ -76,7 +80,7 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
         <p className="text-sm text-muted-foreground">No ledgers entered yet.</p>
       ) : (
         <div className="overflow-x-auto rounded-md border">
-          <table className="w-full border-collapse text-sm" aria-label="Ledgers per GSTR-9C expense head">
+          <table className="w-full border-collapse text-sm" aria-label={HEAD_LANDING_LABEL}>
             <thead className="bg-muted">
               <tr>
                 <th className="w-12 border-b border-r px-2 py-1.5 text-left font-semibold text-muted-foreground">Row</th>
@@ -90,24 +94,24 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
               {landed.map((h) => {
                 const v = figure(h);
                 return (
-                  <tr key={h}>
+                  <tr key={h} data-fig={figAnchor(HEAD_LANDING_LABEL, h)}>
                     <td className="border-b border-r px-2 py-1.5 font-mono text-muted-foreground">{EXPENSE_HEAD_ROW[h]}</td>
                     <td className="border-b border-r px-2 py-1.5">{EXPENSE_HEAD_LABEL[h].replace(/^[A-Z] · /, '')}</td>
                     <td className="border-b border-r px-2 py-1.5 text-right tabular-nums">{counts[h]}</td>
-                    <td className="border-b border-r px-2 py-1.5 text-right"><Money value={v.t} /></td>
-                    <td className="border-b px-2 py-1.5 text-right"><Money value={totalTax(v)} /></td>
+                    <td data-col="t" className="border-b border-r px-2 py-1.5 text-right"><Money value={v.t} /></td>
+                    <td data-col="tot" className="border-b px-2 py-1.5 text-right"><Money value={totalTax(v)} /></td>
                   </tr>
                 );
               })}
               {showBalancing && (
-                <tr className="text-muted-foreground">
+                <tr className="text-muted-foreground" data-fig={figAnchor(HEAD_LANDING_LABEL, 'Q.bal')}>
                   <td className="border-b border-r px-2 py-1.5 font-mono">Q</td>
                   <td className="border-b border-r px-2 py-1.5 italic" title="The sheet’s Q (D26) is net ITC less rows A2 to P, so anything not in a tagged ledger lands here too.">
                     Balancing figure (net ITC − rows A2 to P)
                   </td>
                   <td className="border-b border-r px-2 py-1.5 text-right">—</td>
-                  <td className="border-b border-r px-2 py-1.5 text-right"><Money value={c14.qBalancing.t} /></td>
-                  <td className="border-b px-2 py-1.5 text-right"><Money value={totalTax(c14.qBalancing)} /></td>
+                  <td data-col="t" className="border-b border-r px-2 py-1.5 text-right"><Money value={c14.qBalancing.t} /></td>
+                  <td data-col="tot" className="border-b px-2 py-1.5 text-right"><Money value={totalTax(c14.qBalancing)} /></td>
                 </tr>
               )}
             </tbody>

@@ -19,6 +19,8 @@ import { displayCol, lockSgst, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { FigLink } from '../figure/FigLink';
+import { salesCgTotal } from '../figure/targetsData';
 
 /** Shown in this year's tab: sold in this FY, or a sale still without its date. */
 export const showInYear = (a: CapitalGoodsAsset, fy: string): boolean => disposedInFy(a, fy) || (!!a.disposalType && !a.disposalDate);
@@ -177,7 +179,7 @@ export const CapitalGoodsSold: React.FC = () => {
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
         <KpiTile label="Capital goods sold this year" value={cg.assets.length} hint={cg.incomplete ? `${cg.incomplete} to complete` : `Sale value ${fmtMoney(cg.assets.reduce((s, a) => s + a.disposalValue, 0))}`} tone={cg.incomplete ? 'warn' : 'neutral'} />
-        <KpiTile label="Payable u/s 18(6) (higher of)" value={fmtMoney(cg.payable)} hint="Tax on value or ITC as reduced" />
+        <KpiTile label="Payable u/s 18(6) (higher of)" value={<FigLink to={salesCgTotal('payable')}>{fmtMoney(cg.payable)}</FigLink>} hint="Tax on value or ITC as reduced" />
         <KpiTile label="Shortfall reversed (GSTR-9 7H)" value={fmtMoney(totalTax(cg.reversal))} hint={totalTax(cg.asOutputTax) > 0.005 ? `+ ${fmtMoney(totalTax(cg.asOutputTax))} paid as output tax (Table 4)` : 'ITC as reduced less tax on value'} />
         <KpiTile label="Not yet reversed (payable)" value={fmtMoney(totalTax(cg.notDone))} hint="Goes to Payables, input side" tone={totalTax(cg.notDone) > 0.005 ? 'error' : 'ok'} />
       </div>

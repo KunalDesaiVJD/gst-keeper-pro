@@ -7,6 +7,8 @@ import { SectionCard } from '../ui';
 import { useGoToStep } from '../overview/steps';
 import { Button } from '@/components/ui/button';
 import { useCarriedEffects } from './useRemarkEffects';
+import { FigLink } from '../figure/FigLink';
+import { ann4Clause, dutiesLye, itc6A1 } from '../figure/targetsFinish';
 
 const CLAUSE = { next_fy_t10: 'c10', next_fy_t11: 'c11', next_fy_t12: 'c12', next_fy_t13: 'c13' } as const;
 
@@ -63,9 +65,14 @@ export const CarriedEffectsCard: React.FC<{ showGoTo?: boolean }> = ({ showGoTo 
           const diff = Math.abs(a.i - t.i) + Math.abs(a.c - t.c) + Math.abs(a.x - t.x);
           return (
             <li key={k}>
-              {KIND_META[k].short} from remarks: {amountText(t, false)}; Annexure-4 clause {CLAUSE[k].slice(1)} holds {amountText({ t: 0, ...a }, false)}
+              {KIND_META[k].short} from remarks: {amountText(t, false)}; Annexure-4 clause {CLAUSE[k].slice(1)} holds <FigLink to={ann4Clause(prevFy, CLAUSE[k])}>{amountText({ t: 0, ...a }, false)}</FigLink>
               {diff > 1 ? ' — fill Annexure-4 from last year\'s working, or check what else the clause holds.' : '.'}
-              {k === 'next_fy_t13' && ` 6A1 of this year is ${amountText({ t: 0, ...workings.g9.t6.A1 }, false)}.`}
+              {k === 'next_fy_t13' && (
+                <>
+                  {' '}6A1 of this year is{' '}
+                  <FigLink to={{ ...(docs.gstr9.t6A1 == null ? dutiesLye('i') : itc6A1('i')), col: undefined }}>{amountText({ t: 0, ...workings.g9.t6.A1 }, false)}</FigLink>.
+                </>
+              )}
             </li>
           );
         })}

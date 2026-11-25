@@ -10,7 +10,9 @@ import { JustifyControl, SectionCard } from '../ui';
 import { EffectChip } from '../remarks/RemarkEffectPanel';
 import { useWorkspace } from '../WorkspaceContext';
 import { StepTab, TAB_LIST_CLASS } from '../reco/StepTabs';
-import { diffTabParams, fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
+import { fmtWhen, rupeesShort, STEP_META, stepMeta, useGoToStep } from './steps';
+import { useGoFigure } from '../figure/FigLink';
+import { diffTarget } from '../figure/targetsFinish';
 
 type Filter = 'open' | 'all' | 'justified';
 
@@ -37,6 +39,7 @@ const Amount: React.FC<{ v: number; tol: number; loud: boolean }> = ({ v, tol, l
 export const DifferenceList: React.FC = () => {
   const { workings: w } = useWorkspace();
   const go = useGoToStep();
+  const goFig = useGoFigure();
   const [filter, setFilter] = useState<Filter>('open');
 
   const counts = useMemo(
@@ -160,7 +163,8 @@ export const DifferenceList: React.FC = () => {
                             className="h-7 w-7"
                             aria-label={`Go to ${stepMeta(d.step).label}`}
                             title={`Go to ${stepMeta(d.step).label}`}
-                            onClick={() => go(d.step, diffTabParams(d))}
+                            // Opens the row the line sits on (its status control), not only its step.
+                            onClick={() => goFig(diffTarget(d))}
                           >
                             <ArrowUpRight className="h-3.5 w-3.5" />
                           </Button>

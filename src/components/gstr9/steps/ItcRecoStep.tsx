@@ -16,6 +16,25 @@ import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 import Rule42Card from '../reco/Rule42Card';
 import Rule43Card from '../reco/Rule43Card';
+import { FigLink, type FigTarget } from '../figure/FigLink';
+import {
+  dutiesLye,
+  dutiesNetItc,
+  dutiesSuspended,
+  gstr9Row,
+  itc6A1,
+  itcT7,
+  itcTable7Tab,
+  itcWorkingRow,
+  portal3bTotal,
+  portalItc,
+  purchasesHead,
+  purchasesHeadsTab,
+  rcmEligible,
+  rule42Final7C,
+  rule43Year7D,
+  salesCgSold,
+} from '../figure/targetsReco';
 import {
   anyTax,
   DESC_MAX,
@@ -41,6 +60,9 @@ const FORM_GROUP = 'Tax — in GSTR-9 form order';
 /** 7E when not typed: the as-filed 3B 4B(1), which also holds Rules 38/42/43, less 7A2, 7C and 7D as typed. */
 const E4B1_TITLE = 'Sum of 4B(1) of the as-filed GSTR-3B, less what is typed in 7A2 (Rule 38), 7C (Rule 42) and 7D (Rule 43)';
 const fmtHeads = (t: Tax) => `IGST ${fmtMoney(t.i)} · CGST ${fmtMoney(t.c)} · SGST ${fmtMoney(t.s)}${nz(t.x) ? ` · Cess ${fmtMoney(t.x)}` : ''}`;
+
+/** A target without its cell: a chip opens the source row, not one head. */
+const rowOnly = (t: FigTarget): FigTarget => ({ ...t, col: undefined });
 
 const SmallBadge: React.FC<{ variant?: 'secondary' | 'info' | 'warning' | 'outline'; children: React.ReactNode; title?: string }> = ({ variant = 'secondary', children, title }) => (
   <Badge variant={variant} className="whitespace-nowrap text-[10px] font-normal" title={title}>
@@ -68,6 +90,8 @@ interface WorkingLine {
   diffKey?: string;
   /** Negative figures shown red (differences). */
   signed?: boolean;
+  /** Figure link per head, for a line carried from another step or tab (figure/targetsReco.ts). */
+  link?: (h: MatrixHead) => FigTarget | undefined;
 }
 
 const toFigRow = (r: WorkingLine): FigRow => {
@@ -82,6 +106,7 @@ const toFigRow = (r: WorkingLine): FigRow => {
     note: r.note,
     values,
     tones,
+    links: r.link ? Object.fromEntries(WORKING_HEADS.map((h) => [h, r.link!(h)])) : undefined,
     kind: r.total ? 'total' : r.indent ? 'sub' : 'row',
     status: r.diffKey ? <JustifyControl lineKey={r.diffKey} /> : undefined,
   };
@@ -123,15 +148,19 @@ const WorkingCard: React.FC = () => {
       </SmallBadge>
     );
 
+  // 6A: the GSTR-9 system-computed 6A, else Σ 4A of the as-filed GSTR-3B (figure/targetsReco.ts).
+  const link6A = (h: MatrixHead): FigTarget | undefined =>
+    g9.t6ASource === 'gstr9' ? portalItc('t6A', h) : g9.t6ASource === 'monthly_3b' && h !== 't' ? portal3bTotal('itc4aTotal', h) : undefined;
+
   // Only lines the engine actually pushed get a justification control.
   const hasLine = (key: string) => workings.diffs.some((d) => d.key === key);
   const optional: WorkingLine[] = [];
-  if (anyTax(I.isd)) optional.push({ key: 'isd', code: '6G', label: 'ITC received from ISD', value: I.isd });
-  if (anyTax(I.t6N)) optional.push({ key: 't6N', code: '6N', label: 'TRAN-1 / TRAN-2 / ITC-01, 02, 02A (6K–6M)', value: I.t6N });
+  if (anyTax(I.isd)) optional.push({ key: 'isd', code: '6G', label: 'ITC received from ISD', value: I.isd, link: (h) => (docs.gstr9.t6G == null ? portalItc('t6G', h) : gstr9Row('6', '6G', h)) });
+  if (anyTax(I.t6N)) optional.push({ key: 't6N', code: '6N', label: 'TRAN-1 / TRAN-2 / ITC-01, 02, 02A (6K–6M)', value: I.t6N, link: (h) => gstr9Row('6', '6N', h) });
 
   const rows: WorkingLine[] = [
     { key: 'h6', heading: true, code: '6', label: 'ITC availed — GSTR-9 Table 6' },
-    { key: 'inputs', code: '6B', label: 'Inputs', value: I.inputs, note: <SmallBadge variant="outline">9C row A</SmallBadge> },
+    { key: 'inputs', code: '6B', label: 'Inputs', value: I.inputs, link: (h) => purchasesHead('purchases', h), note: <SmallBadge variant="outline">9C row A</SmallBadge> },
     {
       key: 'is',
       code: '6B',
@@ -139,7 +168,7 @@ const WorkingCard: React.FC = () => {
       value: I.inputServices,
       note: <SmallBadge title="6A2 less every other line, so 6(O) ties to 6A2 — as the sheet's row 10 does">Balancing figure</SmallBadge>,
     },
-    { key: 'isBooks', indent: true, label: <span className="text-muted-foreground">Books ITC on these ledgers</span>, value: I.inputServicesBooks },
+    { key: 'isBooks', indent: true, label: <span className="text-muted-foreground">Books ITC on these ledgers</span>, value: I.inputServicesBooks, link: () => purchasesHeadsTab },
     {
       key: 'isGap',
       indent: true,
@@ -147,34 +176,34 @@ const WorkingCard: React.FC = () => {
       value: plugGap,
       note: plugFlag ? <SmallBadge variant="warning">Above ₹{tol}</SmallBadge> : undefined,
     },
-    { key: 'imp', code: '6E', label: 'Import of goods (incl. supplies from SEZ)', value: I.importGoods, note: <SmallBadge variant="outline">9C row D</SmallBadge> },
-    { key: 'cg', code: '6B', label: 'Capital goods', value: I.capitalGoods, note: <SmallBadge variant="outline">9C row O</SmallBadge> },
-    { key: 'rcm', code: '6C–6F', label: 'RCM — as per books (RCM Part B)', value: I.rcm },
-    { key: 'reclaim', code: '6H', label: 'ITC reclaim (suspended ITC reclaimed, Duties & Taxes)', value: I.reclaim },
+    { key: 'imp', code: '6E', label: 'Import of goods (incl. supplies from SEZ)', value: I.importGoods, link: (h) => purchasesHead('imported_goods', h), note: <SmallBadge variant="outline">9C row D</SmallBadge> },
+    { key: 'cg', code: '6B', label: 'Capital goods', value: I.capitalGoods, link: (h) => purchasesHead('capital_goods', h), note: <SmallBadge variant="outline">9C row O</SmallBadge> },
+    { key: 'rcm', code: '6C–6F', label: 'RCM — as per books (RCM Part B)', value: I.rcm, link: (h) => rcmEligible(h) },
+    { key: 'reclaim', code: '6H', label: 'ITC reclaim (suspended ITC reclaimed, Duties & Taxes)', value: I.reclaim, link: (h) => (h === 't' ? undefined : dutiesSuspended('rec', h)) },
     ...optional,
     { key: 'total6O', code: '6O', label: 'TOTAL (should match 6(O) of GSTR-9)', value: I.total, total: true },
     { key: 'asPer3B', code: '6A2', label: 'AS PER 3B — net ITC of the year (6A − 6A1)', value: I.asPer3B, note: src6A },
-    { key: '6A', code: '6A', indent: true, label: <span className="text-muted-foreground">ITC availed through GSTR-3B</span>, value: g9.t6.A },
-    { key: '6A1', code: '6A1', indent: true, label: <span className="text-muted-foreground">Less: preceding-FY ITC availed this year</span>, value: g9.t6.A1 },
+    { key: '6A', code: '6A', indent: true, label: <span className="text-muted-foreground">ITC availed through GSTR-3B</span>, value: g9.t6.A, link: link6A },
+    { key: '6A1', code: '6A1', indent: true, label: <span className="text-muted-foreground">Less: preceding-FY ITC availed this year</span>, value: g9.t6.A1, link: (h) => (docs.gstr9.t6A1 != null ? itc6A1(h) : dutiesLye(h)) },
     { key: '6J', code: '6J', label: 'Difference (6I − 6A2) — should be nil', value: g9.t6.J, diffKey: hasLine('itc.6J') ? 'itc.6J' : undefined, signed: true },
 
     { key: 'h7', heading: true, code: '7', label: 'ITC reversed — GSTR-9 Table 7' },
-    { key: 'rev', code: '7H1', label: 'ITC reversal — suspended ITC as per Duties & Taxes', value: I.reversal7H1 },
-    { key: 's175', code: '7E', label: 'As per section 17(5)', value: I.s17_5, note: s175Src },
-    { key: 'otherRev', code: '7A–7H', label: 'Other Table 7 reversals (entered below)', value: I.otherReversals },
+    { key: 'rev', code: '7H1', label: 'ITC reversal — suspended ITC as per Duties & Taxes', value: I.reversal7H1, link: (h) => (h === 't' ? undefined : dutiesSuspended('rev', h)) },
+    { key: 's175', code: '7E', label: 'As per section 17(5)', value: I.s17_5, note: s175Src, link: (h) => itcT7('s17_5', h) },
+    { key: 'otherRev', code: '7A–7H', label: 'Other Table 7 reversals (entered below)', value: I.otherReversals, link: () => itcTable7Tab },
     ...(totalTax(workings.cg.reversal) > 0.005
-      ? [{ key: 'cg186', code: '7H', indent: true, label: <span className="text-muted-foreground">of which: reversal u/s 18(6), capital goods sold (Annexure-5)</span>, value: workings.cg.reversal }]
+      ? [{ key: 'cg186', code: '7H', indent: true, label: <span className="text-muted-foreground">of which: reversal u/s 18(6), capital goods sold (Annexure-5)</span>, value: workings.cg.reversal, link: () => salesCgSold }]
       : []),
     { key: 't7J', code: '7J', label: 'TOTAL (should match 7(J) of GSTR-9)', value: I.total7J, total: true },
 
     { key: 'hb', heading: true, label: 'Against the books, and next year' },
     ...(totalTax(I.cgNotInBooks) > 0.005
       ? [
-        { key: 'bookLedger', label: 'Duties & Taxes net ITC, after last-year effect', value: I.asPerBookLedger },
-        { key: 'cgBooks', indent: true, label: <span className="text-muted-foreground">Less: s.18(6) reversal not yet in the ITC ledger (Annexure-5)</span>, value: I.cgNotInBooks },
+        { key: 'bookLedger', label: 'Duties & Taxes net ITC, after last-year effect', value: I.asPerBookLedger, link: (h: MatrixHead) => dutiesNetItc(h) },
+        { key: 'cgBooks', indent: true, label: <span className="text-muted-foreground">Less: s.18(6) reversal not yet in the ITC ledger (Annexure-5)</span>, value: I.cgNotInBooks, link: () => salesCgSold },
       ]
       : []),
-    { key: 'book', label: totalTax(I.cgNotInBooks) > 0.005 ? 'AS PER BOOK — after the s.18(6) reversal' : 'AS PER BOOK — Duties & Taxes net ITC, after last-year effect', value: I.asPerBook },
+    { key: 'book', label: totalTax(I.cgNotInBooks) > 0.005 ? 'AS PER BOOK — after the s.18(6) reversal' : 'AS PER BOOK — Duties & Taxes net ITC, after last-year effect', value: I.asPerBook, link: totalTax(I.cgNotInBooks) > 0.005 ? undefined : (h) => dutiesNetItc(h) },
     { key: 'res', label: 'Difference: 7J − books', value: I.residual, diffKey: hasLine('itc.books') ? 'itc.books' : undefined, signed: true },
     { key: 't12s', code: '12', label: 'ITC to be reversed in the next year → Table 12', value: I.t12Suggested },
     { key: 't13s', code: '13', label: 'ITC to be claimed in the next year → Table 13 (suggestion)', value: I.t13Suggested },
@@ -251,7 +280,13 @@ const T6A1Card: React.FC = () => {
       render: (r) => (
         <span className="inline-flex items-center gap-1.5">
           {r.label}
-          {typed ? <SmallBadge variant="outline">Typed</SmallBadge> : <SmallBadge>Last-year effect</SmallBadge>}
+          {typed ? (
+            <SmallBadge variant="outline">Typed</SmallBadge>
+          ) : (
+            <FigLink to={rowOnly(dutiesLye('c'))}>
+              <SmallBadge>Last-year effect</SmallBadge>
+            </FigLink>
+          )}
         </span>
       ),
     },
@@ -286,7 +321,9 @@ const T6A1Card: React.FC = () => {
         onRowsChange={(next) => update('gstr9', (d) => ({ ...d, t6A1: withFormulas(next[0].v, next[0].f) }))}
       />
       {typed && (
-        <p className="text-[11px] text-muted-foreground">Last-year effect as per books: {fmtHeads(lye)}</p>
+        <p className="text-[11px] text-muted-foreground">
+          Last-year effect as per books: <FigLink to={rowOnly(dutiesLye('c'))}>{fmtHeads(lye)}</FigLink>
+        </p>
       )}
     </SectionCard>
   );
@@ -359,13 +396,36 @@ const Table7Card: React.FC = () => {
       render: (r) => (
         <span className="inline-flex items-center gap-1.5">
           {r.label || <span className="italic text-muted-foreground">Other reversal</span>}
-          {r.kind === 'h1' && <SmallBadge>From Duties &amp; Taxes</SmallBadge>}
+          {/* Source chips open the figure's source (figure/targetsReco.ts); the cells stay typeable where allowed. */}
+          {r.kind === 'h1' && (
+            <FigLink to={rowOnly(dutiesSuspended('rev', 'c'))}>
+              <SmallBadge>From Duties &amp; Taxes</SmallBadge>
+            </FigLink>
+          )}
           {r.id === 's17_5' &&
-            (r.v == null ? <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge> : <SmallBadge variant="outline">Typed</SmallBadge>)}
+            (r.v == null ? (
+              <FigLink to={rowOnly(portal3bTotal('itc4b1', 'c'))}>
+                <SmallBadge title={E4B1_TITLE}>As-filed 3B 4B(1)</SmallBadge>
+              </FigLink>
+            ) : (
+              <SmallBadge variant="outline">Typed</SmallBadge>
+            ))}
           {r.id === 'r42' && r42On &&
-            (r.v == null ? <SmallBadge title="Final for the year from ITC reco › Rule 42/43">Rule 42 working</SmallBadge> : <SmallBadge variant="outline">Typed over</SmallBadge>)}
+            (r.v == null ? (
+              <FigLink to={rule42Final7C}>
+                <SmallBadge title="Final for the year from ITC reco › Rule 42/43">Rule 42 working</SmallBadge>
+              </FigLink>
+            ) : (
+              <SmallBadge variant="outline">Typed over</SmallBadge>
+            ))}
           {r.id === 'r43' && r42On &&
-            (r.v == null ? <SmallBadge title="Σ Te of the periods from ITC reco › Rule 42/43">Rule 43 working</SmallBadge> : <SmallBadge variant="outline">Typed over</SmallBadge>)}
+            (r.v == null ? (
+              <FigLink to={rule43Year7D}>
+                <SmallBadge title="Σ Te of the periods from ITC reco › Rule 42/43">Rule 43 working</SmallBadge>
+              </FigLink>
+            ) : (
+              <SmallBadge variant="outline">Typed over</SmallBadge>
+            ))}
         </span>
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
@@ -503,8 +563,15 @@ const NextYearCard: React.FC = () => {
       value: (r) => r.label,
       render: (r) => (
         <span className={r.kind === 'ref' ? 'inline-flex items-center gap-1.5 italic text-muted-foreground' : 'inline-flex items-center gap-1.5'}>
-          {r.label}
-          {r.kind === 't12' && (t12Typed ? <SmallBadge variant="outline">Typed</SmallBadge> : <SmallBadge>Computed</SmallBadge>)}
+          {r.kind === 'ref' ? <FigLink to={itcWorkingRow('t13s')} className="text-left">{r.label}</FigLink> : r.label}
+          {r.kind === 't12' &&
+            (t12Typed ? (
+              <SmallBadge variant="outline">Typed</SmallBadge>
+            ) : (
+              <FigLink to={itcWorkingRow('t12s')}>
+                <SmallBadge>Computed</SmallBadge>
+              </FigLink>
+            ))}
           {r.kind === 't13' && <SmallBadge variant="outline">Typed</SmallBadge>}
         </span>
       ),
@@ -570,7 +637,14 @@ const NextYearCard: React.FC = () => {
             key: '8C',
             label: '8C',
             tone: 'total',
-            cells: { label: docs.gstr9.t8C == null ? 'ITC availed next year (Table 13)' : 'ITC availed next year (typed on GSTR-9)', i: workings.g9.t8.C.i, c: workings.g9.t8.C.c, s: workings.g9.t8.C.s, x: workings.g9.t8.C.x },
+            // 8C typed on the GSTR-9 step opens it there; otherwise it is Table 13 just above.
+            cells:
+              docs.gstr9.t8C == null
+                ? { label: 'ITC availed next year (Table 13)', i: workings.g9.t8.C.i, c: workings.g9.t8.C.c, s: workings.g9.t8.C.s, x: workings.g9.t8.C.x }
+                : {
+                    label: 'ITC availed next year (typed on GSTR-9)',
+                    ...Object.fromEntries((['i', 'c', 's', 'x'] as const).map((h) => [h, <FigLink key={h} to={gstr9Row('8', '8C', h)}>{fmtMoney(workings.g9.t8.C[h])}</FigLink>])),
+                  },
           },
         ]}
       />
