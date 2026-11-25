@@ -11,6 +11,7 @@ import { CarriedEffectsCard } from '../remarks/CarriedEffectsCard';
 import { MatrixTable, SectionCard, useDiffLine } from '../ui';
 import { FixedTaxGrid, type FixedTaxRow } from './FixedTaxGrid';
 import { explicitTaxIn, hasAmount, previousFY } from './taxRows';
+import { ann4Clause, dutiesLye, itc6A1 } from '../figure/targetsFinish';
 
 type ClauseKey = keyof AnnexuresDoc['a4'];
 
@@ -98,11 +99,13 @@ const Annexure4: React.FC = () => {
           label="Clause 13 of the previous year next to 6A1 of this year"
           heads={['i', 'c', 's', 'x']}
           rows={[
-            { key: 'c13', label: `Clause 13 of FY ${pfy} (above)`, value: tin(a4.c13) },
+            { key: 'c13', label: `Clause 13 of FY ${pfy} (above)`, value: tin(a4.c13), link: (h) => (h === 't' ? undefined : ann4Clause(pfy, 'c13', h)) },
             {
               key: '6A1',
               label: `6A1 of FY ${financialYear} — ITC of a preceding FY availed this year`,
               value: workings.g9.t6.A1,
+              // 6A1 follows the Last Year Effect unless typed on ITC reco.
+              link: docs.gstr9.t6A1 == null ? dutiesLye : itc6A1,
               diffKey: c13Line ? 'ann4.c13' : undefined,
             },
           ]}

@@ -7,6 +7,8 @@ import { FY_MONTHS } from '@/lib/gstr9/types';
 import { SectionCard, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { fmtWhen, monthsApplied, rupees, sumTax, useGoToStep } from './steps';
+import { FigLink } from '../figure/FigLink';
+import { g9Row, gstr9T4N } from '../figure/targetsFinish';
 
 const T6A_SOURCE = { gstr9: 'GSTR-9 system-computed', monthly_3b: 'Σ 4A of the as-filed 3B', none: 'not available yet' } as const;
 const RCM_SOURCE = { monthly: 'as-filed 3B 3.1(d), monthly', gstr9: 'GSTR-9 4G, annual', none: 'not available yet' } as const;
@@ -44,9 +46,9 @@ export const PortalStatusCard: React.FC = () => {
         {gstr9 && (
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             <dt className="text-muted-foreground">4N tax</dt>
-            <dd className="text-right tabular-nums">{rupees(sumTax(w.g9.t4.N))}</dd>
+            <dd className="text-right tabular-nums"><FigLink to={gstr9T4N()}>{rupees(sumTax(w.g9.t4.N))}</FigLink></dd>
             <dt className="text-muted-foreground">8A (2B)</dt>
-            <dd className="text-right tabular-nums">{rupees(sumTax(w.g9.t8.A))}</dd>
+            <dd className="text-right tabular-nums"><FigLink to={g9Row('8', '8A')}>{rupees(sumTax(w.g9.t8.A))}</FigLink></dd>
           </dl>
         )}
       </div>

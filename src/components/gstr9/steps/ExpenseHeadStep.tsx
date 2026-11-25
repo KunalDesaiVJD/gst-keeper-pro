@@ -13,6 +13,8 @@ import { fmtMoney } from '../grid/money';
 import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
 import { anyValTax, useGoToStep, useTabParam } from '../reco/helpers';
 import { CountBadge, StepTab, StepTabsList } from '../reco/StepTabs';
+import { FigLink, type FigTarget } from '../figure/FigLink';
+import { gstr9Row, purchasesHead, purchasesLedger, purchasesSummaryRow, rcmEligible } from '../figure/targetsReco';
 
 // Step 8 — the firm's "GSTR 9C" sheet: ITC by expense head, feeding GSTR-9C
 // Table 14. Every figure is workings.c14; the only input here is the 9C head
@@ -71,6 +73,11 @@ const figs = (v: Partial<ValTax> | Tax, withValue = true): Record<string, number
 
 type Filter = ExpenseHead | 'all';
 
+const COL_KEYS = ['t', 'i', 'c', 's', 'x', 'tot'] as const;
+/** Figure links for every column of a row (figure/targetsReco.ts); `skipT` leaves the value column unlinked. */
+const linkAll = (to: (col: (typeof COL_KEYS)[number]) => FigTarget | undefined, skipT = false): Record<string, FigTarget | undefined> =>
+  Object.fromEntries(COL_KEYS.filter((k) => !(skipT && k === 't')).map((k) => [k, to(k)]));
+
 const TABS = ['table14', 'ledgers'] as const;
 /** The Table 14 working and the ledger grid fill the screen below the step's header area and scroll inside themselves. */
 const MAX_HEIGHT = 'max(360px, calc(100vh - 300px))';
@@ -114,6 +121,15 @@ const ExpenseHeadStep: React.FC = () => {
       code: k,
       label,
       values: figs(v),
+      // Figure links: a head's row opens Purchases › Where each ledger lands; A1 its PL-INPUT row 73, P RCM's flows.
+      links:
+        head && head !== 'other2' && n > 0
+          ? linkAll((col) => purchasesHead(head, col))
+          : k === 'A1'
+            ? linkAll((col) => purchasesSummaryRow('73', col), true)
+            : k === 'P'
+              ? linkAll((col) => rcmEligible(col))
+              : undefined,
       kind: k === 'R' ? 'total' : 'row',
       muted: k !== 'R' && !anyValTax(v),
       note:
@@ -128,7 +144,13 @@ const ExpenseHeadStep: React.FC = () => {
         ) : undefined,
     });
     if (k === 'Q') {
-      rows.push({ key: 'Q.tagged', kind: 'sub', label: 'Tagged ledgers', values: figs(C.qTagged) });
+      rows.push({
+        key: 'Q.tagged',
+        kind: 'sub',
+        label: 'Tagged ledgers',
+        values: figs(C.qTagged),
+        links: (counts.other2 ?? 0) > 0 ? linkAll((col) => purchasesHead('other2', col)) : undefined,
+      });
       rows.push({
         key: 'Q.bal',
         kind: 'sub',
@@ -146,13 +168,13 @@ const ExpenseHeadStep: React.FC = () => {
   const checkTones = Object.fromEntries(['t', 'i', 'c', 's', 'x', 'tot'].map((h) => [h, diffTone(figs(C.check)[h] ?? 0, 0)]));
   rows.push(
     { key: 'hchk', kind: 'heading', label: 'Check' },
-    { key: 'netItc', label: 'Net ITC as per P&L (PL-INPUT row 79)', values: figs(workings.purchases.netItc) },
+    { key: 'netItc', label: 'Net ITC as per P&L (PL-INPUT row 79)', values: figs(workings.purchases.netItc), links: linkAll((col) => purchasesSummaryRow('79', col)) },
     { key: 'check', label: 'Difference — should equal nil', values: figs(C.check), tones: checkTones },
   );
   // S and T (14T, with its reason) are pinned at the foot of the table's scroll box, so they stay in sight.
   const footRows: FigRow[] = [
     { key: 'hst', kind: 'heading', label: 'GSTR-9C Table 14 — against GSTR-9' },
-    { key: 'S', code: 'S', label: 'ITC claimed in GSTR-9 (7J)', values: figs(C.S, false) },
+    { key: 'S', code: 'S', label: 'ITC claimed in GSTR-9 (7J)', values: figs(C.S, false), links: linkAll((col) => gstr9Row('7', '7J', col), true) },
     {
       key: 'T',
       code: 'T',
@@ -172,8 +194,15 @@ const ExpenseHeadStep: React.FC = () => {
   const columns: GridColumn<PurchaseRow>[] = [
     { key: 'ledger', header: 'Ledger', type: 'display', align: 'left', width: 260, sticky: true, value: (r) => r.ledger || '(unnamed ledger)' },
     { key: 'section', header: 'Section', type: 'display', align: 'left', width: 110, value: (r) => SECTION_LABEL[r.section] ?? r.section },
-    displayCol<PurchaseRow>('taxable', 'Taxable value', (r) => r.taxable, { width: 132 }),
-    displayCol<PurchaseRow>('itc', 'ITC (total)', (r) => itcOf(r), { width: 120 }),
+    // Figures from the ledger's Purchases section grid (figure/targetsReco.ts); only the head is set here.
+    {
+      ...displayCol<PurchaseRow>('taxable', 'Taxable value', (r) => r.taxable, { width: 132 }),
+      render: (r) => <FigLink to={purchasesLedger(r.section, r.id, 'taxable')}>{fmtMoney(r.taxable)}</FigLink>,
+    },
+    {
+      ...displayCol<PurchaseRow>('itc', 'ITC (total)', (r) => itcOf(r), { width: 120 }),
+      render: (r) => <FigLink to={purchasesLedger(r.section, r.id)}>{fmtMoney(itcOf(r))}</FigLink>,
+    },
     {
       key: 'head',
       header: '9C head',
@@ -199,7 +228,7 @@ const ExpenseHeadStep: React.FC = () => {
       <OpenDifferences step="expense" />
       <div className="grid gap-2 sm:grid-cols-3">
         <KpiTile label="R · Eligible ITC by head (total tax)" value={fmtMoney(totalTax(C.rows.R ?? { i: 0, c: 0, s: 0, x: 0 }))} />
-        <KpiTile label="S · ITC claimed in GSTR-9, 7J (total tax)" value={fmtMoney(totalTax(C.S))} />
+        <KpiTile label="S · ITC claimed in GSTR-9, 7J (total tax)" value={<FigLink to={gstr9Row('7', '7J')}>{fmtMoney(totalTax(C.S))}</FigLink>} />
         <KpiTile
           label="T · Un-reconciled (S − R)"
           value={fmtMoney(totalTax(workings.gstr9c.t14.T))}

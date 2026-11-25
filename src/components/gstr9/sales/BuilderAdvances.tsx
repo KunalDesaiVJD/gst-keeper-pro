@@ -15,6 +15,9 @@ import { figAnchor } from '@/lib/gstr9/figureLinks';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { FigLink } from '../figure/FigLink';
+import { builderAdvFigure, c9T5 } from '../figure/targetsData';
+import type { FigTarget } from '@/lib/gstr9/figureLinks';
 
 // Sales › Advances (Builder clients only): the customer-advance roll-forward of
 // the firm's TURNOVER IN 9C sheet. Earlier years are read-only; only the one
@@ -46,6 +49,17 @@ const MoneyInput: React.FC<{ value: number; onChange: (v: number) => void; disab
       onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
     />
   );
+};
+
+/**
+ * Where each line of the Table 5 justification comes from: 5B, 5C, 5H and 5I
+ * are this year's figures above; 5A, 5P, 5Q and 5R are GSTR-9C Table 5's own
+ * (5A the audit report total, 5Q GSTR-9). 5J and 5O add up the adjustment
+ * lines above, which have no single row.
+ */
+const T5_SOURCE: Record<string, FigTarget | undefined> = {
+  '5A': c9T5('A'), '5B': builderAdvFigure('5B'), '5C': builderAdvFigure('5C'), '5H': builderAdvFigure('5H'), '5I': builderAdvFigure('5I'),
+  '5P': c9T5('P'), '5Q': c9T5('Q'), '5R': c9T5('R'),
 };
 
 type ReasonAsk = { kind: 'close' | 'reopen'; fy: string } | null;
@@ -204,8 +218,8 @@ const BuilderAdvanceCard: React.FC = () => {
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         <KpiTile label={`Advance received in FY ${financialYear}`} value={fmt(rf.received)} />
         <KpiTile label="Unadjusted advance at the end" value={fmt(rf.unadjustedEnd)} tone={Math.abs(rf.unadjustedEnd - rf.closingAdvance) > 0.5 ? 'warn' : 'neutral'} />
-        <KpiTile label="5P · Turnover after adjustments" value={fmt(W.t5.P)} />
-        <KpiTile label="5R · Un-reconciled" value={fmt(W.t5.R)} tone={Math.abs(W.t5.R) > 1 ? 'warn' : 'ok'} />
+        <KpiTile label="5P · Turnover after adjustments" value={<FigLink to={c9T5('P')}>{fmt(W.t5.P)}</FigLink>} />
+        <KpiTile label="5R · Un-reconciled" value={<FigLink to={c9T5('R')}>{fmt(W.t5.R)}</FigLink>} tone={Math.abs(W.t5.R) > 1 ? 'warn' : 'ok'} />
       </div>
 
       <SectionCard
@@ -279,7 +293,7 @@ const BuilderAdvanceCard: React.FC = () => {
           {field('Revenue recognised (transferred to WIP / sales)', doc.revenue, (v) => setDoc((d) => ({ ...d, revenue: v })))}
           {revenueVs5A && (
             <Note tone="warn">
-              Revenue recognised differs from 5A ({fmt(W.t5.A)}).
+              Revenue recognised differs from 5A (<FigLink to={c9T5('A')}>{fmt(W.t5.A)}</FigLink>).
               {editable && <Button size="sm" variant="link" className="h-auto px-1 py-0 text-xs" onClick={() => setDoc((d) => ({ ...d, revenue: W.t5.A }))}>Use 5A</Button>}
             </Note>
           )}
@@ -377,7 +391,7 @@ const BuilderAdvanceCard: React.FC = () => {
         ].map(([code, label, v]) => (
           <div key={code as string} data-fig={figAnchor('Builder advance Table 5', code as string)} className={`flex items-center justify-between border-b py-1 text-sm last:border-0 ${code === '5R' || code === '5P' ? 'font-semibold' : ''}`}>
             <span><span className="mr-2 font-mono text-xs text-muted-foreground">{code}</span>{label}</span>
-            <span className="tabular-nums">{fmt(v as number)}</span>
+            <FigLink to={T5_SOURCE[code as string]}><span className="tabular-nums">{fmt(v as number)}</span></FigLink>
           </div>
         ))}
         {editable && <Button size="sm" variant="ghost" className="text-xs text-muted-foreground" onClick={stop}>Switch off the roll-forward for FY {financialYear}</Button>}

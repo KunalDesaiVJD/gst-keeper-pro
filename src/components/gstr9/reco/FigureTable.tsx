@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { CellTone } from '../grid/SheetGrid';
-import { figAnchor } from '@/lib/gstr9/figureLinks';
+import { figAnchor, type FigTarget } from '@/lib/gstr9/figureLinks';
+import { FigLink } from '../figure/FigLink';
 import { fmtMoney } from '../grid/money';
 import { toneClass } from './helpers';
 
@@ -32,6 +33,8 @@ export interface FigRow {
   /** Custom content per column (wins over `values`). */
   cells?: Record<string, React.ReactNode>;
   tones?: Record<string, CellTone>;
+  /** Figure links per column (figure/FigLink.tsx): a `values` figure carried from another step or tab opens its source. */
+  links?: Record<string, FigTarget | undefined>;
   kind?: 'row' | 'total' | 'heading' | 'sub';
   /** All-nil rows are shown dimmed. */
   muted?: boolean;
@@ -119,7 +122,15 @@ export const FigureTable: React.FC<{
                 toneClass(r.tones?.[c.key]),
               )}
             >
-              {custom !== undefined ? custom : v === null || v === undefined ? <span className="text-muted-foreground">—</span> : fmtMoney(v)}
+              {custom !== undefined ? (
+                custom
+              ) : v === null || v === undefined ? (
+                <span className="text-muted-foreground">—</span>
+              ) : r.links?.[c.key] ? (
+                <FigLink to={r.links[c.key]}>{fmtMoney(v)}</FigLink>
+              ) : (
+                fmtMoney(v)
+              )}
             </td>
           );
         })}

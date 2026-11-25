@@ -11,6 +11,8 @@ import { fmtMoney } from '../grid/money';
 import { Note, SectionCard, SourceChip } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { monthLabel, RCM_GRID_MAX_HEIGHT, useGoToStep } from './rcmShared';
+import { FigLink } from '../figure/FigLink';
+import { linkedMoney, portal3b, portalG9T4 } from '../figure/targetsData';
 
 /** One month of 3.1(d) of the as-filed GSTR-3B. */
 interface PartARow {
@@ -76,10 +78,15 @@ const RcmPartACard: React.FC = () => {
       align: 'left',
       width: 96,
       value: () => null,
-      render: (r) => <SourceChip meta={P.monthMeta[r.id]} manual={monthTyped(r.id)} />,
+      // The month's row on Portal data › As-filed GSTR-3B (the link a superadmin, who types the cells, still has).
+      render: (r) => (
+        <FigLink to={portal3b('rcm', r.id)} className="text-left no-underline">
+          <SourceChip meta={P.monthMeta[r.id]} manual={monthTyped(r.id)} />
+        </FigLink>
+      ),
     },
-    ...HEADS.map((h) =>
-      moneyCol<PartARow>(h, HEAD_LABEL[h], (r) => r.rcm[h], (r, v) => ({ ...r, rcm: { ...r.rcm, [h]: v ?? 0 } }), {
+    ...HEADS.map((h) => ({
+      ...moneyCol<PartARow>(h, HEAD_LABEL[h], (r) => r.rcm[h], (r, v) => ({ ...r, rcm: { ...r.rcm, [h]: v ?? 0 } }), {
         group: GROUP,
         width: h === 't' ? 130 : h === 'x' ? 96 : 118,
         editable: () => canEditSource,
@@ -88,8 +95,11 @@ const RcmPartACard: React.FC = () => {
           return canEditSource ? typed || undefined : [typed, LOCKED_TITLE.portal].filter(Boolean).join(' ');
         },
       }),
-    ),
+      // Locked for everyone but the superadmin: the figure opens its month on Portal data.
+      ...(canEditSource ? {} : { render: (r: PartARow) => linkedMoney(r.rcm[h], portal3b('rcm', r.id, h), r.f[h]) }),
+    })),
   ];
+  const totalTo = (h: Head) => (W.partASource === 'gstr9' ? portalG9T4('rchrg', h) : portal3b('rcm', 'total', h));
 
   const annual = W.partASource === 'gstr9';
 
@@ -138,7 +148,7 @@ const RcmPartACard: React.FC = () => {
             key: 'total',
             label: annual ? 'GSTR-9 4G (year)' : 'Total',
             tone: 'total',
-            cells: { t: W.partA.t, i: W.partA.i, c: W.partA.c, s: W.partA.s, x: W.partA.x },
+            cells: Object.fromEntries(HEADS.map((h) => [h, <FigLink key={h} to={totalTo(h)}>{fmtMoney(W.partA[h])}</FigLink>])),
           },
         ]}
       />

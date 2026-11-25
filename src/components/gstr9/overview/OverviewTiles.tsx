@@ -2,7 +2,8 @@ import React from 'react';
 import type { DiffLine, StepKey } from '@/lib/gstr9/engine';
 import { KpiTile } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
-import { monthsApplied, nzT, rupees, stepMeta, sumTax, useGoToStep, worstHead } from './steps';
+import { monthsApplied, nzT, rupees, stepMeta, sumTax, worstHead } from './steps';
+import { useGoFigure, type FigTarget } from '../figure/FigLink';
 
 type Tone = 'ok' | 'warn' | 'error' | 'neutral';
 
@@ -27,10 +28,19 @@ interface TileDef {
   tone: Tone;
 }
 
+/** The table and row each check is read from, so a tile opens that row (figure/FigLink.tsx). */
+const FIG: Record<string, Pick<FigTarget, 'table' | 'row'>> = {
+  turnover: { table: 'Total income: books against the audit report', row: 'footer:diff' },
+  out: { table: 'Output tax by month', row: 'footer:total' },
+  itc: { table: 'Input tax credit by month', row: 'footer:itc' },
+  outward: { table: 'GSTR 9-OUTPUT: books vs GSTR-9 auto-populated', row: 'footer:total' },
+  '8d': { table: 'GSTR-9 Table 8', row: '8D' },
+};
+
 /** The headline checks of the working, each opening the step it comes from. */
 export const OverviewTiles: React.FC = () => {
   const { workings: w } = useWorkspace();
-  const go = useGoToStep();
+  const goFig = useGoFigure();
   const by = (test: (key: string) => boolean) => w.diffs.filter((d) => test(d.key));
   const applied = monthsApplied(w).length;
   const tiles: TileDef[] = [];
@@ -115,7 +125,7 @@ export const OverviewTiles: React.FC = () => {
         <button
           key={t.key}
           type="button"
-          onClick={() => go(t.step, t.tab)}
+          onClick={() => goFig({ step: t.step, tab: t.step === 'outward' ? { outwardtab: 'compare' } : t.tab, ...FIG[t.key], label: t.label })}
           title={`${t.label} — ${t.hint}. Go to ${stepMeta(t.step).label}`}
           className="rounded-lg text-left transition-shadow hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>div]:h-full"
         >

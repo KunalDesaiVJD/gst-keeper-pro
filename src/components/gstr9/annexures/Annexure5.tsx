@@ -7,6 +7,8 @@ import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { fmtIsoDate } from '../sales/CapitalGoodsSold';
 import { StepLink } from './StepLink';
+import { FigLink } from '../figure/FigLink';
+import { salesCgAsset } from '../figure/targetsFinish';
 
 const HEADS: Array<[keyof Tax, string]> = [['i', 'IGST'], ['c', 'CGST'], ['s', 'SGST'], ['x', 'Cess']];
 const byHead = (t: Tax): string => HEADS.filter(([h]) => Math.abs(t[h]) >= 0.005).map(([h, l]) => `${l} ${fmtMoney(t[h])}`).join(' + ') || 'nil';
@@ -34,7 +36,8 @@ const Computation: React.FC<{ a: CapitalGoodsAsset; c: CgSaleCalc }> = ({ a, c }
   }
   return (
     <div className="rounded-md border px-3 py-2">
-      <div className="mb-1 text-sm font-medium">{a.description || 'Asset'}{a.hsn ? <span className="ml-2 text-xs font-normal text-muted-foreground">HSN {a.hsn}</span> : null}</div>
+      {/* The asset's figures are typed on Sales › Capital goods sold: its name opens that row. */}
+      <div className="mb-1 text-sm font-medium"><FigLink to={salesCgAsset(a.id)} className="text-left">{a.description || 'Asset'}</FigLink>{a.hsn ? <span className="ml-2 text-xs font-normal text-muted-foreground">HSN {a.hsn}</span> : null}</div>
       <dl className="grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-[180px_1fr]">
         {lines.map(([k, v]) => (
           <React.Fragment key={k}>

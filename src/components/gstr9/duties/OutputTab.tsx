@@ -10,11 +10,13 @@ import AdjustmentsGrid from './AdjustmentsGrid';
 import PortalNote from './PortalNote';
 import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
+import { portal3b, salesPartATotal } from '../figure/targetsData';
 import {
   computedCols,
   diffCells,
   diffCols,
   footerStatusLabel,
+  linkCells,
   mirroredTaxCols,
   monthCol,
   monthRowF,
@@ -163,7 +165,7 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           ...taxFooter('sales', dto.totals.sales, cess),
           ...taxFooter('creditNote', dto.totals.cn, cess),
           ...taxFooter('net', dto.totals.net, cess),
-          ...taxFooter('outTax', dto.totals.asPer3B, cess),
+          ...linkCells(taxFooter('outTax', dto.totals.asPer3B, cess), (h) => portal3b('outTax', 'total', h)),
           ...diffCells('diff', dto.totals.diff, cess, tol),
         },
       },
@@ -175,7 +177,7 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           </FooterLabel>
         ),
         tone: 'total',
-        cells: soft(taxFooter('net', dto.asPerPl, cess)),
+        cells: linkCells(taxFooter('net', dto.asPerPl, cess), (h) => salesPartATotal(h), true),
       },
       {
         key: 'plDiff',

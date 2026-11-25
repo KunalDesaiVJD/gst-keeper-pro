@@ -4,6 +4,7 @@ import type { RcmItcTable } from '@/lib/gstr9/types';
 import { MatrixTable, SectionCard, type MatrixRow } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { categoryName, ITC_TABLE_LABEL, itcTableOf } from './rcmShared';
+import { portalG9T4, rcmPartA, rcmPartB } from '../figure/targetsData';
 
 const Src: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">{children}</Badge>
@@ -18,6 +19,8 @@ const RcmFlowsCard: React.FC = () => {
   const cats = docs.rcm.categories;
   const namesIn = (t: RcmItcTable) => cats.filter((c) => itcTableOf(c.itcTable) === t).map(categoryName).join(', ');
 
+  // 9C P is Part B less the expenses with no ITC; Part B's own total still holds them.
+  const noItc = Object.values(W.byItcTable.none).some((v) => Math.abs(Number(v) || 0) > 0.004);
   const tables: RcmItcTable[] = ['6C', '6D', '6F', 'none'];
   const itcRows: MatrixRow[] = tables
     // 6C always shows (the default); 6D / 6F / No ITC only when an expense is set to them.
@@ -36,11 +39,12 @@ const RcmFlowsCard: React.FC = () => {
       code: '4G',
       label: 'GSTR-9 — inward supplies on which tax is paid on reverse charge',
       value: workings.g9.t4.G,
+      link: (h) => (W.partASource === 'gstr9' ? portalG9T4('rchrg', h) : rcmPartA('total', h)),
       note: <Src>{W.partASource === 'gstr9' ? 'Part A · GSTR-9 4G' : 'Part A · portal'}</Src>,
     },
     ...itcRows,
-    { key: 'ann1D', code: <Code>Ann-1 D</Code>, label: 'Annexure-1 — tax paid on RCM as per books', value: workings.ann1.D, note: <Src>Part B · books</Src> },
-    { key: 'c14P', code: <Code>9C P</Code>, label: 'GSTR-9C expense heads — any other expense 1 (RCM)', value: workings.c14.rows.P, note: <Src>Part B · books</Src> },
+    { key: 'ann1D', code: <Code>Ann-1 D</Code>, label: 'Annexure-1 — tax paid on RCM as per books', value: workings.ann1.D, note: <Src>Part B · books</Src>, link: (h) => rcmPartB('total', `b.${h}`) },
+    { key: 'c14P', code: <Code>9C P</Code>, label: 'GSTR-9C expense heads — any other expense 1 (RCM)', value: workings.c14.rows.P, note: <Src>Part B · books</Src>, link: (h) => rcmPartB('total', `b.${h}`, noItc) },
     {
       key: 'ann3',
       code: <Code>Ann-3 2</Code>,

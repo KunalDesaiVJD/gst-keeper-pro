@@ -13,6 +13,10 @@ import { diffTone, displayCol, moneyCol } from '../grid/columns';
 import { FigureTable, type FigColumn, type FigRow } from '../reco/FigureTable';
 import { anyValTax, mergePathFormulas, nz, pathFormulas, useGoToStep, useTabParam } from '../reco/helpers';
 import { CountBadge, OpenBadge, StepTab, StepTabsList, ViewSwitch } from '../reco/StepTabs';
+import { FigLink, type FigTarget } from '../figure/FigLink';
+import { fmtMoney } from '../grid/money';
+import { outwardBuckets, outwardExtra, portalT4, portalT4Total, salesPartARow, salesPartATotal } from '../figure/targetsReco';
+import type { T4Key } from '@/lib/gstr9/types';
 
 // Step 6 — GSTR 9-OUTPUT: (A) data as per books vs (B) data auto-populated in
 // GSTR-9 (portal system-computed Table 4), and the difference A − B with a
@@ -105,10 +109,33 @@ const ComparisonCard: React.FC = () => {
     return { values, tones };
   };
 
+  // Figure links (figure/targetsReco.ts): books open the ledger buckets (or the books-side extras they come
+  // from), the GSTR-9 side its row of Portal data › Table 4; the difference is this step's own.
+  const X = docs.gstr9.t4BooksExtra;
+  const booksLink = (key: string, h: Head): FigTarget => {
+    if (key === 'amd') return outwardExtra(anyValTax(X.amd_pos) || !anyValTax(X.amd_neg) ? 'amd_pos' : 'amd_neg', h);
+    if ((key === 'at' || key === 'dr_nt') && anyValTax(X[key])) {
+      const r = out.rows.find((x) => x.key === key);
+      const ledgerPart = r ? anyValTax({ t: r.books.t - X[key].t, i: r.books.i - X[key].i, c: r.books.c - X[key].c, s: r.books.s - X[key].s, x: r.books.x - X[key].x }) : false;
+      if (!ledgerPart) return outwardExtra(key, h);
+    }
+    return outwardBuckets;
+  };
+  const portalLink = (key: string, h: Head): FigTarget => portalT4((key === 'amd' ? 'amd_pos' : key) as T4Key, h);
+  const linksFor = (rowKey: string | null): FigRow['links'] => {
+    const links: NonNullable<FigRow['links']> = {};
+    heads.forEach(([h]) => {
+      if (rowKey) links[`books.${h}`] = booksLink(rowKey, h);
+      if (hasPortal) links[`portal.${h}`] = rowKey ? portalLink(rowKey, h) : portalT4Total(h);
+    });
+    return links;
+  };
+
   const rows: FigRow[] = out.rows.map((r) => {
     const { values, tones } = figures(r.books, r.portal, r.diff);
     const key = `out.${r.key}`;
     return {
+      links: linksFor(r.key),
       key: r.key,
       code: r.table,
       label: r.subtract ? (
@@ -130,6 +157,7 @@ const ComparisonCard: React.FC = () => {
       key: 'total',
       label: 'TOTAL (credit notes deducted)',
       values: totals.values,
+      links: linksFor(null),
       tones: totals.tones,
       status: hasPortal ? status('out.total') : undefined,
     },
@@ -219,8 +247,15 @@ const CategoriseCard: React.FC = () => {
   const columns: GridColumn<SalesRow>[] = [
     { key: 'ledger', header: 'Ledger', type: 'display', align: 'left', width: 260, sticky: true, value: (r) => r.ledger || '(unnamed ledger)' },
     { key: 'supply', header: 'Supply', type: 'display', align: 'left', width: 96, value: (r) => (r.supplyType === 'inter' ? 'Inter-state' : 'Intra-state') },
-    displayCol<SalesRow>('taxable', 'Taxable value', (r) => r.taxable, { width: 132 }),
-    displayCol<SalesRow>('tax', 'Total tax', (r) => (calc[r.id] ? totalTax(calc[r.id].tax) : null), { width: 120 }),
+    // Figures from Sales › Part A (figure/targetsReco.ts); only the bucket is set here.
+    {
+      ...displayCol<SalesRow>('taxable', 'Taxable value', (r) => r.taxable, { width: 132 }),
+      render: (r) => <FigLink to={salesPartARow(r.id, 'taxable')}>{fmtMoney(r.taxable)}</FigLink>,
+    },
+    {
+      ...displayCol<SalesRow>('tax', 'Total tax', (r) => (calc[r.id] ? totalTax(calc[r.id].tax) : null), { width: 120 }),
+      render: (r) => (calc[r.id] ? <FigLink to={salesPartARow(r.id)}>{fmtMoney(totalTax(calc[r.id].tax))}</FigLink> : <span className="text-muted-foreground">—</span>),
+    },
     {
       key: 'category',
       header: 'GSTR-9 bucket',
@@ -286,7 +321,10 @@ const CategoriseCard: React.FC = () => {
             </Button>
           </span>
         }
-        footer={rows.length ? [{ key: 'total', label: 'Total Part A', tone: 'total', cells: { taxable: taxableTotal, tax: totalTax(workings.sales.partA) } }] : undefined}
+        footer={rows.length ? [{ key: 'total', label: 'Total Part A', tone: 'total', cells: {
+                taxable: <FigLink to={salesPartATotal('taxable')}>{fmtMoney(taxableTotal)}</FigLink>,
+                tax: <FigLink to={salesPartATotal()}>{fmtMoney(totalTax(workings.sales.partA))}</FigLink>,
+              } }] : undefined}
       />
     </SectionCard>
   );

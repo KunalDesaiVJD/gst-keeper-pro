@@ -9,6 +9,7 @@ import { displayCol, taxFooter, taxInCols } from '../grid/columns';
 import { FixedTaxGrid, type FixedTaxRow } from './FixedTaxGrid';
 import { StepLink } from './StepLink';
 import { ANNEX_TAB_PARAM, rupees } from './taxRows';
+import { ann1PaidDiff, itcNextYear, payablesRegister, salesCg } from '../figure/targetsFinish';
 
 const Annexure3: React.FC = () => {
   const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
@@ -22,6 +23,7 @@ const Annexure3: React.FC = () => {
       id: 'r1', no: '1', kind: 'computed', value: w.clause9,
       label: 'Clause 9 difference of GSTR-9',
       hint: 'Annexure-1 paid & payable: payable (books) − paid (Table 9)',
+      link: (h) => ann1PaidDiff(h),
     },
     {
       id: 'r2', no: '2', kind: 'override', value: w.rcmToPay, stored: A.a3RcmToPay,
@@ -39,6 +41,7 @@ const Annexure3: React.FC = () => {
       defaultChip: 'Suggested (Table 12)', resetLabel: 'Use suggested', defaultValue: w.excessItcSuggested,
       // Filled in from GSTR-9 Table 12: the superadmin's to type over (sourceLock.ts).
       locked: !canEditSource,
+      link: (h) => itcNextYear('t12', h),
       onChange: (v) => update('annexures', (d) => ({ ...d, a3ExcessItc: v })),
     },
   ];
@@ -69,7 +72,7 @@ const Annexure3: React.FC = () => {
   const positive = (_h: string, v: number) => (v > tol ? ('error' as const) : undefined);
   const sumRows: FixedTaxRow[] = [
     ...(totalTax(w.cg186) > 0.005
-      ? [{ id: 'cg186', kind: 'computed', value: w.cg186, label: '5. Capital goods sold u/s 18(6): shortfall not yet reversed', hint: 'Annexure-5 (Sales · Capital goods sold), input side' } as FixedTaxRow]
+      ? [{ id: 'cg186', kind: 'computed', value: w.cg186, label: '5. Capital goods sold u/s 18(6): shortfall not yet reversed', hint: 'Annexure-5 (Sales · Capital goods sold), input side', link: salesCg() } as FixedTaxRow]
       : []),
     { id: 'total', kind: 'computed', value: w.total, emphasis: true, label: totalTax(w.cg186) > 0.005 ? 'Total (1 + 2 + 3 + 4 + 5)' : 'Total (1 + 2 + 3 + 4)', hint: 'Signed, as the sheet (D46)' },
     { id: 'payable', kind: 'computed', value: w.payable, label: 'DRC-03 payable', hint: 'Heads that come out positive' },
@@ -77,6 +80,7 @@ const Annexure3: React.FC = () => {
     {
       id: 'already', kind: 'computed', value: w.alreadyPaid,
       label: 'Set off — DRC-03 / GSTR-3B', hint: 'From the set-off register on the Payables & set-off step: a DRC-03 in the system or a GSTR-3B effect with its copy',
+      link: payablesRegister,
     },
     { id: 'balance', kind: 'computed', value: w.balance, emphasis: true, label: 'Balance to pay', tone: positive },
   ];

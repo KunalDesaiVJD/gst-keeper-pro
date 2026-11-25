@@ -780,3 +780,17 @@ not links.
   whose anchor is missing falls back to a shorter anchor, then the paper's A1,
   and a link to a paper not in a one-step export is dropped
   (`src/lib/gstr9/export/model.ts`).
+
+**Every tab (25 Nov 2026, later).** The same links run on every step: a figure
+locked, computed or carried from another step or tab opens its source
+(targets in `src/components/gstr9/figure/targetsData.ts` for Portal data,
+Sales, Purchases, Duties & Taxes and RCM, `targetsReco.ts` for Outward / ITC
+reco and 9C heads, `targetsFinish.ts` for Annexures, Notice, Payables,
+Overview and Review; a difference line opens its own row, `diffTarget`). A cell
+a superadmin may type over keeps typing and its source chip carries the link.
+
+**What to type, at a glance.** Cells look as in the firm's working papers
+(`--cell-input` tokens, `SheetGrid`, `figure/CellLegend.tsx` shown under each
+step heading): a cell to type is pale yellow with blue figures (an empty one
+outlined); a figure from another tab is green with a dotted underline (a link);
+computed or locked figures are grey. A locked working shows no yellow cells.

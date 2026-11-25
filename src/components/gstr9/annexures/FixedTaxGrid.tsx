@@ -9,6 +9,7 @@ import { SheetGrid, type CellTone, type GridColumn, type GridFooterRow } from '.
 import { fmtMoney } from '../grid/money';
 import { SGST_LOCKED_TITLE } from '../grid/columns';
 import { HEAD_NAME, setHead, setHeadFormula, toTaxIn, type Head } from './taxRows';
+import { FigLink, type FigTarget } from '../figure/FigLink';
 
 /**
  * One line of a fixed-row tax table (Annexure-3, Annexure-4, the notice
@@ -50,7 +51,24 @@ export interface FixedTaxRow {
   /** Bold (sub)total line. */
   emphasis?: boolean;
   tone?: (head: Head | 'total', v: number) => CellTone;
+  /**
+   * Where the line's figure comes from (figure/FigLink.tsx): a computed line's
+   * figures, and an override line's while they show its source and can't be
+   * typed here, open it; an override line the user can type keeps its cells
+   * and its source chip carries the link instead.
+   */
+  link?: FigTarget | ((head: Head) => FigTarget | undefined);
 }
+
+const linkOf = (r: FixedTaxRow, h: Head): FigTarget | undefined => (typeof r.link === 'function' ? r.link(h) : r.link);
+
+/** The line's source without a cell (for the chip and the Total column). */
+const rowLink = (r: FixedTaxRow): FigTarget | undefined => {
+  if (!r.link) return undefined;
+  if (typeof r.link !== 'function') return { ...r.link, col: undefined };
+  const t = (['i', 'c', 's', 'x'] as Head[]).map((h) => linkOf(r, h)).find(Boolean);
+  return t ? { ...t, col: undefined } : undefined;
+};
 
 /** Plain text of a label cell, for Ctrl+C. */
 const textOf = (n: React.ReactNode): string | null => (typeof n === 'string' || typeof n === 'number' ? String(n) : null);
@@ -87,12 +105,15 @@ const editRow = (r: FixedTaxRow, h: Head, v: number | null, formula: string | un
   return { ...r, stored: setHeadFormula(setHead(st, h, v), h, v === null ? undefined : formula) };
 };
 
-const renderMoney = (r: FixedTaxRow, h: Head) => {
+const renderMoney = (r: FixedTaxRow, h: Head, to?: FigTarget) => {
   const v = cellValue(r, h);
   if (v === null) {
     const ph = cellPlaceholder(r, h);
-    return ph === null ? null : <span className="italic text-muted-foreground">{fmtMoney(ph)}</span>;
+    if (ph === null) return null;
+    const text = <span className="italic text-muted-foreground">{fmtMoney(ph)}</span>;
+    return to ? <FigLink to={to}>{text}</FigLink> : text;
   }
+  if (to) return <FigLink to={to} className={cn(r.emphasis && 'font-semibold')}>{fmtMoney(v)}</FigLink>;
   const fx = cellFormula(r, h);
   return (
     <span className={cn('inline-flex items-center gap-1', r.emphasis && 'font-semibold')}>
@@ -110,22 +131,26 @@ const renderMoney = (r: FixedTaxRow, h: Head) => {
 const SourceTag: React.FC<{ row: FixedTaxRow; readOnly?: boolean }> = ({ row: r, readOnly }) => {
   const chip = r.defaultChip ?? 'Computed';
   const lock = r.locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />;
+  const src = rowLink(r);
   if (!storedOf(r)) {
-    return (
+    const badge = (
       <Badge variant="secondary" className="ml-1.5 gap-1 whitespace-nowrap align-middle text-[10px] font-normal" title={r.locked ? LOCKED_TITLE.filled : undefined}>
         {lock}{chip}
       </Badge>
     );
+    return src ? <FigLink to={src} className="text-left">{badge}</FigLink> : badge;
   }
   return (
     <span className="ml-1.5 inline-flex items-center gap-1 align-middle">
-      <Badge
-        variant="outline"
-        className="whitespace-nowrap text-[10px] font-normal"
-        title={[r.defaultValue ? `${chip}: ${brief(r.defaultValue)}` : '', r.locked ? 'Typed by a superadmin — locked.' : ''].filter(Boolean).join(' ') || undefined}
-      >
-        {lock}Typed
-      </Badge>
+      <FigLink to={src} className="text-left">
+        <Badge
+          variant="outline"
+          className="whitespace-nowrap text-[10px] font-normal"
+          title={[r.defaultValue ? `${chip}: ${brief(r.defaultValue)}` : '', r.locked ? 'Typed by a superadmin — locked.' : ''].filter(Boolean).join(' ') || undefined}
+        >
+          {lock}Typed
+        </Badge>
+      </FigLink>
       {!readOnly && !r.locked && r.onChange && (
         <button
           type="button"
@@ -214,6 +239,14 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
       render: (r) => <div className="whitespace-normal py-1 leading-snug text-muted-foreground">{r.table}</div>,
     });
   }
+  const editableCell = (r: FixedTaxRow, h: Head) => h !== 's' && r.kind !== 'computed' && !r.locked && !!r.onChange;
+  /** A cell opens its source only while it shows the source's figure and can't be typed here. */
+  const cellLink = (r: FixedTaxRow, h: Head): FigTarget | undefined => {
+    if (!r.link) return undefined;
+    if (r.kind === 'computed') return linkOf(r, h);
+    if (r.kind === 'override' && !storedOf(r) && (readOnly || !editableCell(r, h))) return linkOf(r, h);
+    return undefined;
+  };
   heads.forEach((h) => {
     columns.push({
       key: h,
@@ -223,7 +256,7 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
       value: (r) => cellValue(r, h),
       placeholder: (r) => cellPlaceholder(r, h),
       // SGST is locked (lockSgst): a CGST entry carries it.
-      editable: (r) => h !== 's' && r.kind !== 'computed' && !r.locked && !!r.onChange,
+      editable: (r) => editableCell(r, h),
       formula: (r) => cellFormula(r, h),
       onEdit: (r, e) => editRow(r, h, e.num, e.formula),
       tone: (r) => r.tone?.(h, r.value[h]),
@@ -235,7 +268,7 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
         if (!st) return `${r.defaultChip ?? 'Computed'} — type to override`;
         return undefined;
       },
-      render: (r) => renderMoney(r, h),
+      render: (r) => renderMoney(r, h, cellLink(r, h)),
     });
   });
   if (showTotal) {
@@ -246,7 +279,11 @@ export const FixedTaxGrid: React.FC<FixedTaxGridProps> = ({
       width: 120,
       value: (r) => totalTax(r.value),
       tone: (r) => r.tone?.('total', totalTax(r.value)),
-      render: (r) => <span className="font-semibold">{fmtMoney(totalTax(r.value))}</span>,
+      render: (r) => {
+        const total = <span className="font-semibold">{fmtMoney(totalTax(r.value))}</span>;
+        const to = r.kind === 'computed' || (r.kind === 'override' && !storedOf(r) && (readOnly || r.locked || !r.onChange)) ? rowLink(r) : undefined;
+        return to ? <FigLink to={to}>{total}</FigLink> : total;
+      },
     });
   }
   const onRowsChange = (next: FixedTaxRow[]) => {

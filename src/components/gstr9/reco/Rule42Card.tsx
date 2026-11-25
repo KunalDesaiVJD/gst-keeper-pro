@@ -11,6 +11,8 @@ import { displayCol, moneyCol } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
 import { FigureTable, type FigColumn, type FigRow } from './FigureTable';
 import { taxToIn, withFormulas } from './helpers';
+import { FigLink } from '../figure/FigLink';
+import { portal3bMonth, portal3bTotal } from '../figure/targetsReco';
 
 // ITC reco › Rule 42/43 — the Rule 42 working (src/lib/gstr9/rule42.ts):
 // month by month (quarter by quarter for QRMP) the provisional reversal
@@ -81,7 +83,11 @@ const Rule42Card: React.FC = () => {
 
   const columns: GridColumn<PRow>[] = [
     { key: 'period', header: 'Period', type: 'display', align: 'left', width: 120, sticky: true, value: (r) => r.p.label },
-    displayCol<PRow>('itc', '4A credit', (r) => r.p.itc[head], { group: 'Credit', width: 112, title: () => 'GSTR-3B 4A total as filed' }),
+    // The period's 4A as filed opens its month (a quarter's last month) on Portal data › As-filed GSTR-3B.
+    {
+      ...displayCol<PRow>('itc', '4A credit', (r) => r.p.itc[head], { group: 'Credit', width: 112, title: () => 'GSTR-3B 4A total as filed' }),
+      render: (r) => <FigLink to={portal3bMonth(r.m, 'itc4aTotal', head)}>{fmtMoney(r.p.itc[head])}</FigLink>,
+    },
     taxCell('cg', 'Capital goods (out)', (p) => p.cg),
     displayCol<PRow>('t', 'T', (r) => r.p.t[head], { group: 'Credit', width: 112 }),
     taxCell('t1', 'T1 non-business', (p) => p.t1),
@@ -142,7 +148,7 @@ const Rule42Card: React.FC = () => {
   const footer: GridFooterRow[] = [{
     key: 'total', label: 'Year', tone: 'total',
     cells: {
-      itc: sum('itc'), [`cg.${head}`]: sum('cg'), t: sum('t'), [`t1.${head}`]: sum('t1'), [`t2.${head}`]: sum('t2'), [`t3.${head}`]: sum('t3'),
+      itc: <FigLink to={portal3bTotal('itc4aTotal', head)}>{fmtMoney(sum('itc'))}</FigLink>, [`cg.${head}`]: sum('cg'), t: sum('t'), [`t1.${head}`]: sum('t1'), [`t2.${head}`]: sum('t2'), [`t3.${head}`]: sum('t3'),
       [`t4.${head}`]: sum('t4'), c2: sum('c2'), e: W.periodsE, f: W.periodsF, d1: sum('d1'), d2: sum('d2'), prov: sum('provisional'),
       [`reversed.${head}`]: sum('reversed'), short: sum('short'), int: sum('interest'),
     },
