@@ -33,7 +33,7 @@ const Req: React.FC = () => (
 
 const AddClientPage: React.FC = () => {
   const navigate = useNavigate();
-  const { canEditGstr1ImportMode, canAddEditClients } = useAuth();
+  const { canEditGstr1ImportMode, canAddClients } = useAuth();
   const [isSaving, setIsSaving] = useState(false);
 
   // Service categories (20261121100000): a new client files returns unless unticked.
@@ -330,7 +330,7 @@ const AddClientPage: React.FC = () => {
   };
 
   // The Clients page hides Add without add_edit_clients; the route is guarded too.
-  if (!canAddEditClients()) return <Navigate to="/clients" replace />;
+  if (!canAddClients()) return <Navigate to="/clients" replace />;
 
   return (
     <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">

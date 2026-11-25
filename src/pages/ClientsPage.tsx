@@ -88,7 +88,7 @@ const EINV_FILTER_LABEL: Record<EinvFilter, string> = {
 
 const ClientsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { canAddEditClients, canDeleteClients, canResetClientPasswords, user } = useAuth();
+  const { canAddEditClients, canAddClients, canDeleteClients, canResetClientPasswords, user } = useAuth();
   // Every staff member can reset a client's app password (the firm's decision).
   const showActions = canResetClientPasswords() || canAddEditClients() || canDeleteClients();
   const [resetTarget, setResetTarget] = useState<ResetClientTarget | null>(null);
@@ -303,7 +303,7 @@ const ClientsPage: React.FC = () => {
             ? (
                 <>
                   <LiberalModeListDialog triggerClassName={WS_BTN} />
-                  {canAddEditClients() && (
+                  {canAddClients() && (
                     <>
                       <BulkAddClientsDialog onSuccess={() => fetchClients()} triggerClassName={WS_BTN} />
                       <Button size="sm" onClick={() => navigate('/add-client')} className={WS_BTN}>
