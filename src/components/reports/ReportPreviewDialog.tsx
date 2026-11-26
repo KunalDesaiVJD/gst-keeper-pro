@@ -124,7 +124,7 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
         {!loading && error && (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-8">
             <AlertCircle className="h-5 w-5 text-destructive" />
-            <p className="text-sm text-muted-foreground max-w-md">{error}</p>
+            <p className="text-sm text-muted-foreground max-w-xl whitespace-pre-line">{error}</p>
             {report?.upload && onUpload && (
               <div className="mt-2 flex flex-col items-center gap-1">
                 <UploadButton report={report} onUpload={onUpload} busy={uploadBusy} />

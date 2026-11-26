@@ -221,6 +221,27 @@ export interface ReportTable {
   merge?: (tables: ReportTable[], periods: string[]) => ReportTable;
   /** Set on a period's placeholder table when that period could not be built (reportPeriodMerge). */
   failedReason?: string;
+  /**
+   * Which periods the figures come from, for a report read month by month
+   * from sources that may be missing (the GSTR-1 HSN summary): the preview
+   * shows it as one compact strip above the table, never a wall of errors.
+   */
+  coverage?: ReportCoverage;
+}
+
+/** One period of a report's coverage: where its figures came from, or why there are none. */
+export interface ReportCoveragePeriod {
+  period: string;
+  label: string;
+  /** 'ok' = full figures; 'partial' = totals only; 'missing' = nothing to read. */
+  status: 'ok' | 'partial' | 'missing';
+  source: string;
+}
+
+export interface ReportCoverage {
+  periods: ReportCoveragePeriod[];
+  /** One line on what to do for the periods not 'ok' (e.g. "Use Pull …"); shown only when some are. */
+  action?: string;
 }
 
 export interface ReportSummary {

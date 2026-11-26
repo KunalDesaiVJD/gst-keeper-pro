@@ -24,6 +24,7 @@ import { REPORT_STATUS_META } from '@/lib/reportRegistry';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/gstr9/badge';
 import { KpiTile } from '@/components/gstr9/ui';
+import { CoverageStrip } from './CoverageStrip';
 import { TableKitEmpty, TableKitPager, TableKitTable, TableKitToolbar, useTableKit } from './tableKit';
 
 interface DocumentLineItemsViewProps {
@@ -72,7 +73,13 @@ export const DocumentLineItemsView: React.FC<DocumentLineItemsViewProps> = ({ ta
       </CardHeader>
 
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-3">
-        {!hasAnyData && <TableKitEmpty />}
+        {table.coverage && <CoverageStrip coverage={table.coverage} />}
+
+        {!hasAnyData && (
+          <TableKitEmpty>
+            {table.coverage ? 'Nothing held for the months picked yet: see the months above for what to pull.' : undefined}
+          </TableKitEmpty>
+        )}
 
         {hasAnyData && (
           <>

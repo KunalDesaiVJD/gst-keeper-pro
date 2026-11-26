@@ -191,7 +191,7 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'gstr1-hsn-summary',
     title: 'GSTR 1 HSN Summary Report',
-    description: 'Table 12 HSN-wise summary of outward supplies, sorted by HSN/SAC code — uses the real filed GSTR-1 JSON once pulled, falling back to the books draft otherwise.',
+    description: 'Table 12 HSN-wise summary of outward supplies; several months add up by HSN, UQC and rate for GSTR-9 Table 17. Each month reads the filed GSTR-1 once pulled, else the books draft, else the last upload, else the portal summary\'s totals; months with nothing held are listed, not errors.',
     icon: Hash,
     category: 'gstr1',
     status: 'ready',
