@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  BriefcaseBusiness, Building2, History, ListChecks, Loader2, Plus, PlusCircle, Save, Shield, Trash2, Users,
+  BriefcaseBusiness, Building2, Copy, History, ListChecks, Loader2, Plus, PlusCircle, Save, Search, Shield, Sparkles,
+  Trash2, Users,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -25,7 +26,8 @@ import {
   WS_TD, WS_TH, WS_TR,
 } from '@/components/workspace/theme';
 import {
-  PERMISSIONS, PERMISSION_GROUPS, PERMISSION_LABEL, ROLE_ONLY_CONTROLS, permissionsInGroup,
+  ACTION_KEYS, PERMISSIONS, PERMISSION_GROUPS, PERMISSION_LABEL, ROLE_ONLY_CONTROLS, ROLE_PRESETS, SCREEN_KEYS,
+  applyKeyChange, isScreenKey, keyDiff, opensEveryScreen, permissionsInGroup, suggestPreset,
 } from '@/lib/permissionCatalog';
 import { setStaffLevel, STAFF_LEVEL_LABEL, type StaffLevel } from '@/lib/staffLevels';
 import ClientAccessTab from '@/components/userControl/ClientAccessTab';
@@ -90,6 +92,20 @@ const LOG_LABEL: Record<string, string> = {
   delete: 'Role deleted',
 };
 
+/** "Opens 9 of 14 screens · 12 actions", or every screen for a set that names none. */
+const accessSummary = (keys: Set<string>): string => {
+  const screens = [...keys].filter((k) => isScreenKey(k) && KNOWN.has(k)).length;
+  const actions = [...keys].filter((k) => !isScreenKey(k) && KNOWN.has(k)).length;
+  const s = opensEveryScreen(keys) ? 'Every screen' : `${screens} of ${SCREEN_KEYS.length} screens`;
+  return `${s} · ${actions} of ${ACTION_KEYS.length} actions`;
+};
+
+/** Tell the user what a tick also did (an action brings its screen; a screen takes its actions). */
+const announceLinks = (alsoOn: string[], alsoOff: string[]) => {
+  if (alsoOn.length) toast.info(`Also ticked: ${alsoOn.map((k) => PERMISSION_LABEL[k]).join(', ')}`, { description: 'An action needs its screen.' });
+  if (alsoOff.length) toast.info(`Also taken off: ${alsoOff.map((k) => PERMISSION_LABEL[k]).join(', ')}`, { description: 'These are done on the screen you took off.' });
+};
+
 /** A key the app no longer checks (e.g. manage_clients) shows as itself. */
 const labelOf = (k: string) => PERMISSION_LABEL[k] || `${k} (no longer used)`;
 
@@ -121,6 +137,9 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
   const [draft, setDraft] = useState<{ name: string; description: string; keys: Set<string> } | null>(null);
   const [saving, setSaving] = useState(false);
   const [newName, setNewName] = useState('');
+  // What a new role starts with: '' = the preset its name suggests (else blank),
+  // 'blank', 'preset:<id>' or 'role:<id>' (a copy of another role).
+  const [startFrom, setStartFrom] = useState('');
 
   // The person whose extra permissions are open in the dialog.
   const [extraFor, setExtraFor] = useState<Staff | null>(null);
@@ -208,17 +227,55 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
     || [...draft.keys].some((k) => !grants[selected.id]?.has(k))
   ));
 
+  /** The keys a new role starts with, and where they came from. */
+  const resolveStart = (from: string, name: string): { keys: string[]; label: string } => {
+    if (from === 'blank') return { keys: [], label: 'blank' };
+    if (from.startsWith('role:')) {
+      const r = positionById.get(from.slice(5));
+      return { keys: [...(grants[from.slice(5)] || [])], label: r ? `a copy of ${r.name}` : 'a copy' };
+    }
+    const preset = from.startsWith('preset:')
+      ? ROLE_PRESETS.find((p) => p.id === from.slice(7))
+      : suggestPreset(name);
+    return preset ? { keys: [...preset.keys], label: preset.name } : { keys: [], label: 'blank' };
+  };
+
+  /** Put a ready-made role's (or another role's) ticks into the editor, after showing what changes. */
+  const applyTemplate = async (keys: string[], label: string) => {
+    if (!draft) return;
+    const d = keyDiff(draft.keys, keys);
+    if (!d.add.length && !d.remove.length) { toast.info(`Already the same as ${label}`); return; }
+    if (draft.keys.size > 0) {
+      const ok = await confirm({
+        title: `Use ${label}?`,
+        description: `This replaces the ticks in the editor: ${d.add.length} added, ${d.remove.length} taken off. Nothing is saved until you press Save.`,
+        confirmText: 'Use it',
+      });
+      if (!ok) return;
+    }
+    setDraft({ ...draft, keys: new Set(keys) });
+  };
+
   const createPosition = async () => {
     const name = newName.trim();
     if (!name) { toast.error('Give the role a name'); return; }
+    const start = resolveStart(startFrom, name);
     const { data, error } = await supabase.from('staff_positions')
       .insert({ name, created_by: user?.id ?? null, sort_order: 100 })
       .select('id').single();
     if (error) { toast.error(error.code === '23505' ? 'A role with that name already exists' : error.message); return; }
+    if (start.keys.length) {
+      const { error: kErr } = await supabase.from('staff_position_permissions')
+        .insert(start.keys.map((k) => ({ position_id: data.id, permission_key: k, granted_by: user?.id ?? null })));
+      if (kErr) toast.error('Role created, but its starting permissions were not saved: ' + kErr.message);
+    }
     setNewName('');
+    setStartFrom('');
     await load();
     setSelectedId(data.id);
-    toast.success(`Role "${name}" created: tick its permissions and save`);
+    toast.success(start.keys.length
+      ? `Role "${name}" created from ${start.label}: adjust anything and save`
+      : `Role "${name}" created: start from a ready-made role or tick its permissions, then save`);
   };
 
   const savePosition = async () => {
@@ -491,7 +548,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                           <td className={cn(WS_TD, 'border-r-0 whitespace-nowrap text-xs')}>
                             {total === 0
                               ? <span className="text-warning">Nothing: choose a role</span>
-                              : <span className="tabular-nums">{total} of {PERMISSIONS.length}</span>}
+                              : <span className="tabular-nums">{accessSummary(new Set([...roleKeys(s), ...mine]))}</span>}
                           </td>
                         </>
                       )}
@@ -509,15 +566,35 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             title="Roles"
             description="A role is the usual set of permissions for a job. A change applies to everyone in it."
           >
-            <div className="flex gap-2">
-              <Input
-                className={WS_CONTROL} placeholder="New role, e.g. Article Assistant"
-                value={newName} onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') void createPosition(); }}
-              />
-              <Button size="sm" className={WS_BTN} onClick={() => void createPosition()}>
-                <Plus className="h-3.5 w-3.5" /> Add
-              </Button>
+            <div className="space-y-2 rounded-md border bg-muted/20 p-2">
+              <div className="flex gap-2">
+                <Input
+                  className={WS_CONTROL} placeholder="New role, e.g. Article Assistant"
+                  value={newName} onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void createPosition(); }}
+                />
+                <Button size="sm" className={WS_BTN} onClick={() => void createPosition()}>
+                  <Plus className="h-3.5 w-3.5" /> Add
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="shrink-0 text-xs text-muted-foreground">Start from</Label>
+                <Select value={startFrom || 'auto'} onValueChange={(v) => setStartFrom(v === 'auto' ? '' : v)}>
+                  <SelectTrigger className={WS_CONTROL} aria-label="What the new role starts with"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {suggestPreset(newName) ? `Suggested: ${suggestPreset(newName)?.name}` : 'Suggested from the name'}
+                    </SelectItem>
+                    <SelectItem value="blank">Blank (tick everything yourself)</SelectItem>
+                    {ROLE_PRESETS.map((p) => (
+                      <SelectItem key={p.id} value={`preset:${p.id}`}>Ready-made: {p.name}</SelectItem>
+                    ))}
+                    {activePositions.map((p) => (
+                      <SelectItem key={p.id} value={`role:${p.id}`}>Copy of {p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div className="divide-y rounded-md border">
               {shownPositions.length === 0 && (
@@ -539,7 +616,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                     <span className="min-w-0">
                       <span className="block truncate font-medium">{p.name}</span>
                       <span className="text-xs text-muted-foreground">
-                        {k} permission{k === 1 ? '' : 's'} · {n} {n === 1 ? 'person' : 'people'}
+                        {k ? accessSummary(grants[p.id] || new Set()) : 'Nothing ticked'} · {n} {n === 1 ? 'person' : 'people'}
                       </span>
                     </span>
                     {p.is_legacy
@@ -599,13 +676,70 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                 {!selected.is_active && !selected.is_legacy && (
                   <Note tone="warn">Retired: its holders have none of these permissions until it is reactivated.</Note>
                 )}
+                {!selected.is_legacy && (
+                  <div className="space-y-2 rounded-md border border-primary/20 bg-primary/[0.04] p-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                      <span className="text-xs font-semibold">Quick start</span>
+                      <span className="text-xs text-muted-foreground">Pick the nearest job, then adjust a few ticks</span>
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+                        <Select
+                          value=""
+                          onValueChange={(id) => {
+                            const r = positionById.get(id);
+                            if (r) void applyTemplate([...(grants[id] || [])], `the ticks of ${r.name}`);
+                          }}
+                        >
+                          <SelectTrigger className={cn(WS_CONTROL, 'w-[170px]')} aria-label="Copy another role's ticks">
+                            <SelectValue placeholder="Copy from a role" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activePositions.filter((p) => p.id !== selected.id).map((p) => (
+                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+                      {ROLE_PRESETS.map((p) => {
+                        const same = p.keys.length === draft.keys.size && p.keys.every((k) => draft.keys.has(k));
+                        const hinted = suggestPreset(draft.name)?.id === p.id;
+                        return (
+                          <button
+                            key={p.id} type="button"
+                            onClick={() => void applyTemplate(p.keys, p.name)}
+                            className={cn(
+                              'rounded-md border bg-card px-2.5 py-1.5 text-left transition-colors hover:border-primary/50 hover:bg-primary/[0.06]',
+                              same && 'border-primary bg-primary/[0.08]',
+                            )}
+                          >
+                            <span className="flex items-center gap-1 text-xs font-semibold">
+                              {p.name}
+                              {same ? <Badge variant="default" className="text-[9px]">In use</Badge>
+                                : hinted && <Badge variant="secondary" className="text-[9px]">Suggested</Badge>}
+                            </span>
+                            <span className="block text-[11px] leading-snug text-muted-foreground">{p.description}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {!selected.is_legacy && draft.keys.size > 0 && opensEveryScreen(draft.keys) && (
+                  <Note tone="warn">
+                    No screen is ticked, so holders of this role open every screen, as before screens could be chosen.
+                    Tick the screens they need to limit them.
+                  </Note>
+                )}
                 <PermissionPicker
                   isOn={(k) => draft.keys.has(k)}
                   disabled={selected.is_legacy}
                   onChange={(keys, on) => {
-                    const next = new Set(draft.keys);
-                    keys.forEach((k) => (on ? next.add(k) : next.delete(k)));
-                    setDraft({ ...draft, keys: next });
+                    const r = applyKeyChange(draft.keys, keys, on);
+                    setDraft({ ...draft, keys: r.next });
+                    announceLinks(r.alsoOn, r.alsoOff);
                   }}
                 />
                 <Note tone="info">
@@ -651,7 +785,10 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
                         const asExtra = employees.filter((s) => extras[s.user_id]?.has(p.key));
                         return (
                           <tr key={p.key} className={WS_TR}>
-                            <td className={cn(WS_TD, 'font-medium')}>{p.label}</td>
+                            <td className={cn(WS_TD, 'font-medium')}>
+                              {p.label}
+                              {p.screen && <Badge variant="secondary" className="ml-1.5 text-[9px] font-normal">Screen</Badge>}
+                            </td>
                             <td className={cn(WS_TD, 'text-xs text-muted-foreground')}>{p.description}</td>
                             <td className={cn(WS_TD, 'text-xs')}>
                               {inRoles.length ? inRoles.map((r) => r.name).join(', ') : <span className="text-muted-foreground">None</span>}
@@ -723,11 +860,20 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             isLocked={(k) => dlgRole.has(k)}
             isExtra={(k) => !dlgRole.has(k) && extraDraft.has(k)}
             onChange={(keys, on) => {
-              const next = new Set(extraDraft);
-              keys.filter((k) => !dlgRole.has(k)).forEach((k) => (on ? next.add(k) : next.delete(k)));
-              setExtraDraft(next);
+              // Linked against everything the person holds; only what the role does not give is an extra.
+              // A person whose role names no screen opens every screen, so an extra never limits them to one.
+              const all = new Set([...dlgRole, ...extraDraft]);
+              const r = applyKeyChange(all, keys.filter((k) => !dlgRole.has(k)), on, !opensEveryScreen(dlgRole) || [...extraDraft].some(isScreenKey));
+              setExtraDraft(new Set([...r.next].filter((k) => !dlgRole.has(k))));
+              announceLinks(r.alsoOn, r.alsoOff.filter((k) => !dlgRole.has(k)));
             }}
           />
+          {opensEveryScreen(dlgRole) && [...extraDraft].some(isScreenKey) && (
+            <Note tone="warn">
+              {dlgRoleName ? `The role ${dlgRoleName} names no screen` : `${extraFor?.first_name} has no role`}, so the screens ticked
+              here are the only ones {extraFor?.first_name} will open. Untick them to let {extraFor?.first_name} open every screen.
+            </Note>
+          )}
           {dlgUnknown.length > 0 && (
             <Note tone="warn">
               Also held, but no longer checked anywhere in the app: {dlgUnknown.join(', ')}.{' '}
@@ -774,56 +920,104 @@ const PermissionPicker: React.FC<{
   isExtra?: (key: string) => boolean;
   disabled?: boolean;
   onChange: (keys: string[], on: boolean) => void;
-}> = ({ isOn, isLocked = () => false, isExtra = () => false, disabled = false, onChange }) => (
-  <div className="space-y-3">
-    {PERMISSION_GROUPS.map((g) => {
-      const items = permissionsInGroup(g.key);
-      if (!items.length) return null;
-      const open = items.filter((p) => !isLocked(p.key));
-      const all = open.length > 0 && open.every((p) => isOn(p.key));
-      return (
-        <div key={g.key} className="rounded-md border">
-          <div className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
-            <span className="text-sm font-semibold">{g.label}</span>
-            {!disabled && open.length > 0 && (
-              <button
-                type="button" className="text-xs text-primary hover:underline"
-                onClick={() => onChange(open.map((p) => p.key), !all)}
-              >
-                {all ? 'Clear group' : 'Tick all'}
-              </button>
-            )}
-          </div>
-          <div className="grid gap-x-4 sm:grid-cols-2">
-            {items.map((p) => {
-              const locked = isLocked(p.key);
-              return (
-                <label
-                  key={p.key} htmlFor={`perm-${p.key}`}
-                  className={cn('flex items-start gap-2.5 px-3 py-2', locked || disabled ? 'cursor-default' : 'cursor-pointer hover:bg-muted/30')}
-                >
-                  <Checkbox
-                    id={`perm-${p.key}`} className="mt-0.5"
-                    checked={isOn(p.key)}
-                    disabled={locked || disabled}
-                    onCheckedChange={(c) => onChange([p.key], !!c)}
-                  />
-                  <span className="space-y-0.5">
-                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-                      {p.label}
-                      {locked && <Badge variant="secondary" className="text-[10px] font-normal">from role</Badge>}
-                      {isExtra(p.key) && <Badge variant="outline" className="text-[10px] font-normal">extra</Badge>}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">{p.description}</span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+}> = ({ isOn, isLocked = () => false, isExtra = () => false, disabled = false, onChange }) => {
+  const [q, setQ] = useState('');
+  const needle = q.trim().toLowerCase();
+  const match = (p: (typeof PERMISSIONS)[number]) => !needle
+    || p.label.toLowerCase().includes(needle) || p.description.toLowerCase().includes(needle);
+  const screensOn = SCREEN_KEYS.filter((k) => isOn(k)).length;
+  const actionsOn = ACTION_KEYS.filter((k) => isOn(k)).length;
+  const openAll = PERMISSIONS.filter((p) => !isLocked(p.key)).map((p) => p.key);
+  const everything = openAll.length > 0 && openAll.every((k) => isOn(k));
+  const openScreens = SCREEN_KEYS.filter((k) => !isLocked(k));
+  const allScreens = openScreens.length > 0 && openScreens.every((k) => isOn(k));
+  const shown = PERMISSION_GROUPS.map((g) => ({ g, items: permissionsInGroup(g.key).filter(match) })).filter((x) => x.items.length);
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[200px] flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className={cn(WS_CONTROL, 'pl-7')} placeholder="Find a screen or permission, e.g. filing, builder, delete"
+            value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find a permission"
+          />
         </div>
-      );
-    })}
-  </div>
-);
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {screensOn} of {SCREEN_KEYS.length} screens · {actionsOn} of {ACTION_KEYS.length} actions
+        </span>
+        {!disabled && (
+          <>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onChange(openScreens, !allScreens)}>
+              {allScreens ? 'No screens' : 'Every screen'}
+            </Button>
+            <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onChange(openAll, !everything)}>
+              {everything ? 'Clear everything' : 'Tick everything'}
+            </Button>
+          </>
+        )}
+      </div>
+      {shown.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">Nothing matches "{q}".</p>}
+      {shown.map(({ g, items }) => {
+        const open = items.filter((p) => !isLocked(p.key));
+        const all = open.length > 0 && open.every((p) => isOn(p.key));
+        const onCount = permissionsInGroup(g.key).filter((p) => isOn(p.key)).length;
+        const total = permissionsInGroup(g.key).length;
+        return (
+          <div key={g.key} className="rounded-md border">
+            <div className="flex items-center justify-between gap-2 border-b bg-muted/50 px-3 py-1.5">
+              <span className="text-sm font-semibold">
+                {g.label}
+                <span className="ml-2 text-xs font-normal tabular-nums text-muted-foreground">{onCount} of {total}</span>
+              </span>
+              {!disabled && open.length > 0 && (
+                <button
+                  type="button" className="text-xs text-primary hover:underline"
+                  onClick={() => onChange(open.map((p) => p.key), !all)}
+                >
+                  {all ? 'Clear group' : 'Tick all'}
+                </button>
+              )}
+            </div>
+            <div className="grid gap-x-4 sm:grid-cols-2">
+              {items.map((p) => {
+                const locked = isLocked(p.key);
+                const screenOff = p.needs && !isOn(p.needs) && !isOn(p.key);
+                return (
+                  <label
+                    key={p.key} htmlFor={`perm-${p.key}`}
+                    className={cn(
+                      'flex items-start gap-2.5 px-3 py-2',
+                      p.screen && 'bg-primary/[0.03]',
+                      locked || disabled ? 'cursor-default' : 'cursor-pointer hover:bg-muted/30',
+                    )}
+                  >
+                    <Checkbox
+                      id={`perm-${p.key}`} className="mt-0.5"
+                      checked={isOn(p.key)}
+                      disabled={locked || disabled}
+                      onCheckedChange={(c) => onChange([p.key], !!c)}
+                    />
+                    <span className="space-y-0.5">
+                      <span className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+                        {p.label}
+                        {p.screen && <Badge variant="secondary" className="text-[10px] font-normal">Screen</Badge>}
+                        {locked && <Badge variant="secondary" className="text-[10px] font-normal">from role</Badge>}
+                        {isExtra(p.key) && <Badge variant="outline" className="text-[10px] font-normal">extra</Badge>}
+                      </span>
+                      <span className="block text-xs text-muted-foreground">{p.description}</span>
+                      {screenOff && !disabled && (
+                        <span className="block text-[11px] text-muted-foreground/80">Ticking it also ticks {PERMISSION_LABEL[p.needs!]}</span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 export default UserControlPage;

@@ -1,5 +1,5 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
-import { Outlet, Navigate, useLocation } from 'react-router-dom';
+import { Link, Outlet, Navigate, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './ErrorBoundary';
 import { lazyWithReload } from '@/lib/chunkReload';
 import { useAuth } from '@/contexts/AuthContext';
@@ -7,7 +7,8 @@ import Sidebar, { SidebarContents } from './Sidebar';
 import NotificationBell from '@/components/notices/NotificationBell';
 import SearchPalette from '@/components/notices/SearchPalette';
 import AutopilotBadge from '@/components/notices/autopilot/AutopilotBadge';
-import { Loader2, Menu } from 'lucide-react';
+import { Loader2, Lock, Menu } from 'lucide-react';
+import { PERMISSION_LABEL, moduleForPath, type ModuleKey } from '@/lib/permissionCatalog';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -26,8 +27,21 @@ class AssistantBoundary extends React.Component<{ children: React.ReactNode }, {
   render() { return this.state.failed ? null : this.props.children; }
 }
 
+/** A screen the employee's role does not open (User Control → Roles). */
+const NoScreenAccess: React.FC<{ module: ModuleKey | null }> = ({ module }) => (
+  <div className="mx-auto mt-16 max-w-md rounded-lg border bg-card p-6 text-center shadow-sm">
+    <Lock className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+    <h1 className="text-base font-semibold">This screen is not in your role</h1>
+    <p className="mt-1 text-sm text-muted-foreground">
+      Your role does not include {module ? <b>{PERMISSION_LABEL[module]?.replace(/^Open /, '')}</b> : 'this screen'}.
+      Ask a GST Manager to add it to your role, or to give it to you as an extra.
+    </p>
+    <Button asChild size="sm" className="mt-4"><Link to="/dashboard">Go to Dashboard</Link></Button>
+  </div>
+);
+
 const MainLayout: React.FC = () => {
-  const { isAuthenticated, isLoading, isStaffRole } = useAuth();
+  const { isAuthenticated, isLoading, isStaffRole, canOpenPath, canOpenModule } = useAuth();
   const location = useLocation();
   const [isSidebarMinimized, setIsSidebarMinimized] = useState(true);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -102,10 +116,12 @@ const MainLayout: React.FC = () => {
           {/* The sidebar stays while the next page's code loads. */}
           {/* A page that fails shows a message here; the sidebar stays (never a blank screen). */}
           <ErrorBoundary resetKey={location.pathname}>
-            <Suspense fallback={<PageLoading />}><Outlet /></Suspense>
+            {isStaffRole() && !canOpenPath(location.pathname)
+              ? <NoScreenAccess module={moduleForPath(location.pathname)} />
+              : <Suspense fallback={<PageLoading />}><Outlet /></Suspense>}
           </ErrorBoundary>
         </main>
-        {isStaffRole() && <AssistantBoundary><Suspense fallback={null}><AssistantPanel /></Suspense></AssistantBoundary>}
+        {isStaffRole() && canOpenModule('module_assistant') && <AssistantBoundary><Suspense fallback={null}><AssistantPanel /></Suspense></AssistantBoundary>}
       </div>
 
       {/* Ctrl K / ⌘K search over clients and notices - only for staff */}

@@ -2045,6 +2045,12 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
 ];
 export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [
  {
+  "key": "module_clients",
+  "group": "clients",
+  "label": "Open Clients",
+  "description": "The Clients list, Add Client and Edit Client screens"
+ },
+ {
   "key": "add_edit_clients",
   "group": "clients",
   "label": "Add / edit clients",
@@ -2063,40 +2069,28 @@ export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [
   "description": "Change how a client's GSTR-1 is prepared: JSON, Manual, or JSON + Manual"
  },
  {
-  "key": "export_data",
-  "group": "clients",
-  "label": "Export data",
-  "description": "Download Excel / PDF exports from GST, reconciliation and notice pages"
+  "key": "module_2b",
+  "group": "reco",
+  "label": "Open 2B Reconciliation",
+  "description": "Import 2B, 2B Reconciliation, Suspended Reco and GST Receivable Reco"
  },
  {
-  "key": "edit_filing_status",
-  "group": "returns",
-  "label": "Filing status & portal push",
-  "description": "Change filing status, tick NIL, and push GSTR-1 / GSTR-3B to the GST portal"
+  "key": "module_itc",
+  "group": "reco",
+  "label": "Open ITC Summary",
+  "description": "The ITC Summary screen"
  },
  {
-  "key": "delete_return_data",
-  "group": "returns",
-  "label": "Delete return data",
-  "description": "Delete a period's GSTR-1 data and rows of the GST Running Update"
+  "key": "module_rcm",
+  "group": "reco",
+  "label": "Open RCM Summary",
+  "description": "The RCM Summary screen"
  },
  {
-  "key": "unlock_sheets",
-  "group": "returns",
-  "label": "Unlock sheets",
-  "description": "Unlock locked filing records, RCM and annual return workings"
- },
- {
-  "key": "view_version_history",
-  "group": "returns",
-  "label": "Version history",
-  "description": "Open saved versions of 2B, ITC, RCM and the GST Running Update"
- },
- {
-  "key": "view_change_history",
-  "group": "returns",
-  "label": "Change history",
-  "description": "See who changed what on the GST working pages, and when (Change history, History buttons)"
+  "key": "module_update_sheet",
+  "group": "reco",
+  "label": "Open GST Update Sheet",
+  "description": "The GST Running Update sheet"
  },
  {
   "key": "work_2b_import",
@@ -2135,16 +2129,46 @@ export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [
   "description": "Edit entries on the GST Running Update sheet"
  },
  {
-  "key": "send_client_emails",
-  "group": "emails",
-  "label": "Send client e-mails",
-  "description": "Send GST reminders and e-invoice threshold letters to clients"
+  "key": "module_gstr1",
+  "group": "returns",
+  "label": "Open GSTR-1",
+  "description": "The GSTR-1 screen: import, prepare and upload"
  },
  {
-  "key": "manage_email_templates",
-  "group": "emails",
-  "label": "E-mail templates & reminder rules",
-  "description": "Edit e-mail templates and switch reminder rules on or off"
+  "key": "module_gstr3b",
+  "group": "returns",
+  "label": "Open GSTR-3B",
+  "description": "The GSTR-3B screen and its push history"
+ },
+ {
+  "key": "module_filing_status",
+  "group": "returns",
+  "label": "Open Filing Status",
+  "description": "The Filing Status screen: who has filed what, ARNs and return PDFs"
+ },
+ {
+  "key": "edit_filing_status",
+  "group": "returns",
+  "label": "Filing status & portal push",
+  "description": "Change filing status, tick NIL, and push GSTR-1 / GSTR-3B to the GST portal"
+ },
+ {
+  "key": "delete_return_data",
+  "group": "returns",
+  "label": "Delete return data",
+  "description": "Delete a period's GSTR-1 data and rows of the GST Running Update"
+ },
+ {
+  "key": "module_annual_return",
+  "group": "annual",
+  "label": "Open Annual Return",
+  "description": "GSTR-9 / 9C workings: prepare and verify the workings allotted to them (review and lock stay with GST Managers)"
+ },
+ {
+  "key": "module_advances",
+  "group": "advances",
+  "label": "Open Advances",
+  "description": "The Advances screen: the advance register and set-offs"
  },
  {
   "key": "manage_advance_register",
@@ -2157,6 +2181,12 @@ export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [
   "group": "advances",
   "label": "Request set-off override",
   "description": "Ask to file past a blocked advance set-off check (a GST Manager approves)"
+ },
+ {
+  "key": "module_builder",
+  "group": "builder",
+  "label": "Open Builder",
+  "description": "The Builder workspace, its projects, returns and Builder Reports"
  },
  {
   "key": "manage_builder_projects",
@@ -2201,10 +2231,64 @@ export const ASSISTANT_PERMISSIONS: AssistantPermission[] = [
   "description": "Working papers and their Excel / PDF exports"
  },
  {
+  "key": "module_notices",
+  "group": "notices",
+  "label": "Open Notices & Litigation",
+  "description": "Notices, cases, calendar, refunds, DRC-03 and litigation"
+ },
+ {
   "key": "edit_notice_status",
   "group": "notices",
   "label": "Edit notice status",
   "description": "Open / close notices, priority, and reply / order / submission details"
+ },
+ {
+  "key": "module_reports",
+  "group": "reports",
+  "label": "Open Reports",
+  "description": "The Reports Hub: every report, pulled from the portal"
+ },
+ {
+  "key": "export_data",
+  "group": "reports",
+  "label": "Export data",
+  "description": "Download Excel / PDF exports from GST, reconciliation and notice pages"
+ },
+ {
+  "key": "send_client_emails",
+  "group": "emails",
+  "label": "Send client e-mails",
+  "description": "Send GST reminders and e-invoice threshold letters to clients"
+ },
+ {
+  "key": "manage_email_templates",
+  "group": "emails",
+  "label": "E-mail templates & reminder rules",
+  "description": "Edit e-mail templates and switch reminder rules on or off"
+ },
+ {
+  "key": "module_assistant",
+  "group": "assistant",
+  "label": "Use the GST Assistant",
+  "description": "The side panel (Ctrl J): answers, guided walks and filling a screen's fields"
+ },
+ {
+  "key": "view_version_history",
+  "group": "history",
+  "label": "Version history",
+  "description": "Open saved versions of 2B, ITC, RCM and the GST Running Update"
+ },
+ {
+  "key": "view_change_history",
+  "group": "history",
+  "label": "Change history",
+  "description": "See who changed what on the GST working pages, and when (Change history, History buttons)"
+ },
+ {
+  "key": "unlock_sheets",
+  "group": "history",
+  "label": "Unlock sheets",
+  "description": "Unlock locked filing records, RCM and annual return workings"
  },
  {
   "key": "manage_employees",
