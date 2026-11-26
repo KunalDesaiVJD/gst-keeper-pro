@@ -296,7 +296,7 @@ const Workspace: React.FC = () => {
         </p>
       )}
 
-      {step.key !== 'overview' && step.key !== 'review' && <CellLegend readOnly={period?.status === 'locked'} />}
+      {step.key !== 'overview' && step.key !== 'review' && <CellLegend readOnly={period?.status === 'locked'} variance={step.key === 'gstr9'} />}
       <StepComponent />
       <FigureFocus />
       <StepSelfCheck step={step.key} />

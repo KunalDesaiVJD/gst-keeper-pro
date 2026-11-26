@@ -114,8 +114,8 @@ export interface WpCell {
   italic?: boolean;
   muted?: boolean;
   strike?: boolean;
-  /** Status fill: reason needed / justified / matched. */
-  fill?: 'bad' | 'info' | 'good';
+  /** Status fill: reason needed / justified / matched; variance: differs from the system-computed GSTR-9 (variance.ts). */
+  fill?: 'bad' | 'info' | 'good' | 'variance';
   align?: 'left' | 'center' | 'right';
   /** Columns this cell covers. */
   span?: number;

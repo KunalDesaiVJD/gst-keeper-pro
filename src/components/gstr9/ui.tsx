@@ -4,6 +4,7 @@ import { useRemarkEffects } from './remarks/useRemarkEffects';
 import { AlertTriangle, CheckCircle2, CircleDot, EqualApproximately, Info, MessageSquareText, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { figAnchor } from '@/lib/gstr9/figureLinks';
+import { VARIANCE_CELL_CLASS, varianceTitle } from '@/lib/gstr9/varianceStyle';
 import { FigLink, type FigTarget } from './figure/FigLink';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
@@ -307,7 +308,12 @@ export const MatrixTable: React.FC<{
   headLabels?: Partial<Record<MatrixHead, string>>;
   withDiffColumn?: boolean;
   className?: string;
-}> = ({ rows, heads, label, headLabels, withDiffColumn, className }) => {
+  /**
+   * A cell whose figure differs from a reference figure (the GSTR-9 step: the system-computed
+   * GSTR-9, src/lib/gstr9/variance.ts) is toned and titled with both figures; null = no tone.
+   */
+  variance?: (rowKey: string, head: MatrixHead) => { portal: number; final: number } | null;
+}> = ({ rows, heads, label, headLabels, withDiffColumn, className, variance }) => {
   const hasDiff = withDiffColumn ?? rows.some((r) => r.diffKey);
   return (
     <div className={cn('overflow-x-auto rounded-md border', className)}>
@@ -338,8 +344,15 @@ export const MatrixTable: React.FC<{
                   <span>{r.label}</span>
                   {r.note && <span className="ml-2 inline-flex align-middle">{r.note}</span>}
                 </td>
-                {heads.map((h) => (
-                  <td key={h} data-col={h} className="border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap">
+                {heads.map((h) => {
+                  const vr = variance?.(r.key, h) ?? null;
+                  return (
+                  <td
+                    key={h}
+                    data-col={h}
+                    title={vr ? varianceTitle(vr.portal, vr.final) : undefined}
+                    className={cn('border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap', vr && VARIANCE_CELL_CLASS)}
+                  >
                     {r.cells?.[h] !== undefined
                       ? r.cells[h]
                       : r.value && (r.value as Record<string, number>)[h] !== undefined
@@ -350,7 +363,8 @@ export const MatrixTable: React.FC<{
                         )
                         : <span className="text-muted-foreground">—</span>}
                   </td>
-                ))}
+                  );
+                })}
                 {hasDiff && (
                   <td className="border-b px-2 py-1 text-right align-top">
                     {r.diffKey ? <JustifyControl lineKey={r.diffKey} /> : null}

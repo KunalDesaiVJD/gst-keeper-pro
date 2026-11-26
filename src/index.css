@@ -44,6 +44,9 @@
     /* Annual Return cells: a figure to type (pale yellow, blue figures, as in the firm's working papers). */
     --cell-input: 48 100% 95%;
     --cell-input-foreground: 221 83% 38%;
+    /* Annual Return GSTR-9: a final figure that differs from the system-computed GSTR-9 (peach, dark orange figures). */
+    --cell-variance: 24 95% 88%;
+    --cell-variance-foreground: 17 88% 30%;
     --success-foreground: 0 0% 100%;
     /* Text-strength tones (≥ 4.5:1 on card/background) for small coloured text */
     --success-strong: 142 72% 26%;
@@ -89,6 +92,8 @@
   .dark {
     --cell-input: 45 35% 15%;
     --cell-input-foreground: 213 94% 74%;
+    --cell-variance: 20 65% 19%;
+    --cell-variance-foreground: 27 96% 72%;
     --background: 222 47% 8%;
     --foreground: 210 40% 98%;
     --card: 222 47% 11%;

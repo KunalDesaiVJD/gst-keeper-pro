@@ -11,6 +11,8 @@ import { useWorkspace } from '../WorkspaceContext';
 import { docFormulas, isManualPath, setDocFormulas } from './helpers';
 import { ResetButton, Src, StepLink } from './shared';
 import { gstr9T4N, portalT9 } from './sourceTargets2';
+import { useVariance } from './useVariance';
+import { varianceTitle } from '@/lib/gstr9/varianceStyle';
 
 type OtherKey = 'interest' | 'lateFee' | 'penalty' | 'other';
 
@@ -51,6 +53,8 @@ export const Table9: React.FC = () => {
   const manual = docs.portal.manual;
   const n4 = taxOf(g.t4.N);
   const taxKey = Object.fromEntries(HEAD_ROWS.map((r) => [r.head, r.tax])) as Record<Table9Head, keyof Tax>;
+  const variance = useVariance().of('9');
+  const payableVariance = (r: T9Row) => (r.head ? variance(r.head, 'payable') : null);
 
   const rows: T9Row[] = [
     ...HEAD_ROWS.map((r) => ({
@@ -146,15 +150,18 @@ export const Table9: React.FC = () => {
       // The payable comes from the portal (else 4N): the superadmin's to type over (sourceLock.ts).
       editable: (r) => !!r.head && canEditSource,
       placeholder: (r) => (r.head ? g.t9[r.head].payable : null),
-      title: (r) =>
-        r.head
+      title: (r) => {
+        const vr = payableVariance(r);
+        const t = r.head
           ? !canEditSource
             ? `${r.override === null ? `From ${sourceLabel(r)}` : 'Typed over by a superadmin'}. ${LOCKED_TITLE.filled}`
             : r.override === null
               ? `From ${sourceLabel(r)} — type to override`
               : 'Typed override — press Delete to go back to the portal / 4N figure'
-          : 'From the portal — edit on Portal data',
-      tone: (r) => (r.head && r.override !== null ? 'warn' : undefined),
+          : 'From the portal — edit on Portal data';
+        return vr ? `${varianceTitle(vr.portal, vr.final)}. ${t}` : t;
+      },
+      tone: (r) => (payableVariance(r) ? 'variance' : r.head && r.override !== null ? 'warn' : undefined),
     })),
     {
       ...displayCol<T9Row>('n4', 'Tax as per 4N', (r) => (r.head ? n4[taxKey[r.head]] : null), { width: 108, tone: () => 'muted' }),

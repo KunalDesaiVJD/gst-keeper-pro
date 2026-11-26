@@ -14,6 +14,10 @@ import { Table14, Tables10to13 } from '../gstr9form/PartV';
 import { Table15, Table16, Table17, Table18, Table19 } from '../gstr9form/PartVI';
 import { StepLink } from '../gstr9form/shared';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
+import { Badge } from '@/components/gstr9/badge';
+import type { VarianceTable } from '@/lib/gstr9/variance';
+import { VarianceCard } from '../gstr9form/VarianceCard';
+import { useVariance } from '../gstr9form/useVariance';
 
 /**
  * Step 9 — Form GSTR-9, Tables 4–19, assembled from the workings (the
@@ -104,6 +108,20 @@ const Figure: React.FC<{ label: string; value: string; hint?: string }> = ({ lab
   </span>
 );
 
+/** "n differ from portal": the table's figures that differ from the system-computed GSTR-9 (variance.ts). */
+const VarianceBadge: React.FC<{ n: number }> = ({ n }) =>
+  n > 0 ? (
+    <Badge
+      variant="outline"
+      className="h-4 justify-center gap-0.5 whitespace-nowrap rounded-full border-transparent bg-cell-variance px-1 text-[10px] font-semibold leading-none text-cell-variance-foreground"
+      title={`${n} figure${n === 1 ? '' : 's'} differ from the system-computed GSTR-9`}
+    >
+      {n}
+      <span className="hidden 2xl:inline"> differ from portal</span>
+      <span className="sr-only 2xl:hidden"> differ from portal</span>
+    </Badge>
+  ) : null;
+
 const Gstr9FormStep: React.FC = () => {
   const { workings } = useWorkspace();
   const g = workings.g9;
@@ -117,11 +135,14 @@ const Gstr9FormStep: React.FC = () => {
   };
 
   const openHere = workings.diffs.filter((d) => d.step === 'gstr9' && d.open);
+  const { counts } = useVariance();
+  const varianceN = (key: string) => counts[key as VarianceTable] ?? 0;
   const portalFetched = g.t4Source === 'portal';
 
   return (
     <div className="space-y-3">
       <OpenDifferences step="gstr9" />
+      <VarianceCard />
 
       {!portalFetched && (
         <Note tone="warn">
@@ -158,6 +179,7 @@ const Gstr9FormStep: React.FC = () => {
                   <span className="sr-only">Part {p.part}, Table </span>
                   {t.no}
                   <OpenBadge n={t.owns ? openHere.filter(t.owns).length : 0} showOk={false} />
+                  <VarianceBadge n={varianceN(t.key)} />
                 </StepTab>
               ))}
             </React.Fragment>
@@ -174,7 +196,7 @@ const Gstr9FormStep: React.FC = () => {
       </Tabs>
 
       <p className="text-[11px] text-muted-foreground">
-        Columns follow the form: Taxable value, Central, State/UT, Integrated, Cess. Each row shows where its figure comes from; shaded cells are computed, white cells are typed.
+        Columns follow the form: Taxable value, Central, State/UT, Integrated, Cess. Each row shows where its figure comes from; shaded cells are computed, white cells are typed; peach cells differ from the system-computed GSTR-9 (hover for both figures).
       </p>
     </div>
   );

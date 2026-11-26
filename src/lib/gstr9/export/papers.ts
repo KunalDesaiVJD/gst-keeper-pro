@@ -39,6 +39,10 @@ import { hasRateLines, rateLinesByRate, rateLinesTotal } from '../rateWise';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
 import { ANSWER_LABEL, selfCheckStatus } from '../selfCheck';
 import { buildGstr9cPortalJson } from '../gstr9cJson';
+import {
+  gatherRemarks, remarksForCell, rulesSummary, systemVariances, varianceByCode, varianceDigest, varianceTitle,
+  VARIANCE_COL_LABEL, type VarianceCell, type VarianceRemark,
+} from '../variance';
 import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
 import {
@@ -1345,7 +1349,17 @@ const formAnchor = (prefix: string, t: FormTable, row: FormRow): string | undefi
 };
 
 /** A form-table paper (GSTR-9, NOTICE FORMATE): part heading, table title, header row, rows. */
-function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: boolean; cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined; links?: FormLinks } = {}): void {
+function formBlocks(
+  p: PaperBuilder,
+  tables: FormTable[],
+  opts: {
+    numberRow?: boolean;
+    cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined;
+    links?: FormLinks;
+    /** A figure that differs from the system-computed GSTR-9 (variance.ts): filled, with both figures in its comment. */
+    variance?: (t: FormTable, row: FormRow, key: string) => VarianceCell | null;
+  } = {},
+): void {
   let part: string | undefined;
   tables.forEach((t) => {
     if (t.part && t.part !== part) {
@@ -1366,6 +1380,8 @@ function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: bo
         if (typeof v !== 'number') return v;
         const s = opts.cellSrc?.(t, ri, ci);
         const link = opts.links?.link(t, row, keys[ci]);
+        const vr = opts.variance?.(t, row, keys[ci]) ?? null;
+        if (vr) return { v, src: s, link, fill: 'variance' as const, note: varianceTitle(vr.portal, vr.final) };
         return s || link ? { v, src: s, link } : v;
       })];
       b.row(row.bold ? 'subtotal' : 'data', cells).at(opts.links && formAnchor(opts.links.prefix, t, row));
@@ -1526,12 +1542,60 @@ function gstr9CellLink(c: Ctx): FormLinks['link'] {
   };
 }
 
+const REMARK_KIND: Record<VarianceRemark['kind'], string> = { reason: 'Reason', gstr9c: 'GSTR-9C', selfcheck: 'Self-check' };
+
+/** D1's first block: the figures that differ from the system-computed GSTR-9, the remarks on them and the summary (§12). */
+function varianceBlock(c: Ctx, p: PaperBuilder, cells: VarianceCell[]): void {
+  if (c.w.g9.t4Source !== 'portal') return;
+  p.h2('DIFFERENCES FROM THE SYSTEM-COMPUTED GSTR-9');
+  if (!cells.length) {
+    p.note(`The final GSTR-9 agrees with the system-computed GSTR-9 (Tables 4, 5, 6A, 6G, 8A and the Table 9 payable) within ₹${c.w.tolerance}.`);
+    return;
+  }
+  const remarks = gatherRemarks(c.docs, c.w);
+  const saved = c.docs.gstr9.varianceSummary ?? null;
+  const s = saved ?? { ...rulesSummary(cells, remarks), source: 'rules' as const, at: '', by: null, digest: '' };
+  const stale = !!saved && saved.digest !== varianceDigest(cells, remarks);
+  p.note(
+    saved
+      ? `Summary: ${s.source === 'ai' ? 'GST Assistant' : 'rules summary'}${c.forClient || !saved.by ? '' : `, by ${displayName(saved.by)}`}, ${fmtDateTime(saved.at)}${stale ? '. The differences or remarks have changed since it was written.' : '.'}`
+      : 'Summary: rules summary, built when this file was printed (no summary saved on the GSTR-9 step).',
+  );
+  p.note(s.overall);
+  s.tables.forEach((t) => p.note(`Table ${t.table}. ${t.summary}`));
+  if (s.unexplained.length) p.note(`Unexplained: ${s.unexplained.map((u) => `${u.label} (${u.note})`).join('; ')}.`);
+  const b = p.table([['ROW', 'PARTICULARS', 'HEAD', 'SYSTEM-COMPUTED', 'FINAL', 'DIFFERENCE', wide('REMARKS THAT BEAR ON IT', 5)]], { keyCols: 2 });
+  cells.forEach((v) => {
+    const rs = remarksForCell(v, remarks);
+    const text = rs.length
+      ? rs.map((r) => `${REMARK_KIND[r.kind]} · ${r.label}: ${r.text}${r.effect ? ` (effect: ${r.effect})` : ''}`).join('\n')
+      : 'No remark';
+    b.data(
+      v.row,
+      v.rowLabel,
+      VARIANCE_COL_LABEL[v.col],
+      v.portal,
+      { v: v.final, fill: 'variance', link: { sheet: D1_SHEET, anchor: `D1.${v.table}.${v.code}`, col: v.col } },
+      v.diff,
+      { v: text, span: 5, ...(rs.length ? {} : { fill: 'bad' as const }) },
+    );
+  });
+  p.space();
+}
+
 function gstr9Form(c: Ctx): WorkingPaper {
   const { w } = c;
   const p = new PaperBuilder();
+  const cells = systemVariances(c.docs, w);
+  const at = varianceByCode(cells);
   p.note('(Amount in ₹ in all tables)');
-  p.note('A figure underlined in blue comes from another paper: click it to go to the row it is taken from.');
-  formBlocks(p, gstr9FormTables(w), { cellSrc: gstr9CellSrc(c), links: { prefix: 'D1', link: gstr9CellLink(c) } });
+  p.note('A figure underlined in blue comes from another paper: click it to go to the row it is taken from. A figure filled orange differs from the system-computed GSTR-9.');
+  varianceBlock(c, p, cells);
+  formBlocks(p, gstr9FormTables(w), {
+    cellSrc: gstr9CellSrc(c),
+    links: { prefix: 'D1', link: gstr9CellLink(c) },
+    variance: (t, row, key) => (t.no ? at(t.no, row.key ?? row.code, key) : null),
+  });
   return paper(c, {
     ref: 'D1', title: 'GSTR-9 — Annual return, Tables 4 to 19', sheet: 'D1 GSTR-9', phase: 'returns', master: 'GSTR-9',
     source: 'Source: the reconciliations (C1–C4), GSTR-9 system-computed figures (B6) and the cells typed on the GSTR-9 step — GSTR-9 of MASTER_PMS',

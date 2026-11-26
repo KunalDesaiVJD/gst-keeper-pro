@@ -24,6 +24,7 @@ import {
   type T7EntryRow,
 } from './sourceTargets';
 import { rule42Final7C, rule43Year7D } from '../figure/targetsReco';
+import { useVariance } from './useVariance';
 
 const hasTax = (t: Tax, eps = 0.005) => Math.abs(t.i) > eps || Math.abs(t.c) > eps || Math.abs(t.s) > eps || Math.abs(t.x) > eps;
 
@@ -48,6 +49,7 @@ const NoItcBuilderNote: React.FC = () => {
 
 export const Table6: React.FC = () => {
   const { workings, docs } = useWorkspace();
+  const variance = useVariance().of('6');
   const g = workings.g9;
   const t6 = g.t6;
   const meta = docs.portal.gstr9Meta;
@@ -150,7 +152,7 @@ export const Table6: React.FC = () => {
       actions={<StepLink step="itc">ITC reco</StepLink>}
     >
       <NoItcBuilderNote />
-      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 6" className={FORM_MATRIX_SCROLL} />
+      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 6" className={FORM_MATRIX_SCROLL} variance={variance} />
       <p className="text-[11px] text-muted-foreground">
         6B input services is the sheet&apos;s balancing figure, so 6I ties to 6A2. Books ITC on the same ledgers:{' '}
         <span className="tabular-nums text-foreground">{headsText(workings.itc.inputServicesBooks)}</span>.
@@ -278,6 +280,7 @@ export const Table7: React.FC = () => {
 
 export const Table8: React.FC = () => {
   const { workings, docs, financialYear } = useWorkspace();
+  const variance = useVariance().of('8');
   const g = workings.g9;
   const t8 = g.t8;
   const meta = docs.portal.gstr9Meta;
@@ -347,7 +350,7 @@ export const Table8: React.FC = () => {
       }
     >
       <NoItcBuilderNote />
-      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" className={FORM_MATRIX_SCROLL} />
+      <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" className={FORM_MATRIX_SCROLL} variance={variance} />
       <Note tone="position">
         8B = 6(B) + 6(H), as the form reads and the portal computes; the firm&apos;s sheet sums 6(B) only. 8C is Table 13 unless typed (type it to leave out imports and RCM); the sheet took Table 13 − Table 12, which nets a reversal and can go below nil.
       </Note>
