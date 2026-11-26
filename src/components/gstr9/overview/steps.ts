@@ -29,15 +29,27 @@ export const STEP_META: StepMeta[] = [
   { key: 'duties', n: 4, label: 'Duties & Taxes', phase: 'Collect' },
   { key: 'rcm', n: 5, label: 'RCM', phase: 'Collect' },
   { key: 'outward', n: 6, label: 'Outward reco', phase: 'Reconcile' },
+  // ITC reco carries GSTR-9C Table 14 (ITC by expense head), once step 8 "9C expense heads" (26 Nov 2026).
   { key: 'itc', n: 7, label: 'ITC reco', phase: 'Reconcile' },
-  { key: 'expense', n: 8, label: '9C expense heads', phase: 'Reconcile' },
-  { key: 'annexures', n: 9, label: 'Annexures', phase: 'Reconcile' },
-  { key: 'gstr9', n: 10, label: 'GSTR-9', phase: 'Returns' },
-  { key: 'gstr9c', n: 11, label: 'GSTR-9C', phase: 'Returns' },
-  { key: 'notice', n: 12, label: 'Notice format', phase: 'Returns' },
-  { key: 'review', n: 13, label: 'Review & lock', phase: 'Finish' },
-  { key: 'payables', n: 14, label: 'Payables & set-off', phase: 'Finish' },
+  { key: 'annexures', n: 8, label: 'Annexures', phase: 'Reconcile' },
+  { key: 'gstr9', n: 9, label: 'GSTR-9', phase: 'Returns' },
+  { key: 'gstr9c', n: 10, label: 'GSTR-9C', phase: 'Returns' },
+  { key: 'notice', n: 11, label: 'Notice format', phase: 'Returns' },
+  { key: 'review', n: 12, label: 'Review & lock', phase: 'Finish' },
+  { key: 'payables', n: 13, label: 'Payables & set-off', phase: 'Finish' },
 ];
+
+/**
+ * Steps that were folded into another, with where their links now land: an
+ * old bookmark or a saved link to ?step=expense opens ITC reco › 9C Table 14
+ * (its Ledgers tab, ?expensetab=ledgers, opens Purchases › 9C heads).
+ */
+export const STEP_ALIASES: Record<string, (params: URLSearchParams) => { step: StepKey; extra: Record<string, string> }> = {
+  expense: (p) =>
+    p.get('expensetab') === 'ledgers'
+      ? { step: 'purchases', extra: { purchasestab: 'heads' } }
+      : { step: 'itc', extra: { itctab: 'table14' } },
+};
 
 export const PHASES: Phase[] = ['Collect', 'Reconcile', 'Returns', 'Finish'];
 
@@ -73,10 +85,10 @@ export const diffTabParams = (d: { key: string; step: StepKey }): Record<string,
     case 'sales': return k === 'sales.audit' ? { salestab: 'audit' } : k.startsWith('cg.') ? { salestab: 'cgsold' } : {};
     case 'purchases': return k === 'purchases.dt' ? { purchasestab: 'summary' } : {};
     case 'duties': return { dutiestab: k.startsWith('dti.') ? 'input' : 'output' };
+    case 'portal': return { portaltab: k === 'out.portal' ? 'gstr9' : 'gstr3b' };
     case 'rcm': return { rcmtab: 'compare' };
     case 'outward': return { outwardtab: 'compare' };
-    case 'itc': return { itctab: 'working' };
-    case 'expense': return { expensetab: 'table14' };
+    case 'itc': return k.startsWith('gstr9c.14') ? { itctab: 'table14' } : { itctab: 'working' };
     case 'annexures': {
       const m = /^ann([1-4])\./.exec(k);
       return m ? { ann: `a${m[1]}` } : {};
@@ -169,6 +181,11 @@ const STATE_LABEL: Record<Exclude<StepState, 'open'>, { label: string; tone: Bad
   locked: { label: 'Locked', tone: 'success' },
 };
 
+const FY_QUARTERS: MonthKey[][] = [['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['oct', 'nov', 'dec'], ['jan', 'feb', 'mar']];
+
+/** Below this a payable or its balance is nil: the same figure the Payables step's set-off buttons use. */
+const PAYABLE_EPS = 0.005;
+
 const tri = (all: boolean, any: boolean): StepState => (all ? 'done' : any ? 'progress' : 'todo');
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -188,11 +205,13 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
 
   const base: Partial<Record<StepKey, { state: StepState; detail: string; label?: string }>> = {};
 
-  // 1 Portal data
+  // 1 Portal data — a quarterly (QRMP) 3B covers its quarter's three months.
   const g9src = docs.portal.gstr9Meta?.source;
+  const qEnds = new Set([...w.quarterly.out, ...w.quarterly.itc]);
+  const covered = FY_MONTHS.filter((m) => w.monthsPresent[m]?.any || FY_QUARTERS.some((q) => q.includes(m) && qEnds.has(q[2]))).length;
   base.portal = {
-    state: tri(gstr9 && applied.length === 12, gstr9 || applied.length > 0),
-    detail: `GSTR-9 ${gstr9 ? SOURCE_LABEL[g9src ?? ''] ?? 'entered' : 'not fetched'} · as-filed 3B ${applied.length}/12 months`,
+    state: tri(gstr9 && covered === 12, gstr9 || applied.length > 0),
+    detail: `GSTR-9 ${gstr9 ? SOURCE_LABEL[g9src ?? ''] ?? 'entered' : 'not fetched'} · as-filed 3B ${covered}/12 months${qEnds.size ? ` (${qEnds.size} quarterly)` : ''}`,
   };
 
   // 2 Sales
@@ -265,42 +284,36 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
   base.itc = {
     state: tri(hasPurch && t6A, hasPurch || t6A),
     detail: t6A
-      ? `6A ${w.g9.t6ASource === 'gstr9' ? 'from GSTR-9' : 'from the monthly 3B'} · 7J ${rupees(sumTax(w.g9.t7J))}`
+      ? `6A ${w.g9.t6ASource === 'gstr9' ? 'from GSTR-9' : 'from the monthly 3B'} · 7J ${rupees(sumTax(w.g9.t7J))}${hasPurch ? ` · 9C 14R ${rupees(sumTax(w.c14.rows.R ?? { i: 0, c: 0, s: 0, x: 0 }))}` : ''}`
       : 'Needs 6A (GSTR-9 or the as-filed 3B) from Portal data',
   };
 
-  // 8 9C expense heads (computed from Purchases)
-  base.expense = {
-    state: hasPurch ? 'done' : 'todo',
-    detail: hasPurch ? `Computed from Purchases · eligible ITC (R) ${rupees(sumTax(w.c14.rows.R ?? { i: 0, c: 0, s: 0, x: 0 }))}` : 'Computed once purchases are entered',
-  };
-
-  // 9 Annexures
+  // 8 Annexures
   base.annexures = {
     state: tri(hasSales && hasPurch && gstr9, hasSales || hasPurch || gstr9),
     detail: `DRC-03 balance to pay ${rupees(sumTax(w.ann3.balance))}`,
   };
 
-  // 10 GSTR-9
+  // 9 GSTR-9
   base.gstr9 = {
     state: tri(hasSales && hasPurch && gstr9, hasSales || hasPurch || gstr9),
     detail: `4N tax ${rupees(sumTax(w.g9.t4.N))} · 7J ${rupees(sumTax(w.g9.t7J))}`,
   };
 
-  // 11 GSTR-9C
+  // 10 GSTR-9C
   const signer = docs.gstr9c.certification.signatory_name?.trim();
   base.gstr9c = {
     state: tri(hasSales && hasPurch && gstr9 && !!signer, hasSales || hasPurch || gstr9),
     detail: `Certification ${signer ? `by ${signer}` : 'not filled'} · 5R ${rupees(w.gstr9c.t5.R)}`,
   };
 
-  // 12 Notice format
+  // 11 Notice format
   base.notice = {
     state: tri(gstr9 && applied.length > 0, gstr9 || applied.length > 0),
     detail: `Net tax payable ${rupees(sumTax(w.notice.outward.r11))} · net excess ITC used ${rupees(sumTax(w.notice.inward.r9))}`,
   };
 
-  // 13 Review & lock
+  // 12 Review & lock
   const anyData = hasSales || hasPurch || gstr9 || applied.length > 0 || cats > 0 || outMonths.length > 0 || inMonths.length > 0;
   if (period?.status === 'locked') {
     base.review = { state: 'locked', detail: `Locked${period.locked_by ? ` by ${displayName(period.locked_by)}` : ''}${period.locked_at ? ` on ${fmtWhen(period.locked_at)}` : ''}` };
@@ -320,15 +333,15 @@ export function stepStatuses(docs: AnnualReturnDocs, w: Workings, period: Annual
     };
   }
 
-  // 14 Payables & set-off
+  // 13 Payables & set-off
   const P = w.payables.totals;
-  if (sumTax(P.payable) < 0.5) {
+  if (sumTax(P.payable) < PAYABLE_EPS) {
     base.payables = { state: anyData ? 'done' : 'todo', detail: anyData ? 'Nothing payable' : '' };
   } else {
     const bal = sumTax(P.balance);
     base.payables = {
-      state: bal < 0.5 ? 'done' : 'progress',
-      detail: bal < 0.5 ? `${rupees(sumTax(P.payable))} payable — fully set off` : `${rupees(bal)} of ${rupees(sumTax(P.payable))} still to set off`,
+      state: bal < PAYABLE_EPS ? 'done' : 'progress',
+      detail: bal < PAYABLE_EPS ? `${rupees(sumTax(P.payable))} payable — fully set off` : `${rupees(bal)} of ${rupees(sumTax(P.payable))} still to set off`,
     };
   }
 

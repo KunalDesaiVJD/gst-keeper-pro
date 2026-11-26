@@ -12,8 +12,12 @@ export function useSelfCheck(): {
   jsonErrors: number;
   setAnswer: (key: string, answer: SelfCheckAnswer, note?: string) => void;
   setNote: (key: string, note: string) => void;
+  /** The questions are put (and answerable) only while the working is with its preparer; afterwards they are a record. */
+  asking: boolean;
 } {
-  const { workings, docs, client, financialYear, update, me } = useWorkspace();
+  const { workings, docs, client, financialYear, update, me, signoffState } = useWorkspace();
+  const st = signoffState.stage;
+  const asking = st === 'not_started' || st === 'preparing' || (st === 'sent_back' && signoffState.returned?.to !== 'verifier');
   const { result: app } = useApplicability(client, financialYear);
   // Unknown applicability counts as filing 9C: the questions are asked rather than skipped.
   const file9c = !app || app.gstr9 === 'unknown' || app.file9c;
@@ -43,5 +47,6 @@ export function useSelfCheck(): {
     jsonErrors,
     setAnswer: (key, answer, note) => write(key, { answer, ...(note !== undefined ? { note } : {}) }),
     setNote: (key, note) => write(key, { note }),
+    asking,
   };
 }

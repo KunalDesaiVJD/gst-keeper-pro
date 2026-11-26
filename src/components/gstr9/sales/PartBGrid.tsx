@@ -8,6 +8,8 @@ import { SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { moneyCol } from '../grid/columns';
 import { landsIn, NATURE_OPTIONS, natureFromOption, newNonTaxRow } from './salesEntry';
+import { FigLink } from '../figure/FigLink';
+import { gstr9T5Row } from '../figure/targetsData';
 
 /** PL-OUTPUT Part B — non-taxable income, each ledger tagged with its GSTR-9 Table 5 nature. */
 const PartBGrid: React.FC = () => {
@@ -136,7 +138,8 @@ const PartBGrid: React.FC = () => {
       />
       <p className="text-[11px] text-muted-foreground">
         Enter credit notes as <span className="font-medium text-foreground">negative rows</span> — they go to GSTR-9 Table 5H, not the
-        nature’s own row.
+        nature’s own row. Books against the portal’s Table 5 is on{' '}
+        <FigLink to={gstr9T5Row()} className="text-left">GSTR-9 › Table 5</FigLink>.
       </p>
     </SectionCard>
   );

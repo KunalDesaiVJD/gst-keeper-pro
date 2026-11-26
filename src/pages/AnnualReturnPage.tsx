@@ -14,6 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useClient } from '@/contexts/ClientContext';
 import { useWorkspace, WorkspaceClient, WorkspaceProvider } from '@/components/gstr9/WorkspaceContext';
 import { STEPS, stepByKey } from '@/components/gstr9/steps/registry';
+import { STEP_ALIASES } from '@/components/gstr9/overview/steps';
 import { FigureFocus } from '@/components/gstr9/figure/FigLink';
 import { CellLegend } from '@/components/gstr9/figure/CellLegend';
 import { StepSelfCheck } from '@/components/gstr9/selfcheck/SelfCheckList';
@@ -225,7 +226,18 @@ const HistoryButton: React.FC = () => (
 const Workspace: React.FC = () => {
   const { workings, client, financialYear, period } = useWorkspace();
   const [params, setParams] = useSearchParams();
-  const step = stepByKey(params.get('step'));
+  // A folded step (?step=expense) opens where it now lives, in place of the old link.
+  const alias = STEP_ALIASES[params.get('step') ?? ''];
+  useEffect(() => {
+    if (!alias) return;
+    const { step: to, extra } = alias(params);
+    const next = new URLSearchParams(params);
+    next.set('step', to);
+    next.delete('expensetab');
+    Object.entries(extra).forEach(([k, v]) => next.set(k, v));
+    setParams(next, { replace: true });
+  }, [alias, params, setParams]);
+  const step = stepByKey(alias ? alias(params).step : params.get('step'));
   const idx = STEPS.findIndex((s) => s.key === step.key);
   const go = (key: string) => {
     const next = new URLSearchParams(params);
@@ -284,7 +296,7 @@ const Workspace: React.FC = () => {
         </p>
       )}
 
-      {step.key !== 'overview' && step.key !== 'review' && <CellLegend readOnly={period?.status === 'locked'} />}
+      {step.key !== 'overview' && step.key !== 'review' && <CellLegend readOnly={period?.status === 'locked'} variance={step.key === 'gstr9'} />}
       <StepComponent />
       <FigureFocus />
       <StepSelfCheck step={step.key} />

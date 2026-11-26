@@ -37,7 +37,7 @@ type NoticeTab = 'outward' | 'inward';
 
 type OverrideKey = 'deemedSupplies' | 'unreturnedGoods' | 'pendingDemands' | 'prevYear8C' | 'ineligible4D' | 'itcUsed4A5' | 'reversed4B2';
 
-/** Step 12 — NOTICE FORMATE: the outward / inward summary officers ask for. */
+/** Step 11 — NOTICE FORMATE: the outward / inward summary officers ask for. */
 const NoticeStep: React.FC = () => {
   const { client, financialYear, docs, workings, update, readOnly, canEditSource } = useWorkspace();
   const confirm = useConfirm();
@@ -104,7 +104,7 @@ const NoticeStep: React.FC = () => {
       ...override('prevYear8C', def.prev8C, 'From Annexure-4', 'Use Annexure-4'),
     },
     {
-      id: 'i3', no: '3', table: '8C', kind: 'computed', value: inw.r3, link: (h) => g9Row('8', '8C', h), hint: 'Table 13 − Table 12, set on the ITC reco step',
+      id: 'i3', no: '3', table: '8C', kind: 'computed', value: inw.r3, link: (h) => g9Row('8', '8C', h), hint: 'GSTR-9 8C: Table 13 (ITC of this year availed next year, set on the ITC reco step) unless typed on GSTR-9 › Table 8',
       label: 'ITC carried forward from the present FY to the subsequent FY (Table 8C of this GSTR-9)',
     },
     { id: 'i4', no: '4', table: '—', value: inw.r4, link: (h) => portal3bOther('itc4d', h), label: 'Ineligible ITC as per 4(D) of GSTR-3B', ...override('ineligible4D', def.ineligible4D, 'From as-filed 3B', 'Use as-filed 3B') },
@@ -237,6 +237,9 @@ const NoticeStep: React.FC = () => {
             />
           </TabsContent>
           <TabsContent value="inward" className="mt-0 space-y-1.5">
+            {workings.ctx.noItcBuilder && (
+              <Note>This client is a builder on the no-ITC scheme — nil ITC is expected, and ITC differences are for information only.</Note>
+            )}
             <FixedTaxGrid
               rows={inwardRows}
               label="Notice format: inward"

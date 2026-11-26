@@ -10,6 +10,7 @@ import { FixedRow, FixedRowDef, useFixedRows } from './hooks';
 import { EntryHeading, FormTable, FormTableCol, FormTableRow, RowSrc, Src, StepLink } from './shared';
 import { FigLink } from '../figure/FigLink';
 import { portalT4, portalT5, rcmPartA, salesT5 } from './sourceTargets';
+import { useVariance } from './useVariance';
 
 // ---------------------------------------------------------------------------
 // Table 4 — outward supplies on which tax is payable (portal system-computed)
@@ -41,6 +42,7 @@ export const Table4: React.FC = () => {
   const meta = docs.portal.gstr9Meta;
   const manual = docs.portal.manual;
   const rcmSource = workings.rcm.partASource;
+  const variance = useVariance().of('4');
 
   const rows: MatrixRow[] = T4_ROWS.map((r) => {
     let note: React.ReactNode;
@@ -92,7 +94,7 @@ export const Table4: React.FC = () => {
         </>
       }
     >
-      <MatrixTable rows={rows} heads={FORM_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 4" className={FORM_MATRIX_SCROLL} />
+      <MatrixTable rows={rows} heads={FORM_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 4" className={FORM_MATRIX_SCROLL} variance={variance} />
     </SectionCard>
   );
 };
@@ -153,6 +155,7 @@ export const Table5: React.FC = () => {
   const tol = workings.tolerance;
   const portalFetched = g.t4Source === 'portal';
   const extra = useFixedRows<number>(T5_EXTRA_DEFS, { cols: ['t'] });
+  const variance = useVariance().of('5');
 
   const rows: T5View[] = T5_ROWS.map((r) => ({
     ...r,
@@ -241,7 +244,7 @@ export const Table5: React.FC = () => {
         </>
       }
     >
-      <FormTable rows={rows} cols={cols} label="GSTR-9 Table 5" maxHeight={FORM_GRID_MAX_H} />
+      <FormTable rows={rows} cols={cols} label="GSTR-9 Table 5" maxHeight={FORM_GRID_MAX_H} variance={variance} />
       {!portalFetched && (
         <p className="text-xs text-muted-foreground">
           Portal Table 5 isn&apos;t fetched yet — the comparison fills in once the GSTR-9 system-computed figures are pulled on <StepLink step="portal">Portal data</StepLink>.

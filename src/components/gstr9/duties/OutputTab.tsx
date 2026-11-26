@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
 import { hasRateLines, meaningfulLines, rollUpRateLines } from '@/lib/gstr9/rateWise';
 import { FY_MONTHS, type DtoMonth, type DtRateLine, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
@@ -10,7 +9,7 @@ import AdjustmentsGrid from './AdjustmentsGrid';
 import PortalNote from './PortalNote';
 import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
-import { portal3b, salesPartATotal } from '../figure/targetsData';
+import { portal3b, salesCgOutsidePl, salesPartATotal } from '../figure/targetsData';
 import {
   computedCols,
   diffCells,
@@ -21,7 +20,6 @@ import {
   monthCol,
   monthRowF,
   portal3bCols,
-  portalEdits,
   sameF,
   soft,
   withoutPrefix,
@@ -47,11 +45,19 @@ const WHAT_3B = '3.1(a) + 3.1(b) tax';
 const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: string }> = ({ cess, view, gridMaxHeight }) => {
   // "Books vs 3B" hides the typed Sales / Credit note groups; Input's "compact" has no Output counterpart.
   const recon = view === 'recon';
-  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
+  const { docs, workings, update, readOnly } = useWorkspace();
   const dto = workings.dto;
   const tol = workings.tolerance;
 
   const lineKeys = useMemo(() => new Set(workings.diffs.map((d) => d.key)), [workings.diffs]);
+
+  // As per P&L's two parts: the engine adds the output tax on capital goods sold outside the P&L to Part A's tax.
+  const cgOut = workings.cg.outTaxOutsidePl;
+  const cgSplit = (['i', 'c', 's', 'x'] as const).some((h) => Math.abs(Number(cgOut[h]) || 0) > 0.004);
+  const partATax = useMemo<Tax>(
+    () => ({ i: dto.asPerPl.i - cgOut.i, c: dto.asPerPl.c - cgOut.c, s: dto.asPerPl.s - cgOut.s, x: dto.asPerPl.x - cgOut.x }),
+    [dto.asPerPl, cgOut],
+  );
 
   const rows = useMemo<DtoRow[]>(
     () =>
@@ -69,17 +75,15 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
     [docs.duties_output, docs.portal],
   );
 
-  // Books edits go to duties_output; "As per 3B" edits are portal hand edits (typed + remembered expression).
+  // Books edits go to duties_output. "As per 3B" is read-only here (Portal › As-filed 3B is its one editor).
   const onRowsChange = useCallback(
     (next: DtoRow[]) => {
       const prev = new Map(rows.map((r) => [r.id, r]));
       const books: DtoRow[] = [];
-      const edits: FieldEdit[] = [];
       next.forEach((r) => {
         const p = prev.get(r.id);
         if (!p || r === p) return;
         if (r.sales !== p.sales || r.creditNote !== p.creditNote || !sameF(withoutPrefix(r.f, 'outTax'), withoutPrefix(p.f, 'outTax'))) books.push(r);
-        edits.push(...portalEdits(r.id, 'outTax', { tax: p.outTax, f: p.f }, { tax: r.outTax, f: r.f }));
       });
       if (books.length) {
         update('duties_output', (d) => {
@@ -90,7 +94,6 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           return { ...d, months };
         });
       }
-      if (edits.length) update('portal', (p) => applyHandEdits(p, edits));
     },
     [rows, update],
   );
@@ -143,16 +146,14 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
       ...portal3bCols<DtoRow>({
         field: 'outTax',
         get: (r) => r.outTax,
-        set: (r, t) => ({ ...r, outTax: t }),
         portal: docs.portal,
         cess,
         group: 'As per 3B',
         what: WHAT_3B,
-        canEdit: canEditSource,
       }),
       ...diffCols<DtoRow>((r) => dto.months[r.id].diff, { cess, tolerance: tol, group: 'Diff (Books − 3B)', hasLine: (m) => lineKeys.has(`dto.${m}`) }),
     ],
-    [recon, cess, dto, docs.portal, tol, lineKeys, canEditSource],
+    [recon, cess, dto, docs.portal, tol, lineKeys],
   );
 
   const footer = useMemo<GridFooterRow[]>(
@@ -169,16 +170,59 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           ...diffCells('diff', dto.totals.diff, cess, tol),
         },
       },
-      {
-        key: 'pl',
-        label: (
-          <FooterLabel soft title="Tax of PL-OUTPUT Part A (Sales step), head by head — the sheet's I22:K22 = 'PL-OUTPUT'!E33:G33">
-            As per P&amp;L
-          </FooterLabel>
-        ),
-        tone: 'total',
-        cells: linkCells(taxFooter('net', dto.asPerPl, cess), (h) => salesPartATotal(h), true),
-      },
+      // As per P&L = Part A tax + the output tax on capital goods sold outside the P&L revenue (engine: dtoAsPerPl).
+      // With no such sale the figure is Part A's alone and opens it; otherwise its two parts are shown beneath.
+      ...(cgSplit
+        ? [
+            {
+              key: 'pl',
+              label: (
+                <FooterLabel
+                  soft
+                  title="Tax of PL-OUTPUT Part A (Sales step, the sheet's I22:K22 = 'PL-OUTPUT'!E33:G33) plus the output tax on capital goods sold outside the P&L (Sales › Capital goods sold) — its two parts are the next two lines"
+                >
+                  As per P&amp;L
+                </FooterLabel>
+              ),
+              tone: 'total' as const,
+              cells: soft(taxFooter('net', dto.asPerPl, cess)),
+            },
+            {
+              key: 'plPartA',
+              label: (
+                <FooterLabel soft title="Tax of PL-OUTPUT Part A (Sales step), head by head — the sheet's I22:K22">
+                  of which Part A tax
+                </FooterLabel>
+              ),
+              tone: 'total' as const,
+              cells: linkCells(taxFooter('net', partATax, cess), (h) => salesPartATotal(h), true),
+            },
+            {
+              key: 'plCg',
+              label: (
+                <FooterLabel soft title="Output tax on capital goods sold outside the P&L revenue (Sales › Capital goods sold, Annexure-5): booked in the output tax ledger, not in a Sales ledger">
+                  of which capital goods sold
+                </FooterLabel>
+              ),
+              tone: 'total' as const,
+              cells: linkCells(taxFooter('net', cgOut, cess), () => salesCgOutsidePl, true),
+            },
+          ]
+        : [
+            {
+              key: 'pl',
+              label: (
+                <FooterLabel
+                  soft
+                  title="Tax of PL-OUTPUT Part A (Sales step), head by head — the sheet's I22:K22 = 'PL-OUTPUT'!E33:G33. Output tax on capital goods sold outside the P&L would be added here; there is none this year."
+                >
+                  As per P&amp;L
+                </FooterLabel>
+              ),
+              tone: 'total' as const,
+              cells: linkCells(taxFooter('net', dto.asPerPl, cess), (h) => salesPartATotal(h), true),
+            },
+          ]),
       {
         key: 'plDiff',
         label: footerStatusLabel(
@@ -191,7 +235,7 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
         cells: diffCells('net', dto.plDiff, cess, tol),
       },
     ],
-    [dto, cess, tol],
+    [dto, cess, tol, cgSplit, partATax, cgOut],
   );
 
   return (

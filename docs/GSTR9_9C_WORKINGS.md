@@ -103,18 +103,34 @@ order). Every entry grid behaves like the Excel sheet:
 | 0 | Overview | MASTER | progress, status, lock |
 | 1 | Portal data | "AS PER 3B", "AS PER GST PORTAL", "AUTO POPULATE FROM 9" cells | fetch / upload / type |
 | 2 | Sales | PL-OUTPUT | Part A, Part B, audit-report total |
-| 3 | Purchases & ITC | PL-INPUT | sections A/B/C, 9C expense head, row 75 |
-| 4 | Duties & Taxes | DUTIES & TAXES-OUTPUT / -INPUT | monthly ledgers (typed directly, or rate-wise per month: Sales / Credit note / Purchase / Debit note become the sum of their rate lines, `rateWise` on the month, `src/lib/gstr9/rateWise.ts`; the engine reads only the summed group), LYE, other adjustments |
-| 5 | RCM | RCM | Part B expense categories × month |
+| 3 | Purchases & ITC | PL-INPUT | sections A/B/C, row 75; the 9C expense head of every ledger (tab "9C heads", the one place heads are tagged besides each section grid) |
+| 4 | Duties & Taxes | DUTIES & TAXES-OUTPUT / -INPUT | monthly ledgers (typed directly, or rate-wise per month: Sales / Credit note / Purchase / Debit note become the sum of their rate lines, `rateWise` on the month, `src/lib/gstr9/rateWise.ts`; the engine reads only the summed group), LYE, other adjustments; the as-filed 3B columns are read-only here (typed only on Portal › As-filed 3B) |
+| 5 | RCM | RCM | Part B expense categories × month; Part A (as-filed 3B 3.1(d)) read-only |
 | 6 | Outward reco | GSTR 9-OUTPUT | category tags (from step 2), justifications |
-| 7 | ITC reco | GSTR 9-INPUT + GSTR-9 Table 7 | Table 7, 12, 13, 6A1 |
-| 8 | 9C expense heads | GSTR 9C | (computed from step 3) |
-| 9 | Annexures | ANNEXURE 1–4 | Annexure 1 D9/D10, Annexure 3 rows 2–4, Annexure 4 |
-| 10 | GSTR-9 | GSTR-9 | 6K–6M, 8E/8F/8H1, Table 9 overrides, 10, 11, 14–18 |
-| 11 | GSTR-9C | (official tables 5–16, Part V) | adjustments, reasons, certification |
-| 12 | Notice format | NOTICE FORMATE | 16B/16C/15G, 16(4), prior-year cells |
-| 13 | Review & lock | — | every open difference, sign-off (prepared → verified → reviewed & locked), revision history, snapshots |
-| 14 | Payables & set-off | ANNEXURE-3 · DRC-03 | output-/input-wise payable, set-off register (DRC-03 / GSTR-3B with evidence) |
+| 7 | ITC reco | GSTR 9-INPUT + GSTR-9 Tables 6/7/8/12/13 + GSTR 9C | every typed ITC cell: 6A1 and Table 6 entries (6G override, 6K–6M) under the working; Rule 42/43; Table 7; Tables 8 (8C, 8E, 8F, 8G, 8H1), 12, 13; the 9C Table 14 working (computed, was step 8) |
+| 8 | Annexures | ANNEXURE 1–5 | Annexure 1 D9/D10, Annexure 3 rows 2–4, Annexure 4 |
+| 9 | GSTR-9 | GSTR-9 | Table 9 overrides, 5I–5K, 10, 11, 14–18 (Tables 6–8 only show what ITC reco holds) |
+| 10 | GSTR-9C | (official tables 5–16, Part V) | adjustments, reasons, certification |
+| 11 | Notice format | NOTICE FORMATE | 16B/16C/15G, 16(4), prior-year cells |
+| 12 | Review & lock | — | every open difference, sign-off (prepared → verified → reviewed & locked), history & version snapshots (one tab) |
+| 13 | Payables & set-off | ANNEXURE-3 · DRC-03 | output-/input-wise payable, set-off register (DRC-03 / GSTR-3B with evidence) |
+
+**Tabs consolidated (Kunal, 26 Nov 2026).** Step 8 "9C expense heads" had no
+input or difference line of its own, so it became ITC reco › "9C Table 14 ·
+expense heads" (`reco/Table14Card.tsx`) and the steps after it moved up one
+(old links `?step=expense` land there, `?expensetab=ledgers` on Purchases ›
+9C heads; `STEP_ALIASES` in `overview/steps.ts`). Its "Ledgers by head" grid
+moved to Purchases › 9C heads (`purchases/LedgersByHead.tsx`, filter
+`?head=`), so a head is tagged in one place. ITC reco's tabs run in working
+order: the working (with 6A1 and the Table 6 entries), 7C/7D · Rule 42/43,
+Table 7 entries, Tables 8, 12 & 13, 9C Table 14. Also folded: Review's
+revision history and snapshots are one tab (`?reviewtab=snapshots` opens it);
+Sales' "GSTR-9 Table 5" tab (books vs portal lives on GSTR-9 › Table 5 only;
+Portal's Table 5 shows the portal figures only); Duties › Input's RCM and P&L
+comparisons are links to the RCM step and Purchases row 81 (the duplicate
+line `dti.pl` is gone, `purchases.dt` is the one); the as-filed 3B is typed
+only on Portal; Annexure-5's paper C6 is exported once, under Sales; the
+portal "not fetched" lines sit on the Portal step.
 
 ## 3. Storage
 
@@ -207,12 +223,19 @@ sign-off covers GSTR-9 and GSTR-9C together.
   working. **Self-validation first** (the firm, 25 Nov 2026,
   `20261125100000`): the working may be marked prepared only with no open
   difference and once the preparer has answered every self-validation
-  question that applies (`src/lib/gstr9/selfCheck.ts`: portal figures
-  fetched, books agree with the audited accounts, ineligible ITC reversed,
-  reverse charge paid, GSTR-9 Tables 4 to 19 checked, HSN summary, late fee;
-  and when it applies, additional tax paid with interest (Payables shows a
-  payable), GSTR-9C liability paid through DRC-03, GSTR-9C reasons as filed,
-  GSTR-9C verification details). Each is answered Yes, No (with a remark of
+  question that applies (`src/lib/gstr9/selfCheck.ts`; trimmed on 26 Nov
+  2026 at Kunal's request to what the app cannot check and what would let a
+  wrong return be filed, `20261126110000`): always, books agree with the
+  audited accounts, blocked ITC reversed, HSN summary; only when the figures
+  call for it, missing portal figures explained (a month's 3B or the GSTR-9
+  system-computed figures not in the working), reverse charge paid (RCM in
+  the year), late fee (the due date, 31 December after the FY, has passed),
+  additional tax paid (a payable not yet set off in the register), GSTR-9C
+  liability paid through DRC-03, and, when GSTR-9C is filed, the audited
+  accounts in hand with the verification filled. Only the preparer is asked,
+  and only until the working is marked prepared (or sent back to them): the
+  verifier and the final review see the answers, folded, never the
+  questions. Each is answered Yes, No (with a remark of
   at least 5 characters on why and what is being done) or, where it allows,
   Not applicable; it is asked under the step it concerns ("Self-validation
   on this step") and every one still open is put again in the Mark prepared
@@ -623,7 +646,7 @@ screen where it applies.
       with no common asset in the register is warned;
     - with the working off, 7D and 7E are as before (typed in Table 7).
 
-41. **Builder advance roll-forward** (Sales › Advances, the last Sales tab, Builder
+41. **Builder advance roll-forward** (Sales › 9C Table 5 · Advances, the last Sales tab, Builder
     clients only, moved from the GSTR-9C step on 24 Nov 2026 at Kunal's request;
     GSTR-9C Table 5 links to it; `src/lib/gstr9/builderAdvances.ts`, data
     `builderAdvancesData.ts`, card `sales/BuilderAdvances.tsx`, paper D2A; the firm's TURNOVER IN 9C sheet,
@@ -674,6 +697,31 @@ screen where it applies.
     to 16E from Rule 42/43" puts the reversal still due per head and its
     interest into Table 16. Neither writes by itself: the reasons are the
     auditor's.
+
+44. **Builder project credit with the Rule 42/43 switch off** (Kunal, 26 Nov
+    2026, position A). The approved Builder › ITC Reversal working posted in
+    this FY adds to 7C (Rule 42) and 7D (Rule 43) whether or not the Rule 42
+    working is switched on. With the switch off it adds to the typed 7C / 7D
+    (ITC reco › Table 7 entries shows it as "+ builder") and is taken out of
+    the 4(B)(1) that 7E defaults from, so it never lands in 7E.
+45. **Every ITC input on ITC reco** (Kunal, 26 Nov 2026, position B). 6G
+    (override), 6K–6M and 8C, 8E, 8F, 8G, 8H1 are typed on ITC reco
+    (`gstr9form/ItcEntries.tsx`); GSTR-9 Tables 6–8 only show them, each
+    typed figure a link to its entry. Same stored fields (`docs.gstr9`), so
+    nothing moves in the data.
+46. **Annexure-3 is the Payables register** (26 Nov 2026). Its total, set-offs
+    and balance are the Payables lines, output and input side apart, with the
+    Rule 42/43 payable and its interest as their own row, so the Overview's
+    "DRC-03 balance to pay", Annexure-3 and Payables show one figure. A
+    remainder of 1 paisa or more (`PAYABLE_EPS`) can be set off.
+47. **Set-off caps** (Kunal, 26 Nov 2026, position D,
+    `20261126100000_annual_return_setoff_caps.sql`). A set-off locks its
+    evidence while it checks: a synced DRC-03 is capped per head at what it
+    paid across every working of the client, an uploaded copy whose ARN is
+    synced at that DRC-03, and an uploaded copy's ARN on record for another
+    client is refused (an unsynced copy stores no amount, so it has no amount
+    cap); a GSTR-3B effect is capped per head at that table's as-filed figure
+    of the period across workings (uncapped while no 3B is pulled for it).
 
 Carried over from the workbook as-is (firm positions, flagged in the UI):
 suspended-ITC reversals (incl. 180-day) are reported as 7H "other reversal"
@@ -785,7 +833,7 @@ not links.
 locked, computed or carried from another step or tab opens its source
 (targets in `src/components/gstr9/figure/targetsData.ts` for Portal data,
 Sales, Purchases, Duties & Taxes and RCM, `targetsReco.ts` for Outward / ITC
-reco and 9C heads, `targetsFinish.ts` for Annexures, Notice, Payables,
+reco (incl. 9C Table 14), `targetsFinish.ts` for Annexures, Notice, Payables,
 Overview and Review; a difference line opens its own row, `diffTarget`). A cell
 a superadmin may type over keeps typing and its source chip carries the link.
 
@@ -794,3 +842,14 @@ a superadmin may type over keeps typing and its source chip carries the link.
 step heading): a cell to type is pale yellow with blue figures (an empty one
 outlined); a figure from another tab is green with a dotted underline (a link);
 computed or locked figures are grey. A locked working shows no yellow cells.
+
+## 12. The final GSTR-9 against the system-computed GSTR-9 (26 Nov 2026)
+
+Kunal asked (26 Nov 2026) that the GSTR-9 step show where the final GSTR-9 differs from the portal's system-computed GSTR-9 in a different colour, with a summary of the remarks that explain it.
+
+- **What is compared** (`src/lib/gstr9/variance.ts`, `systemVariances`): the portal's GSTR-9 (`docs.portal.gstr9`) against the working's (`workings.g9`), cell by cell: Table 4 (its sub-totals 4H, 4M, 4N added up the form's way; in practice 4G, which follows RCM Part A), Table 5's values (books against the portal's; 5G, 5L, 5M from its rows, 5N = 4N + 5M − 4G − 4G1 of the portal), 6A, 6G, 8A, and the Table 9 tax payable (only while the portal's Table 9 is in). A cell differs when |final − system-computed| exceeds the working's tolerance. Nothing is compared while the portal's GSTR-9 is not fetched.
+- **On screen.** A differing cell is peach with dark orange figures and a bar on its left (`--cell-variance` / `--cell-variance-foreground`, light and dark, Tailwind `cell-variance`); hovering shows "System-computed ₹x · final ₹y · difference ₹z". `MatrixTable` and `FormTable` take an optional `variance` lookup, `SheetGrid` a `variance` cell tone (Table 9's payable). The legend shows the swatch on this step only; each table's tab carries a count ("n differ from portal").
+- **The card** at the top of the step lists every differing cell (row, head, both figures, the difference, the final a link to its row) with the remarks that bear on it: reasons on its own difference lines (`related` keys, e.g. 5D ← `g9.t5.5D`, 4G ← `rcm.*`, 9A ← `g9.t9.igst`) with their GSTR-9 effect (§10), and, by table, the GSTR-9C reasons tables (6 and 8 → Tables 4 / 5, 10 → 9, 13 and 15 → 6 / 8) and the self-check's No notes (by the question's step).
+- **Summarise with AI** sends the cells, every remark and Tables 10 to 14 to the GST Assistant (`gst-assistant`, mode `variance_summary`, `supabase/functions/gst-assistant/varianceSummary.ts`): a summary per table and the cells no remark explains. Without a key, with the assistant off, a client opted out of AI or any failure, the rules summary (`rulesSummary`: grouped by table, the remarks quoted; a cell is unexplained without a reason on a related difference line) is written instead and says so. The last summary is kept on the working (`docs.gstr9.varianceSummary`: overall, tables, unexplained, at, by, source, digest) through the working's own save, and is marked stale once the digest of the differences and remarks changes. A locked working keeps the one it has.
+- **Exports.** D1 opens with the summary (or a rules summary built at print, marked so) and the table of differences, the final linked to its row; every differing figure of D1's Tables 4 to 9 is filled orange with both figures in its comment (`fill: 'variance'`, Excel and PDF).
+

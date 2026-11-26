@@ -1,4 +1,7 @@
 import React from 'react';
+import { itcBuilderReversal } from '../gstr9form/sourceTargets';
+import Table14Card from '../reco/Table14Card';
+import { Table6Entries, Table8Entries } from '../gstr9form/ItcEntries';
 import { RotateCcw, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/gstr9/badge';
@@ -336,9 +339,10 @@ const T6A1Card: React.FC = () => {
 type T7Fixed = 'r37' | 'r37A' | 'r38' | 'r39' | 'r42' | 'r43' | 's17_5' | 'tran1' | 'tran2';
 
 interface T7Row extends LabelledRow {
-  kind: 'fixed' | 'h1';
+  /** 'cg186': the s.18(6) reversal from Sales › Capital goods sold, shown so the rows add up to 7I; not typed here. */
+  kind: 'fixed' | 'h1' | 'cg186';
   /** The docs.gstr9.t7 field the row edits. */
-  field: T7Fixed | 'otherDesc';
+  field: T7Fixed | 'otherDesc' | 'cg186';
 }
 
 const T7_ROWS: Array<{ id: T7Fixed; code: string; label: string }> = [
@@ -364,6 +368,7 @@ const Table7Card: React.FC = () => {
   const G = docs.gstr9;
   const g9 = workings.g9;
   const h1 = g9.t7H[0];
+  const cg186 = g9.t7H.find((h) => h.id === 'cg186');
 
   const r42On = workings.r42.enabled;
   const rows: T7Row[] = [
@@ -380,6 +385,9 @@ const Table7Card: React.FC = () => {
       return { ...r, field: r.id, kind: 'fixed', v, f: v?.f, computed: r.id === 's17_5' && v == null ? g9.t7EPortal : null };
     }),
     { id: 'h1', field: 'otherDesc', code: '7H1', label: G.t7.otherDesc, kind: 'h1', v: null, computed: h1 ? h1.tax : null },
+    ...(cg186
+      ? [{ id: 'cg186', field: 'cg186' as const, code: '7H', label: cg186.description, kind: 'cg186' as const, v: null, computed: cg186.tax }]
+      : []),
   ];
 
   const columns: GridColumn<T7Row>[] = [
@@ -402,6 +410,11 @@ const Table7Card: React.FC = () => {
               <SmallBadge>From Duties &amp; Taxes</SmallBadge>
             </FigLink>
           )}
+          {r.kind === 'cg186' && (
+            <FigLink to={salesCgSold}>
+              <SmallBadge title="s.18(6) shortfall on capital goods sold — change it on Sales › Capital goods sold">Capital goods sold</SmallBadge>
+            </FigLink>
+          )}
           {r.id === 's17_5' &&
             (r.v == null ? (
               <FigLink to={rowOnly(portal3bTotal('itc4b1', 'c'))}>
@@ -418,6 +431,13 @@ const Table7Card: React.FC = () => {
             ) : (
               <SmallBadge variant="outline">Typed over</SmallBadge>
             ))}
+          {(r.id === 'r42' || r.id === 'r43') && !r42On && totalTax(workings.builderRev[r.id]) > 0.005 && (
+            <FigLink to={itcBuilderReversal}>
+              <SmallBadge title="The approved Builder › ITC Reversal working posted in this FY adds to the figure typed here (position 42); see ITC reco › 7C/7D · Rule 42/43">
+                + builder {fmtMoney(totalTax(workings.builderRev[r.id]))}
+              </SmallBadge>
+            </FigLink>
+          )}
           {r.id === 'r43' && r42On &&
             (r.v == null ? (
               <FigLink to={rule43Year7D}>
@@ -430,8 +450,9 @@ const Table7Card: React.FC = () => {
       ),
       onEdit: (r, e) => ({ ...r, label: limitDesc(e.text) }),
     },
-    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind !== 'h1', locked: (r) => (r.id === 's17_5' || ((r.id === 'r42' || r.id === 'r43') && r42On)) && !canEditSource, computedHint: (r) =>
+    ...overrideTaxCols<T7Row>({ editable: (r) => r.kind === 'fixed', locked: (r) => (r.id === 's17_5' || ((r.id === 'r42' || r.id === 'r43') && r42On)) && !canEditSource, computedHint: (r) =>
         r.kind === 'h1' ? 'Suspended ITC reversed, from Duties & Taxes (I + L) — change it there'
+          : r.kind === 'cg186' ? 'Reversal u/s 18(6), from Sales › Capital goods sold — change it there'
           : r.id === 'r42' ? 'Final for the year from the Rule 42 working — a superadmin may type over it'
             : r.id === 'r43' ? 'Σ Te from the Rule 43 working — a superadmin may type over it'
             : 'As-filed GSTR-3B 4B(1) less 7A2, 7C and 7D — type to override', order: FORM_ORDER, names: FORM_HEAD_NAME, group: FORM_GROUP }),
@@ -444,6 +465,7 @@ const Table7Card: React.FC = () => {
       let r43Override: TaxIn | null | undefined;
       next.forEach((r) => {
         const field = r.field;
+        if (field === 'cg186') return;
         if (field === 'otherDesc') t7.otherDesc = r.label;
         else if (field === 's17_5') t7.s17_5 = withFormulas(r.v, r.f);
         else if (field === 'r42' && r42On) r42Override = withFormulas(r.v, r.f);
@@ -654,13 +676,14 @@ const NextYearCard: React.FC = () => {
 
 // ---------------------------------------------------------------------------
 
-const TABS = ['working', 'table7', 'next', 'rule42'] as const;
+const TABS = ['working', 'rule42', 'table7', 'next', 'table14'] as const;
 
 /**
- * Step 7 — the working (Tables 6 and 7 against 6A2 and the books) first; the
- * Table 7 entries and the 6A1 / 12 / 13 entries one click away (?itctab=).
- * Every difference line of the step sits in the working, so its open count
- * is on that tab.
+ * Step 7 — ITC reco, in working order: the working (Tables 6 and 7 against
+ * 6A2 and the books, with 6A1 under it) first; then the Rule 42/43 working that
+ * gives 7C/7D; the Table 7 entries; Tables 12/13 and 8C; and GSTR-9C Table 14
+ * (ITC by expense head, once its own step 8). ?itctab= keeps the tab; every
+ * difference line of the step sits in the working, so its open count is there.
  */
 const ItcRecoStep: React.FC = () => {
   const { workings } = useWorkspace();
@@ -670,34 +693,42 @@ const ItcRecoStep: React.FC = () => {
       <OpenDifferences step="itc" />
       <Tabs value={tab} onValueChange={setTab} className="space-y-2">
         <StepTabsList label="ITC reco" value={tab}>
-          <StepTab value="working">
+          <StepTab value="working" title="Tables 6 and 7 tied to 6A2 and the books; 6A1 and the typed Table 6 rows (6G, 6K, 6L, 6M)">
             ITC working — Tables 6 &amp; 7 <OpenBadge n={workings.stepOpen.itc} />
           </StepTab>
-          <StepTab value="table7" title="7A to 7H, typed rule by rule">
+          <StepTab value="rule42" title="7C and 7D: common credit used for exempt supplies (Rule 42) and capital goods in common use (Rule 43)">
+            7C/7D · Rule 42/43
+          </StepTab>
+          <StepTab value="table7" title="7A to 7H, rule by rule">
             Table 7 entries
           </StepTab>
-          <StepTab value="next" title="6A1, Tables 12 and 13, and 8C">
-            6A1 · Tables 12 &amp; 13
+          <StepTab value="next" title="Tables 12 and 13, and the typed Table 8 rows (8C, 8E, 8F, 8G, 8H1)">
+            Tables 8, 12 &amp; 13
           </StepTab>
-          <StepTab value="rule42" title="Common credit used for exempt supplies: monthly provisional, annual final, true-up and interest">
-            Rule 42/43
+          <StepTab value="table14" title="GSTR-9C Table 14: ITC by expense head, against 7J">
+            9C Table 14 · expense heads
           </StepTab>
         </StepTabsList>
-        <TabsContent value="working" className="mt-0">
+        <TabsContent value="working" className="mt-0 space-y-3">
           <WorkingCard />
-        </TabsContent>
-        <TabsContent value="table7" className="mt-0">
-          <Table7Card />
-        </TabsContent>
-        <TabsContent value="next" className="mt-0 space-y-3">
           <T6A1Card />
-          <NextYearCard />
+          <Table6Entries />
         </TabsContent>
         <TabsContent value="rule42" className="mt-0">
           <div className="space-y-4">
             <Rule42Card />
             <Rule43Card />
           </div>
+        </TabsContent>
+        <TabsContent value="table7" className="mt-0">
+          <Table7Card />
+        </TabsContent>
+        <TabsContent value="next" className="mt-0 space-y-3">
+          <NextYearCard />
+          <Table8Entries />
+        </TabsContent>
+        <TabsContent value="table14" className="mt-0">
+          <Table14Card />
         </TabsContent>
       </Tabs>
     </div>

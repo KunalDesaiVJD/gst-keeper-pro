@@ -19,10 +19,10 @@ const ANSWERS: SelfCheckAnswer[] = ['yes', 'no', 'na'];
 /** One question: Yes / No / Not applicable, and the remark a No needs. */
 export const SelfCheckQuestionRow: React.FC<{ item: SelfCheckItem; showStep?: boolean }> = ({ item, showStep }) => {
   const { readOnly, isStaff } = useWorkspace();
-  const { setAnswer, setNote } = useSelfCheck();
+  const { setAnswer, setNote, asking } = useSelfCheck();
   const go = useGoToStep();
   const { q, entry, hint, problem } = item;
-  const editable = isStaff && !readOnly;
+  const editable = isStaff && !readOnly && asking;
   const id = `selfcheck-${q.key}`;
   const noteMissing = entry?.answer === 'no' && problem;
   return (
@@ -119,11 +119,12 @@ export const SelfCheckAutoRow: React.FC<{ a: SelfCheckAuto }> = ({ a }) => {
  */
 export const StepSelfCheck: React.FC<{ step: StepKey }> = ({ step }) => {
   const { isStaff } = useWorkspace();
-  const { status } = useSelfCheck();
+  const { status, asking } = useSelfCheck();
   const items = itemsForStep(status, step);
   const pending = items.filter((i) => i.problem).length;
   const [open, setOpen] = useState<boolean | null>(null);
-  if (!isStaff || !items.length) return null;
+  // Only the preparer is asked; once it is marked prepared the verifier and the final review are not.
+  if (!isStaff || !asking || !items.length) return null;
   const shown = open ?? pending > 0;
   return (
     <SectionCard
@@ -171,8 +172,33 @@ export const SelfCheckPanel: React.FC<{ only?: string[]; showAuto?: boolean }> =
 /** The card on Review & lock → Sign-off. */
 export const SelfCheckCard: React.FC = () => {
   const { isStaff, signoffState } = useWorkspace();
-  const { status } = useSelfCheck();
+  const { status, asking } = useSelfCheck();
+  const [open, setOpen] = useState(false);
   if (!isStaff) return null;
+  if (!asking) {
+    // After Mark prepared the answers are a record: folded, read-only, nothing to answer (the final review is never asked).
+    const noes = status.items.filter((i) => i.entry?.answer === 'no').length;
+    return (
+      <SectionCard
+        title={(
+          <span className="flex items-center gap-2">
+            Preparer&rsquo;s self-validation
+            <Badge variant={noes ? 'warning' : 'success'} className="h-4 px-1.5 text-[10px] leading-none">
+              {status.items.length} answered{noes ? ` · ${noes} No` : ''}
+            </Badge>
+          </span>
+        )}
+        description={`Answered by ${signoffState.prepared?.name ?? 'the preparer'} before marking it prepared. Nothing to answer here${noes ? '; read the remarks on each No' : ''}.`}
+        actions={(
+          <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" aria-expanded={open} onClick={() => setOpen(!open)}>
+            {open ? 'Hide' : 'Show answers'} <ChevronDown className={cn('ml-1 h-3.5 w-3.5 transition-transform', open && 'rotate-180')} />
+          </Button>
+        )}
+      >
+        {open && <SelfCheckPanel showAuto={false} />}
+      </SectionCard>
+    );
+  }
   const submitted = signoffState.prepared ? 'Answered by the preparer before marking it prepared; the verifier checks the answers and remarks.' : 'The preparer answers every question, and the app’s checks must pass, before the working can be marked prepared.';
   return (
     <SectionCard

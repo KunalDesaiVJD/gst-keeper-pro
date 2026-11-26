@@ -4,7 +4,7 @@ import { ExternalLink, HandCoins, Lock } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
-import { drc03Available, drc03MatchesFY, SIDE_LABEL, type PayableSide } from '@/lib/gstr9/payables';
+import { drc03Available, drc03MatchesFY, PAYABLE_EPS, SIDE_LABEL, type PayableSide } from '@/lib/gstr9/payables';
 import type { Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
@@ -23,7 +23,7 @@ type PayablesTab = 'disclosure' | 'register' | 'drc03';
 const TABS: PayablesTab[] = ['disclosure', 'register', 'drc03'];
 
 /**
- * Step 14 — what the annual reconciliation leaves payable, disclosed
+ * Step 13 — what the annual reconciliation leaves payable, disclosed
  * output-wise and input-wise, and how each part is set off. A set-off needs
  * its evidence in the system: a DRC-03 imported (synced from the portal or
  * its copy uploaded), or a GSTR-3B effect with the filing date and the copy.
@@ -75,10 +75,10 @@ const PayablesStep: React.FC = () => {
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 md:grid-cols-4">
           <KpiTile label="Output tax payable" value={rupees(sumTax(P.output.payable))} />
           <KpiTile label="Input tax credit payable" value={rupees(sumTax(P.input.payable))} />
-          <KpiTile label="Set off" value={rupees(sumTax(P.totals.setOff))} tone={payable > 0.5 && sumTax(P.totals.setOff) > 0 ? 'ok' : 'neutral'} />
-          <KpiTile label="Balance outstanding" value={rupees(balance)} tone={balance > w.tolerance ? 'error' : payable > 0.5 ? 'ok' : 'neutral'} hint={payable > 0.5 && balance <= w.tolerance ? (balance < 0.5 ? 'Fully set off' : `Within the ${rupees(w.tolerance)} tolerance`) : undefined} />
+          <KpiTile label="Set off" value={rupees(sumTax(P.totals.setOff))} tone={payable > PAYABLE_EPS && sumTax(P.totals.setOff) > 0 ? 'ok' : 'neutral'} />
+          <KpiTile label="Balance outstanding" value={rupees(balance)} tone={balance > w.tolerance ? 'error' : payable > PAYABLE_EPS ? 'ok' : 'neutral'} hint={payable > PAYABLE_EPS && balance <= w.tolerance ? (balance <= PAYABLE_EPS ? 'Fully set off' : `Within the ${rupees(w.tolerance)} tolerance`) : undefined} />
         </div>
-        {isStaff && balance > w.tolerance && (
+        {isStaff && balance > PAYABLE_EPS && (
           <Button size="sm" onClick={() => setDialog({ open: true })}><HandCoins className="mr-1 h-3.5 w-3.5" /> Record a set-off</Button>
         )}
       </div>
@@ -101,7 +101,7 @@ const PayablesStep: React.FC = () => {
                   ? 'Tax payable as per books not paid in the return, RCM to be paid and other output payments — from Annexure-3.'
                   : 'Excess ITC claimed as per the reconciliation and other input-side payments — from Annexure-3.'}
                 excelRef="ANNEXURE B39:G46"
-                actions={isStaff && sumTax(P[side].balance) > w.tolerance ? (
+                actions={isStaff && sumTax(P[side].balance) > PAYABLE_EPS ? (
                   <Button size="sm" variant="outline" className="h-7" onClick={() => setDialog({ open: true, side })} aria-label={`Record a set-off — ${SIDE_LABEL[side]}`}>
                     <HandCoins className="mr-1 h-3.5 w-3.5" /> Record a set-off
                   </Button>
@@ -160,7 +160,7 @@ const PayablesStep: React.FC = () => {
                           {HEADS.map(([h]) => <td key={h} className="border-b px-2 py-1.5 text-right tabular-nums">{fmtMoney(d.tax[h])}</td>)}
                           <td className="border-b px-2 py-1.5 text-right font-medium tabular-nums">{fmtMoney(left)}</td>
                           <td className="border-b px-2 py-1.5">
-                            {left < 0.5 ? <Badge variant="success" className="text-[10px] font-medium">Fully used</Badge> : <span className="text-muted-foreground">{d.status ?? '—'}</span>}
+                            {left <= PAYABLE_EPS ? <Badge variant="success" className="text-[10px] font-medium">Fully used</Badge> : <span className="text-muted-foreground">{d.status ?? '—'}</span>}
                           </td>
                         </tr>
                       );

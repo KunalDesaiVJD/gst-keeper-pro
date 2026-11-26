@@ -14,18 +14,19 @@ import { clientStage, displayName, STAGE_META } from '@/lib/gstr9/signoffFlow';
 import { fmtWhen, REVIEW_TAB_PARAM, type ReviewTab } from '../overview/steps';
 import { StepTab, StepTabsList } from '../reco/StepTabs';
 
-const TABS: ReviewTab[] = ['differences', 'signoff', 'history', 'snapshots'];
+const TABS: ReviewTab[] = ['differences', 'signoff', 'history'];
 
 /**
- * Step 13 — every difference line in one list (with its reason), sign-off &
- * lock with the tolerance, the full revision history and the snapshots, one
- * tab each. The open tab is kept in the URL (?reviewtab=).
+ * Step 12 — every difference line in one list (with its reason), sign-off &
+ * lock with the tolerance, and the history (every change, then the version
+ * snapshots) on one tab. The open tab is kept in the URL (?reviewtab=; an old
+ * ?reviewtab=snapshots opens the history tab).
  */
 const ReviewStep: React.FC = () => {
   const { locked, period, workings: w, signoffState, isStaff } = useWorkspace();
   const [params, setParams] = useSearchParams();
   const fromUrl = params.get(REVIEW_TAB_PARAM) as ReviewTab | null;
-  const tab: ReviewTab = fromUrl && TABS.includes(fromUrl) ? fromUrl : 'differences';
+  const tab: ReviewTab = fromUrl === 'snapshots' ? 'history' : fromUrl && TABS.includes(fromUrl) ? fromUrl : 'differences';
   const setTab = (v: string) => {
     const next = new URLSearchParams(params);
     next.set(REVIEW_TAB_PARAM, v);
@@ -68,8 +69,7 @@ const ReviewStep: React.FC = () => {
             {lockBadge.label}
           </Badge>
         </StepTab>
-        <StepTab value="history">Revision history</StepTab>
-        <StepTab value="snapshots">Version snapshots</StepTab>
+        <StepTab value="history" title="Every change to the working, then the version snapshots">History &amp; versions</StepTab>
       </StepTabsList>
 
       <TabsContent value="differences" className="mt-0">
@@ -84,11 +84,8 @@ const ReviewStep: React.FC = () => {
         <SelfCheckCard />
       </TabsContent>
 
-      <TabsContent value="history" className="mt-0">
+      <TabsContent value="history" className="mt-0 space-y-3">
         <RevisionHistory />
-      </TabsContent>
-
-      <TabsContent value="snapshots" className="mt-0">
         <VersionHistory />
       </TabsContent>
     </Tabs>

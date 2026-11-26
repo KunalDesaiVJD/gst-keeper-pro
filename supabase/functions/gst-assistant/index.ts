@@ -23,6 +23,12 @@
 // mode, clientId, financialYear, line, remark, figures, carried } → the GSTR-9
 // effect of an Annual Return difference line's remark, { ok, effect } (one
 // tool, record_effect; remarkEffect.ts). Same staff check, switch and key.
+//
+// Mode 'variance_summary' (26 Nov 2026): { actorId, sessionsEndedAt, mode,
+// clientId, financialYear, cells, remarks, nextFy } → why the final GSTR-9
+// differs from the system-computed GSTR-9, per table, and the differences no
+// remark explains, { ok, summary } (one tool, record_summary;
+// varianceSummary.ts). Same staff check, switch, key and ai_opt_out.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { resolveClaudeKey } from '../_shared/claudeKey.ts';
@@ -30,6 +36,7 @@ import { AI_MODEL } from '../_shared/aiModel.ts';
 import { assistantTurn, makeClient, scrub, type Msg, type SystemBlock, type Tool, type TurnUsage } from './claude.ts';
 import { checkFilters, cleanRows, searchDocs, selectList, tableAllowed, type DocSection } from './readRules.ts';
 import { parseRemarkRequest, RECORD_EFFECT_TOOL, remarkSystemPrompt, remarkUserText, validateEffect, type RemarkEffect } from './remarkEffect.ts';
+import { parseVarianceRequest, RECORD_SUMMARY_TOOL, validateSummary, varianceSystemPrompt, varianceUserText, type VarianceAnswer } from './varianceSummary.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -282,7 +289,7 @@ function compactHistory(msgs: Msg[]): Msg[] {
   });
 }
 
-// ── Shared by both modes: who is asking, the firm's switch, and the key.
+// ── Shared by every mode: who is asking, the firm's switch, and the key.
 interface Gate { actorId: string; role: string; who: { name: string; role: string }; settings: { enabled?: boolean; allow_fill?: boolean } | null }
 
 /** Staff only, not signed out everywhere since, and the assistant switched on. */
@@ -313,54 +320,51 @@ async function claudeClient(sb: SupabaseClient): Promise<ReturnType<typeof makeC
   return makeClient(key.key);
 }
 
-// ── Mode 'remark_effect' (25 Nov 2026): the GSTR-9 effect of an Annual Return
-// difference line's remark (remarkEffect.ts). One question, one tool, no reads,
-// no assistant_actions; it never writes a working: the app applies the
-// suggestion only when the user presses Apply.
-async function remarkEffectMode(sb: SupabaseClient, body: Record<string, unknown>, gate: Gate): Promise<Response> {
-  const parsed = parseRemarkRequest(body);
-  if ('error' in parsed) return json(200, { ok: false, error: parsed.error });
-  const blocked = await optedOut(sb);
-  if (blocked.has(parsed.clientId)) return json(200, { ok: false, error: 'This client opted out of AI: the remark is not sent to the assistant.' });
-
+// ── One question, one tool (the Annual Return modes): no reads, no
+// assistant_actions, never a write; a second call only when the first did not
+// call the tool with a usable input. The tokens are recorded like a question's.
+async function oneToolCall<T>(
+  sb: SupabaseClient,
+  gate: Gate,
+  opts: { system: SystemBlock[]; tool: Tool; user: string; validate: (input: unknown) => T | { error: string }; what: string },
+): Promise<{ value: T } | { error: string }> {
   const client = await claudeClient(sb);
-  if (client instanceof Response) return client;
+  if (client instanceof Response) return { error: ((await client.json()) as { error?: string }).error ?? 'No Claude API key is saved.' };
 
-  const system = remarkSystemPrompt(parsed.financialYear);
-  const tools = [RECORD_EFFECT_TOOL];
-  const messages: Msg[] = [{ role: 'user', content: remarkUserText(parsed) }];
+  const name = opts.tool.name;
+  const messages: Msg[] = [{ role: 'user', content: opts.user }];
   const total: TurnUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   let calls = 0;
   let model = AI_MODEL;
-  let effect: RemarkEffect | null = null;
+  let value: T | null = null;
   let failure: string | null = null;
 
   try {
-    // One call; a second only when the first did not call record_effect with a usable input.
-    for (let attempt = 0; attempt < 2 && !effect; attempt += 1) {
-      const { msg, usage, model: m } = await assistantTurn(client, { system, tools, messages });
+    for (let attempt = 0; attempt < 2 && value === null; attempt += 1) {
+      const { msg, usage, model: m } = await assistantTurn(client, { system: opts.system, tools: [opts.tool], messages });
       calls += 1;
       model = m;
       total.input += usage.input; total.output += usage.output; total.cacheRead += usage.cacheRead; total.cacheWrite += usage.cacheWrite;
       const uses = msg.content.filter((b) => b.type === 'tool_use') as { id: string; name: string; input: unknown }[];
-      const use = uses.find((u) => u.name === 'record_effect');
+      const use = uses.find((u) => u.name === name);
       if (use) {
-        const v = validateEffect(use.input);
-        if (!('error' in v)) { effect = v; break; }
-        failure = `The suggestion could not be used: ${v.error}`;
+        const v = opts.validate(use.input);
+        if (!(v && typeof v === 'object' && 'error' in v)) { value = v as T; break; }
+        const err = (v as { error: string }).error;
+        failure = `The answer could not be used: ${err}`;
         messages.push({ role: 'assistant', content: msg.content as never });
         messages.push({ role: 'user', content: [
-          ...uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: u.id === use.id, content: u.id === use.id ? `Refused: ${v.error} Call record_effect again with a corrected input.` : 'Unknown tool.' })),
+          ...uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: u.id === use.id, content: u.id === use.id ? `Refused: ${err} Call ${name} again with a corrected input.` : 'Unknown tool.' })),
         ] });
       } else {
-        failure = 'The assistant did not give an effect.';
+        failure = `The assistant did not give ${opts.what}.`;
         messages.push({ role: 'assistant', content: msg.content as never });
         messages.push({ role: 'user', content: uses.length
-          ? uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: true, content: 'Unknown tool. Call record_effect.' }))
-          : 'Call record_effect now with your decision.' });
+          ? uses.map((u) => ({ type: 'tool_result' as const, tool_use_id: u.id, is_error: true, content: `Unknown tool. Call ${name}.` }))
+          : `Call ${name} now with your answer.` });
       }
     }
-    if (effect) failure = null;
+    if (value !== null) failure = null;
   } catch (e) {
     failure = scrub(String((e as Error)?.message ?? e)).slice(0, 400);
   }
@@ -368,11 +372,40 @@ async function remarkEffectMode(sb: SupabaseClient, body: Record<string, unknown
   await sb.from('assistant_usage').insert({
     user_id: gate.actorId, user_name: gate.who.name, user_role: gate.role, conversation_id: crypto.randomUUID(), route: '/annual-return', model, calls,
     input_tokens: total.input, output_tokens: total.output, cache_read_tokens: total.cacheRead, cache_write_tokens: total.cacheWrite,
-    status: effect ? 'ok' : 'error', error: effect ? null : failure,
+    status: value !== null ? 'ok' : 'error', error: value !== null ? null : failure,
   });
+  return value !== null ? { value } : { error: failure ?? `no ${opts.what} given.` };
+}
 
-  if (!effect) return json(200, { ok: false, error: `The assistant could not read the remark: ${failure ?? 'no effect given.'}` });
-  return json(200, { ok: true, effect });
+// ── Mode 'remark_effect' (25 Nov 2026): the GSTR-9 effect of an Annual Return
+// difference line's remark (remarkEffect.ts). The app applies the suggestion
+// only when the user presses Apply.
+async function remarkEffectMode(sb: SupabaseClient, body: Record<string, unknown>, gate: Gate): Promise<Response> {
+  const parsed = parseRemarkRequest(body);
+  if ('error' in parsed) return json(200, { ok: false, error: parsed.error });
+  const blocked = await optedOut(sb);
+  if (blocked.has(parsed.clientId)) return json(200, { ok: false, error: 'This client opted out of AI: the remark is not sent to the assistant.' });
+  const r = await oneToolCall<RemarkEffect>(sb, gate, {
+    system: remarkSystemPrompt(parsed.financialYear), tool: RECORD_EFFECT_TOOL, user: remarkUserText(parsed), validate: validateEffect, what: 'an effect',
+  });
+  if ('error' in r) return json(200, { ok: false, error: `The assistant could not read the remark: ${r.error}` });
+  return json(200, { ok: true, effect: r.value });
+}
+
+// ── Mode 'variance_summary' (26 Nov 2026): why the final GSTR-9 differs from
+// the system-computed GSTR-9, per table, from the working's remarks
+// (varianceSummary.ts). The app shows it and keeps it on the working.
+async function varianceSummaryMode(sb: SupabaseClient, body: Record<string, unknown>, gate: Gate): Promise<Response> {
+  const parsed = parseVarianceRequest(body);
+  if ('error' in parsed) return json(200, { ok: false, error: parsed.error });
+  const blocked = await optedOut(sb);
+  if (blocked.has(parsed.clientId)) return json(200, { ok: false, error: 'This client opted out of AI: the differences are not sent to the assistant.' });
+  const ids = new Set(parsed.cells.map((c) => c.id));
+  const r = await oneToolCall<VarianceAnswer>(sb, gate, {
+    system: varianceSystemPrompt(parsed.financialYear), tool: RECORD_SUMMARY_TOOL, user: varianceUserText(parsed), validate: (i) => validateSummary(i, ids), what: 'a summary',
+  });
+  if ('error' in r) return json(200, { ok: false, error: `The assistant could not summarise the differences: ${r.error}` });
+  return json(200, { ok: true, summary: r.value });
 }
 
 Deno.serve(async (req) => {
@@ -386,6 +419,7 @@ Deno.serve(async (req) => {
   if (gate instanceof Response) return gate;
   const { actorId, role, who, settings } = gate;
   if (body.mode === 'remark_effect') return remarkEffectMode(sb, body, gate);
+  if (body.mode === 'variance_summary') return varianceSummaryMode(sb, body, gate);
   const allowFill = settings?.allow_fill !== false;
 
   const question = typeof body.question === 'string' ? body.question.trim().slice(0, 4000) : '';

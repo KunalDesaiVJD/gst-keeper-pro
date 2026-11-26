@@ -52,11 +52,13 @@ With it come the amount per head (taxable value only for Tables 10 and 11; from 
 
 It **never writes**: no working, no `assistant_actions`. The app shows the suggestion and applies it to the working only when the user presses Apply, through the working's own save. A client with `ai_opt_out` is refused, and the request goes through the same staff check, the assistant's on switch and the same key. Its tokens are recorded in `assistant_usage` under the route `/annual-return`. Code: `supabase/functions/gst-assistant/remarkEffect.ts` (request check, prompt, tool, validator; tests `test/remarkEffect.test.ts`).
 
+A third mode, `mode: 'variance_summary'` (26 Nov 2026), is the GSTR-9 step's *Summarise with AI* (`src/lib/gstr9/variance.ts`, `varianceSummaryApi.ts`; §12 of `docs/GSTR9_9C_WORKINGS.md`). The app sends every cell of the final GSTR-9 that differs from the portal's system-computed GSTR-9 (table, row, head, both figures, the ids of the remarks that bear on it), the working's remarks (reasons on difference lines with their GSTR-9 effects, GSTR-9C reasons, self-check No notes) and Tables 10 to 14. The model returns, through its one tool `record_summary`, an overall sentence, a plain-English summary per table of why the figures differ as the remarks say, and the cells no remark explains (only ids it was sent). Same gate as `remark_effect`: staff check, the on switch, the key, `ai_opt_out` refused, at most two calls, tokens in `assistant_usage` under `/annual-return`, nothing written. When it fails the app writes the rules summary instead and says so. Code: `varianceSummary.ts` (tests `test/varianceSummary.test.ts`).
+
 ## Files
 
 | Part | Where |
 | --- | --- |
-| Edge Function | `supabase/functions/gst-assistant/` (`index.ts` tool loop, `claude.ts` caller, `readRules.ts`, `remarkEffect.ts`, tests `deno test --allow-read test/`) |
+| Edge Function | `supabase/functions/gst-assistant/` (`index.ts` tool loop, `claude.ts` caller, `readRules.ts`, `remarkEffect.ts`, `varianceSummary.ts`, tests `deno test --allow-read test/`) |
 | Migration | `supabase/migrations/20261123100000_gst_assistant.sql` |
 | Panel | `src/components/assistant/AssistantPanel.tsx`, `GuideOverlay.tsx` |
 | Settings | `src/components/assistant/AssistantSettings.tsx` (Settings → AI Assistant) |

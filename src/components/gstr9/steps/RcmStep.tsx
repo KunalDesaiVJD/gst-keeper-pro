@@ -51,13 +51,21 @@ const RcmSummary: React.FC = () => {
  * Step 5 — RCM (the firm's "RCM" sheet): reverse-charge expenses as per books
  * (Part B, by expense and month) against 3.1(d) of the as-filed GSTR-3B
  * (Part A, from the portal), with the month-wise difference. The four parts
- * sit in tabs (?rcmtab=), the comparison first, so each is one click away.
+ * sit in tabs (?rcmtab=), the comparison first (Expenses & flows first while
+ * no expense is set up, as that is where the step then opens).
  */
 const RcmStep: React.FC = () => {
   const { docs, workings } = useWorkspace();
   const cats = docs.rcm.categories;
   const [tab, setTab] = useRcmTab(cats.length > 0);
   const partASource = workings.rcm.partASource;
+  // With no expenses yet the step opens on Expenses & flows (useRcmTab's default), so that tab leads the row too.
+  const setupFirst = cats.length === 0;
+  const expensesTab = (
+    <StepTab value="expenses">
+      Expenses &amp; flows <CountBadge n={cats.length} label={cats.length === 1 ? 'expense' : 'expenses'} />
+    </StepTab>
+  );
 
   return (
     <div className="space-y-3">
@@ -65,6 +73,7 @@ const RcmStep: React.FC = () => {
       <RcmSummary />
       <Tabs value={tab} onValueChange={setTab} className="space-y-2">
         <StepTabsList label="RCM working" value={tab}>
+          {setupFirst && expensesTab}
           <StepTab value="compare">
             Books vs portal <OpenBadge n={workings.stepOpen.rcm} />
           </StepTab>
@@ -82,9 +91,7 @@ const RcmStep: React.FC = () => {
               </Badge>
             )}
           </StepTab>
-          <StepTab value="expenses">
-            Expenses &amp; flows <CountBadge n={cats.length} label={cats.length === 1 ? 'expense' : 'expenses'} />
-          </StepTab>
+          {!setupFirst && expensesTab}
         </StepTabsList>
 
         <TabsContent value="compare" className="mt-0 space-y-3">

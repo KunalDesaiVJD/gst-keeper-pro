@@ -169,7 +169,6 @@ export type StepKey =
   | 'rcm'
   | 'outward'
   | 'itc'
-  | 'expense'
   | 'annexures'
   | 'gstr9'
   | 'gstr9c'
@@ -486,12 +485,14 @@ export interface Workings {
     other: Tax;
     /** s.18(6) shortfall on capital goods sold not yet reversed in the year (Annexure-5). */
     cg186: Tax;
-    total: Tax; // signed, as the Excel's D46
-    payable: Tax; // MAX(total, 0) per head
-    excessPaid: Tax; // MIN(total, 0) per head, shown positive
+    /** Rule 42 / 43 reversal still due with its interest u/s 50 (the Rule 42 working, input side). */
+    rule4243: Tax;
+    total: Tax; // signed, as the Excel's D46: payables.output.net + payables.input.net
+    payable: Tax; // = payables.totals.payable: MAX(net, 0) per side and head
+    excessPaid: Tax; // MIN(net, 0) per side and head, shown positive
     /** Set off so far — the payable register (DRC-03 imported / GSTR-3B effect), both sides. */
     alreadyPaid: Tax;
-    balance: Tax; // MAX(payable − already paid, 0)
+    balance: Tax; // = payables.totals.balance: MAX(payable − set off, 0) per side and head
   };
 
   /**
@@ -989,10 +990,12 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   // and is already in that 4(B)(1); the turnover method may be switched off when all credit is project credit.
   const builderRev = ctx.noItcBuilder ? emptyBuilderReversal() : summariseBuilderReversal(ctx.builderReversals ?? [], ctx.financialYear);
   const r42Turnover = R42.turnover !== false;
+  // POSITION A (position 42, 26 Nov 2026): the builder's reversal reaches 7C / 7D whether or not the Rule 42
+  // switch is on, so with it off it adds to the typed 7C / 7D and is kept out of 7E, never counted there.
   const t7C = r42On
     ? (R42.final7C ? tin(R42.final7C) : addT(r42Turnover ? r42.annual.final : tax(), builderRev.r42))
-    : tin(G.t7.r42);
-  const r42In4B1 = r42On ? addT(r42.reversed, builderRev.r42) : tin(G.t7.r42);
+    : addT(tin(G.t7.r42), builderRev.r42);
+  const r42In4B1 = r42On ? addT(r42.reversed, builderRev.r42) : addT(tin(G.t7.r42), builderRev.r42);
   // ------------------------------------------------------------ Rule 43 (capital goods in common use)
   // POSITION (position 40): the register's common assets, Tc ÷ 60 a month for 60 months from the invoice,
   // Te at the Rule 42 period's E ÷ F; 7D is Σ Te (no annual re-computation), 7E keeps out what was reversed.
@@ -1007,8 +1010,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   });
   const t7D = r42On
     ? (R42.final7D ? tin(R42.final7D) : addT(r42Turnover ? r43.te : tax(), builderRev.r43))
-    : tin(G.t7.r43);
-  const r43In4B1 = r42On ? addT(r43.reversed, builderRev.r43) : tin(G.t7.r43);
+    : addT(tin(G.t7.r43), builderRev.r43);
+  const r43In4B1 = r42On ? addT(r43.reversed, builderRev.r43) : addT(tin(G.t7.r43), builderRev.r43);
 
   const monthly4B1 = sumMonths(byMonth((m) => P.months[m].itc4b1));
   // POSITION: 3B 4B(1) holds the Rule 38, 42 and 43 reversals as well as s.17(5). 7E defaults to
@@ -1160,9 +1163,6 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const excessItcSuggested = t12;
   const excessItc = A.a3ExcessItc === null || A.a3ExcessItc === undefined ? excessItcSuggested : tin(A.a3ExcessItc);
   const a3Other = addT(...A.a3Other.map((o) => tin(o)));
-  const ann3Total = addT(ann1PayDiff, rcmToPay, excessItc, a3Other, cg.notDone); // D46 (+ s.18(6) not yet reversed)
-  const ann3Payable = maxT0(ann3Total);
-  const ann3Excess = negT(minT0(ann3Total));
   // Payables, output-wise and input-wise (Annexure-3 rows by nature), and their set-offs.
   const liveSetOffs = ctx.setOffs ?? [];
   const setOffOf = (side: 'output' | 'input', method?: 'drc03' | 'gstr3b') =>
@@ -1198,6 +1198,14 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       : []),
   ]);
   const alreadyPaid = addT(payOutput.setOff, payInput.setOff);
+  // Annexure-3 is the same register as Payables: the same lines (Rule 42 / 43 and their interest included),
+  // the same set-offs, the payable and balance side by side (no netting of output against input).
+  // POSITION (§6 item 7): the total stays the sheet's signed D46, payable − excess paid.
+  const ann3Rule4243 = addT(...payInput.components.filter((c) => /^r4[23]/.test(c.key)).map((c) => c.value));
+  const ann3Total = addT(payOutput.net, payInput.net); // D46 (+ s.18(6) not yet reversed, + Rule 42 / 43 still due)
+  const ann3Payable = addT(payOutput.payable, payInput.payable);
+  const ann3Excess = addT(payOutput.excess, payInput.excess);
+  const ann3Balance = addT(payOutput.balance, payInput.balance);
 
   // ------------------------------------------------------------ GSTR-9C official tables
   const C = docs.gstr9c;
@@ -1395,6 +1403,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: 'Te − reversed', aLabel: 'Σ Te (rule 43)', bLabel: 'Reversed in 4(B)(1)', informational: true,
     });
   }
+  // "Not fetched" lines belong to the Portal data step, where the return is fetched; the Duties and
+  // Outward reco steps still show them (PortalNote, the outward compare) by key.
   const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
     if (!months.length) return;
     push(key, step, `${what}: GSTR-3B not fetched for ${months.map((m) => MONTH_LABEL[m]).join(', ')}`, withT(0, books), val(), {
@@ -1402,7 +1412,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     });
   };
   const dtoMissing = FY_MONTHS.filter((m) => !outPresent[m] && !inQuarter(qOut, m) && isNonZeroT(dtoMonths[m].net));
-  missingLine('dto.no3b', 'duties', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
+  missingLine('dto.no3b', 'portal', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
   FY_MONTHS.forEach((m) => {
     if (!outPresent[m]) return;
     const q = qOut.includes(m) ? QUARTERS.find((x) => x[2] === m)! : null;
@@ -1416,7 +1426,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     direction: 'P&L − D&T', aLabel: 'As per P&L (Part A)', bLabel: 'Duties & Taxes net',
   });
   const dtiMissing = FY_MONTHS.filter((m) => !itcPresent[m] && !inQuarter(qItc, m) && isNonZeroT(dtiMonths[m].net));
-  missingLine('dti.no3b', 'duties', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
+  missingLine('dti.no3b', 'portal', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
   FY_MONTHS.forEach((m) => {
     if (!itcPresent[m]) return;
     const q = qItc.includes(m) ? QUARTERS.find((x) => x[2] === m)! : null;
@@ -1434,9 +1444,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('dti.rcm', 'duties', 'RCM ITC: books vs GSTR-3B', withT(0, dtiRcmBooks), withT(0, dtiRcmPortal), {
     direction: 'Books − 3B', aLabel: 'RCM Part B with ITC (books)', bLabel: '3.1(d) less RCM with no ITC', informational: true,
   });
-  push('dti.pl', 'duties', 'ITC: P&L vs Duties & Taxes (annual)', withT(0, taxOf(netItc)), withT(0, dtiNet), {
-    direction: 'P&L − D&T', aLabel: 'Net ITC as per P&L', bLabel: 'Duties & Taxes net', informational: true,
-  });
+  // ITC P&L vs Duties & Taxes is one line, 'purchases.dt' (PL-INPUT row 81); the D&T input sheet's U29 is the same figure.
   FY_MONTHS.forEach((m) => {
     if (partASource === 'gstr9') return; // only the annual 4G figure exists — compared once, by rcm.annual
     if (!isNonZeroV(partBMonths[m]) && !isNonZeroV(partAMonths[m])) return;
@@ -1451,7 +1459,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   }
   if (!gstr9Present) {
     if (isNonZeroV(outwardBooksTotal)) {
-      push('out.portal', 'outward', 'GSTR-9 Table 4 not fetched from the portal', outwardBooksTotal, val(), {
+      push('out.portal', 'portal', 'GSTR-9 Table 4 not fetched from the portal', outwardBooksTotal, val(), {
         direction: 'Books − GSTR-9', aLabel: 'As per books', bLabel: 'Not fetched', hasTaxable: true,
       });
     }
@@ -1549,7 +1557,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
 
   const stepOpen = {
     overview: 0, portal: 0, sales: 0, purchases: 0, duties: 0, rcm: 0, outward: 0, itc: 0,
-    expense: 0, annexures: 0, gstr9: 0, gstr9c: 0, notice: 0, review: 0, payables: 0,
+    annexures: 0, gstr9: 0, gstr9c: 0, notice: 0, review: 0, payables: 0,
   } as Record<StepKey, number>;
   diffs.forEach((d) => { if (d.open) { stepOpen[d.step] += 1; stepOpen.review += 1; } });
 
@@ -1603,16 +1611,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     ann2,
     ann3: {
       clause9: ann1PayDiff, rcmToPay, rcmToPaySuggested, rcmGap, excessItc, excessItcSuggested, other: a3Other, cg186: cg.notDone,
+      rule4243: ann3Rule4243,
       total: ann3Total, payable: ann3Payable, excessPaid: ann3Excess, alreadyPaid,
-      balance: maxT0(subT(ann3Payable, alreadyPaid)),
+      balance: ann3Balance,
     },
     payables: {
       output: payOutput,
       input: payInput,
       totals: {
-        payable: addT(payOutput.payable, payInput.payable),
+        payable: ann3Payable,
         setOff: alreadyPaid,
-        balance: addT(payOutput.balance, payInput.balance),
+        balance: ann3Balance,
       },
     },
     gstr9c: {

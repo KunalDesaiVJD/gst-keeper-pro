@@ -56,6 +56,10 @@ export default {
           DEFAULT: "hsl(var(--cell-input))",
           foreground: "hsl(var(--cell-input-foreground))",
         },
+        "cell-variance": {
+          DEFAULT: "hsl(var(--cell-variance))",
+          foreground: "hsl(var(--cell-variance-foreground))",
+        },
         success: {
           DEFAULT: "hsl(var(--success))",
           foreground: "hsl(var(--success-foreground))",

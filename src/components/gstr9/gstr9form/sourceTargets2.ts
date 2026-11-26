@@ -53,3 +53,13 @@ export const itcNextYear = (row: 't12' | 't13', col?: string): FigTarget => ({
   col,
   label: `ITC reco › Table ${row === 't12' ? '12' : '13'}`,
 });
+
+/** GSTR-9 › any row of Tables 4 to 9 (PartII–IV; MatrixTable / FormTable keyed by code, Table 9's grid by head). */
+export const gstr9FormRow = (table: '4' | '5' | '6' | '8' | '9', row: string, col?: string): FigTarget => ({
+  step: 'gstr9',
+  tab: { gstr9tab: table },
+  table: `GSTR-9 Table ${table}`,
+  row,
+  col,
+  label: `GSTR-9 › Table ${table}`,
+});

@@ -1,12 +1,11 @@
 // Grid plumbing for the Duties & Taxes step (DUTIES & TAXES-OUTPUT / -INPUT).
 // No tax logic lives here: every computed figure comes from computeWorkings();
-// these helpers only shape month rows for SheetGrid and turn typed "As per
-// 3B" cells into portal hand edits (applyHandEdits, as the Portal step does).
+// these helpers only shape month rows for SheetGrid. The "As per 3B" cells
+// are read-only here: Portal data › As-filed GSTR-3B is their one editor.
 
 import React, { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MONTH_LABEL, type DiffLine, type StepKey } from '@/lib/gstr9/engine';
-import type { FieldEdit } from '@/lib/gstr9/portalImport';
 import { FY_MONTHS, type Formulas, type MonthKey, type PortalDoc, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import type { GridColumn } from '../grid/SheetGrid';
 import { diffTone, moneyCol, taxDisplayCols, taxInCols, type TaxColsOpts } from '../grid/columns';
@@ -111,25 +110,6 @@ export const monthRowF = (booksF: Formulas | undefined, portal: PortalDoc, m: Mo
   return Object.keys(out).length ? out : undefined;
 };
 
-/**
- * The hand edits a grid change makes to one month's "As per 3B": every head
- * whose value or expression changed. applyHandEdits marks them as typed.
- */
-export const portalEdits = (
-  m: MonthKey,
-  field: PortalTaxField,
-  prev: { tax: Tax; f?: Formulas },
-  next: { tax: Tax; f?: Formulas },
-): FieldEdit[] =>
-  HEADS.flatMap(([h]) => {
-    const k = `${field}.${h}`;
-    const pv = Number(prev.tax[h]) || 0;
-    const nv = Number(next.tax[h]) || 0;
-    const nf = next.f?.[k];
-    if (Math.abs(pv - nv) <= 1e-9 && (prev.f?.[k] ?? undefined) === nf) return [];
-    return [{ path: portalPath(m, field, h), value: nv, formula: nf ?? null }];
-  });
-
 // ---------------------------------------------------------------------------
 // Month select for the adjustment lists
 // ---------------------------------------------------------------------------
@@ -207,22 +187,20 @@ export function computedCols<R>(get: (r: R) => Tax, opts: { group: string; prefi
 /**
  * The "AS PER 3B" group: a source chip, then IGST / CGST / SGST (/ Cess) as
  * plain money columns (no SGST mirror — they are the portal's own figures).
- * Only a superadmin can type over a fetched figure (`canEdit`, sourceLock.ts);
- * the owner records a hand edit.
+ * Read-only on this step for every login: Portal data › As-filed GSTR-3B is
+ * the single editor (a superadmin types over a fetched figure there,
+ * sourceLock.ts), and each figure opens its month there.
  */
 export function portal3bCols<R extends { id: MonthKey }>(opts: {
   field: PortalTaxField;
   get: (r: R) => Tax;
-  set: (r: R, t: Tax) => R;
   portal: PortalDoc;
   cess: boolean;
   group: string;
   /** What the figure is, for the header tooltip and cell titles. */
   what: string;
-  /** The superadmin: the only user who can type over a portal figure. */
-  canEdit: boolean;
 }): GridColumn<R>[] {
-  const { field, get, set, portal, cess, group, what, canEdit } = opts;
+  const { field, get, portal, cess, group, what } = opts;
   const source: GridColumn<R> = {
     key: `${field}.src`,
     header: (
@@ -231,8 +209,8 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
         tip={
           <>
             <span className="font-medium">As per 3B</span> = {what} of the as-filed GSTR-3B, pulled from the GST portal on the
-            Portal data step — never the app’s own GSTR-3B. The figures are locked: only a superadmin can type over one, and a re-import
-            asks before replacing a typed figure.
+            Portal data step — never the app’s own GSTR-3B. Read-only here: edit on Portal › As-filed 3B (only a superadmin can type
+            over a fetched figure, and a re-import asks before replacing a typed one).
           </>
         }
       />
@@ -242,36 +220,33 @@ export function portal3bCols<R extends { id: MonthKey }>(opts: {
     value: () => null,
     width: 112,
     align: 'left',
-    // The month's row on Portal data › As-filed GSTR-3B (the link a superadmin, who types the cells, still has).
+    // The month's row on Portal data › As-filed GSTR-3B, where the figures are edited.
     render: (r) => (
       <FigLink to={portal3b(field, r.id)} className="text-left no-underline">
         <MonthSource meta={portal.monthMeta[r.id]} typedHeads={typedHeadCount(portal, r.id, field)} />
       </FigLink>
     ),
   };
-  const lockNote = canEdit ? '' : ' Locked — only a superadmin can type over it.';
+  const lockNote = ' Read-only here — edit on Portal › As-filed 3B.';
   const cellTitle = (r: R, h: keyof Tax): string => {
     if (portal.manual[portalPath(r.id, field, h)]) return `${what} — typed by hand by a superadmin. A portal re-import will ask before replacing it.${lockNote}`;
-    if (!portal.monthMeta[r.id]?.source) return `${what} — not fetched yet. Fetch it on the Portal data step${canEdit ? ', or type it' : ''}.${lockNote}`;
+    if (!portal.monthMeta[r.id]?.source) return `${what} — not fetched yet. Fetch it on the Portal data step.${lockNote}`;
     return `${what} of the as-filed GSTR-3B.${lockNote}`;
   };
   return [
     source,
-    // SGST here is the filed return's own figure, not a copy of CGST — it stays its own cell (superadmin only).
-    ...headsFor(cess).map(([h, label]) =>
-      moneyCol<R>(`${field}.${h}`, label, (r) => get(r)[h], (r, v) => set(r, { ...get(r), [h]: v ?? 0 }), {
+    // SGST here is the filed return's own figure, not a copy of CGST. The column stays a money column (not
+    // editable) so a pasted whole sheet row still lands its books figures in the right columns.
+    ...headsFor(cess).map(([h, label]) => ({
+      ...moneyCol<R>(`${field}.${h}`, label, (r) => get(r)[h], (r) => r, {
         group,
         width: h === 'x' ? 96 : undefined,
-        editable: () => canEdit,
+        editable: () => false,
         title: (r) => cellTitle(r, h),
         tone: (r) => (!portal.monthMeta[r.id]?.source && Math.abs(get(r)[h]) < EPS ? 'muted' : undefined),
       }),
-    ).map((col, idx) => {
-      // Locked for everyone but the superadmin: the figure opens its month on Portal data.
-      if (canEdit) return col;
-      const h = headsFor(cess)[idx][0];
-      return { ...col, render: (r: R) => linkedMoney(get(r)[h], portal3b(field, r.id, h), portal.f?.[portalPath(r.id, field, h)]) };
-    }),
+      render: (r: R) => linkedMoney(get(r)[h], portal3b(field, r.id, h), portal.f?.[portalPath(r.id, field, h)]),
+    })),
   ];
 }
 

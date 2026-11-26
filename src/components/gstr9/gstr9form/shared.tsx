@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowUpRight, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { figAnchor } from '@/lib/gstr9/figureLinks';
+import { VARIANCE_CELL_CLASS, varianceTitle } from '@/lib/gstr9/varianceStyle';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import type { StepKey } from '@/lib/gstr9/engine';
@@ -71,12 +72,12 @@ export const Src: React.FC<{ kind: SrcKind; meta?: PortalMeta | null; manual?: b
 };
 
 /** A small link that opens another step (keeps the client in the URL). */
-export const StepLink: React.FC<{ step: StepKey; children?: React.ReactNode; className?: string }> = ({ step, children, className }) => {
+export const StepLink: React.FC<{ step: StepKey; tab?: Record<string, string>; children?: React.ReactNode; className?: string }> = ({ step, tab, children, className }) => {
   const go = useGoStep();
   return (
     <button
       type="button"
-      onClick={() => go(step)}
+      onClick={() => go(step, tab)}
       className={cn(
         'inline-flex items-center gap-0.5 whitespace-nowrap rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
@@ -169,6 +170,7 @@ export function FormTable<R extends FormTableRow>({
   label,
   className,
   maxHeight,
+  variance,
 }: {
   rows: R[];
   cols: FormTableCol<R>[];
@@ -176,6 +178,8 @@ export function FormTable<R extends FormTableRow>({
   className?: string;
   /** Scroll inside the table beyond this height (any CSS length); the header stays pinned. */
   maxHeight?: string;
+  /** A cell whose figure differs from the system-computed GSTR-9 (variance.ts): toned and titled; null = no tone. */
+  variance?: (rowKey: string, colKey: string) => { portal: number; final: number } | null;
 }) {
   const groups: Array<{ label: string; span: number }> = [];
   cols.forEach((c) => {
@@ -220,15 +224,19 @@ export function FormTable<R extends FormTableRow>({
                 <span>{r.label}</span>
                 {r.note && <span className="ml-2 inline-flex align-middle">{r.note}</span>}
               </td>
-              {cols.map((c) => (
-                <td
-                  key={c.key}
-                  data-col={c.key}
-                  className={cn('border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap', c.na?.(r) && 'bg-muted/30', c.className)}
-                >
-                  {c.na?.(r) ? null : c.cell(r)}
-                </td>
-              ))}
+              {cols.map((c) => {
+                const vr = c.na?.(r) ? null : variance?.(r.key, c.key) ?? null;
+                return (
+                  <td
+                    key={c.key}
+                    data-col={c.key}
+                    title={vr ? varianceTitle(vr.portal, vr.final) : undefined}
+                    className={cn('border-b border-r px-2 py-1.5 text-right align-top tabular-nums whitespace-nowrap', c.na?.(r) && 'bg-muted/30', c.className, vr && VARIANCE_CELL_CLASS)}
+                  >
+                    {c.na?.(r) ? null : c.cell(r)}
+                  </td>
+                );
+              })}
               {hasStatus && <td className="border-b px-2 py-1 text-right align-top">{r.diffKey ? <JustifyControl lineKey={r.diffKey} /> : null}</td>}
             </tr>
           ))}

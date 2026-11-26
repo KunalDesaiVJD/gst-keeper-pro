@@ -29,7 +29,7 @@ const T12_LINK: Record<'A' | 'B' | 'C', (h: FormHead) => FigTarget> = { A: purch
 
 const T12_SOURCE: Record<'A' | 'B' | 'C', { short: string; title: string }> = {
   A: { short: 'Books net ITC', title: 'Net ITC as per books — PL-INPUT row 79 (P&L ITC − suspended ITC − other adjustments + RCM)' },
-  B: { short: 'Last Year Effect', title: 'Last Year Effect — Duties & Taxes-INPUT row 9 (previous-year ITC booked in this FY)' },
+  B: { short: 'Last Year Effect − 6A1', title: 'Last Year Effect (Duties & Taxes-INPUT row 9, previous-year ITC booked in this FY) less 6A1 (the part of it already availed in this FY’s GSTR-3B) — nil when the two agree' },
   C: { short: 'GSTR-9 Table 13', title: 'GSTR-9 Table 13 — ITC of this FY availed in the next FY (typed on the ITC reco step)' },
 };
 
@@ -119,7 +119,7 @@ export const Table12Card: React.FC = () => {
     >
       <FormGrid label="GSTR-9C Table 12" lines={t12Lines} heads={TAX_HEADS} labelWidth={320} />
       <Note tone="position">
-        12B defaults to the Last Year Effect and 12C to GSTR-9 Table 13. Table 13 is typed on the ITC reco step (with the reco’s MAX(books − 7J, 0) shown as a
+        12B defaults to the Last Year Effect less 6A1 and 12C to GSTR-9 Table 13. Table 13 is typed on the ITC reco step (with the reco’s MAX(books − 7J, 0) shown as a
         suggestion), because the residual is often an unexplained difference rather than ITC availed next year.
       </Note>
       <ReasonsBox field="t13Reasons" code="13" title="Reasons for un-reconciled difference in ITC" diffKey="gstr9c.12F" />
@@ -187,11 +187,11 @@ export const Table14Card: React.FC = () => {
   return (
     <SectionCard
       title="Table 14 · Reconciliation of ITC declared in GSTR-9 with ITC availed on expenses"
-      description="ITC by expense head, computed from the Purchases & ITC ledgers and their 9C expense heads. Change a head on the Purchases step."
+      description="ITC by expense head, computed from the Purchases & ITC ledgers and their 9C expense heads (tagged on Purchases › 9C heads). The working is on ITC reco › 9C Table 14."
       excelRef="GSTR 9C rows 8–30"
       actions={
-        <Button type="button" size="sm" variant="outline" onClick={() => go('expense')}>
-          9C expense heads <ArrowRight className="ml-1 h-3.5 w-3.5" />
+        <Button type="button" size="sm" variant="outline" onClick={() => go('itc', { itctab: 'table14' })}>
+          ITC reco › 9C Table 14 <ArrowRight className="ml-1 h-3.5 w-3.5" />
         </Button>
       }
     >

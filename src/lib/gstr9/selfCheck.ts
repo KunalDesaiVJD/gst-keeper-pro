@@ -3,6 +3,9 @@
 // Before a working goes to the verifier, the preparer answers every question
 // below that applies to the client and year: Yes, No (with a remark saying why
 // and what is being done) or, where the question allows it, Not applicable.
+// Only the preparer is asked, and only until the working is marked
+// prepared: the verifier and the final review see the answers, never the
+// questions (Kunal, 26 Nov 2026).
 // Each question is asked on the step it concerns (StepSelfCheck under the
 // step) and every one still unanswered is put to the preparer again in the
 // Mark prepared dialog. Alongside the questions are checks the app makes
@@ -58,16 +61,43 @@ const MONTH_WORD: Record<string, string> = {
   apr: 'Apr', may: 'May', jun: 'Jun', jul: 'Jul', aug: 'Aug', sep: 'Sep', oct: 'Oct', nov: 'Nov', dec: 'Dec', jan: 'Jan', feb: 'Feb', mar: 'Mar',
 };
 
+const QUARTERS: Array<(typeof FY_MONTHS)[number][]> = [['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['oct', 'nov', 'dec'], ['jan', 'feb', 'mar']];
+
+/** Months whose as-filed GSTR-3B is not in the working (a quarterly 3B covers its quarter). */
+const missing3B = (w: Workings): string[] => {
+  const qEnds = new Set([...w.quarterly.out, ...w.quarterly.itc]);
+  return FY_MONTHS.filter((m) => !w.monthsPresent[m]?.any && !QUARTERS.some((q) => q.includes(m) && qEnds.has(q[2])));
+};
+
+/** 31 December after the FY ends (s.44 due date of GSTR-9 / 9C), as yyyy-mm-dd; '2025-26' → '2026-12-31'. */
+export const annualDueDate = (financialYear: string): string | null => {
+  const y = Number(/^(\d{4})/.exec(financialYear)?.[1]);
+  return Number.isFinite(y) && y > 2000 ? `${y + 1}-12-31` : null;
+};
+
+/**
+ * Only what the app cannot check itself and what would otherwise let a wrong
+ * GSTR-9 / 9C be filed (Kunal, 26 Nov 2026: "only ask those questions which
+ * are really relevant"). Questions the figures already answer are asked only
+ * when the figures show a gap (portal_fetched, rcm_paid, tax_paid, late_fee);
+ * the generic "have you checked Tables 4 to 19" and "do the 9C reasons read
+ * well" questions are gone (the open-difference check and the 9C form-reason
+ * rule already hold them), and the 9C signatory is shown on the accounts question.
+ */
 export const SELF_CHECK_QUESTIONS: SelfCheckQuestion[] = [
   {
     key: 'portal_fetched',
     step: 'portal',
-    short: 'Portal figures fetched',
-    question: 'Are the GSTR-9 system-computed figures and the as-filed GSTR-3B of every month the client was registered fetched from the portal for this FY?',
+    short: 'Missing portal figures explained',
+    question: 'Some portal figures are not in the working (see below). Is that because the client was not registered, or did not have to file, for that period?',
     allowNa: false,
+    applies: ({ w }) => missing3B(w).length > 0 || !(w.g9.t4Source === 'portal'),
     hint: ({ w }) => {
-      const missing = FY_MONTHS.filter((m) => !w.monthsPresent[m]?.any);
-      return missing.length ? `GSTR-3B not in the working for ${missing.map((m) => MONTH_WORD[m]).join(', ')}.` : 'GSTR-3B is in the working for all 12 months.';
+      const m = missing3B(w);
+      return [
+        !(w.g9.t4Source === 'portal') ? 'GSTR-9 system-computed figures not fetched.' : '',
+        m.length ? `GSTR-3B not in the working for ${m.map((x) => MONTH_WORD[x]).join(', ')}.` : '',
+      ].filter(Boolean).join(' ') + ' Fetch them on the Portal step if they exist.';
     },
   },
   {
@@ -80,49 +110,47 @@ export const SELF_CHECK_QUESTIONS: SelfCheckQuestion[] = [
   {
     key: 'itc_ineligible',
     step: 'itc',
-    short: 'Ineligible ITC reversed',
-    question: 'Is ineligible and blocked ITC (s.17(5), s.16(4), Rules 37, 42 and 43) reversed in the GSTR-3Bs or shown in Table 7?',
+    short: 'Blocked ITC reversed',
+    question: 'Is all blocked and ineligible ITC (s.17(5), s.16(4), Rules 37, 38, 42 and 43) either reversed in the GSTR-3Bs or shown in Table 7?',
     allowNa: true,
+    hint: ({ w }) => `Table 7 total reversed (7I): ${inr(totalTax(w.g9.t7I))}.`,
   },
   {
     key: 'rcm_paid',
     step: 'rcm',
     short: 'Reverse charge paid',
     question: 'Is the tax on every reverse-charge supply paid in cash, and its ITC taken only after that payment?',
-    allowNa: true,
-  },
-  {
-    key: 'gstr9_tables',
-    step: 'gstr9',
-    short: 'GSTR-9 Tables 4 to 19 checked',
-    question: 'Are GSTR-9 Tables 4 to 19 checked, including the previous year’s transactions declared in Part V (Tables 10 to 14)?',
     allowNa: false,
+    applies: ({ w }) => anyNonZero(w.rcm.partA) || anyNonZero(w.rcm.partB),
   },
   {
     key: 'hsn',
     step: 'gstr9',
     short: 'HSN summary filled',
-    question: 'Is the HSN-wise summary of outward and inward supplies (Tables 17 and 18) filled from the books at the required number of digits?',
+    question: 'Is the HSN-wise summary (Tables 17 and 18) filled from the books at the required number of digits?',
     allowNa: true,
   },
   {
     key: 'late_fee',
     step: 'gstr9',
     short: 'Late fee worked out',
-    question: 'If the return is filed after its due date, is the late fee u/s 47 worked out and told to the client?',
-    allowNa: true,
+    question: 'The due date has passed. Is the late fee u/s 47 worked out and told to the client?',
+    allowNa: false,
+    applies: ({ w }) => {
+      const due = annualDueDate(w.ctx.financialYear);
+      return !!due && new Date().toISOString().slice(0, 10) > due;
+    },
   },
   {
     key: 'tax_paid',
     step: 'payables',
     short: 'Additional tax paid',
-    question: 'Has the additional tax payable found in this working been paid (DRC-03 or a later GSTR-3B), with interest u/s 50?',
+    question: 'Part of the additional tax found in this working is not yet set off in the system. Has it been paid (DRC-03 or a later GSTR-3B), with interest u/s 50, or is it to be paid before filing?',
     allowNa: false,
-    applies: ({ w }) => totalTax(w.payables.totals.payable) > 0.004,
+    applies: ({ w }) => totalTax(w.payables.totals.balance) > 0.004,
     hint: ({ w }) => {
       const t = w.payables.totals;
-      const bal = totalTax(t.balance);
-      return `Payable ${inr(totalTax(t.payable))}; set off ${inr(totalTax(t.setOff))}; ${bal > 0.004 ? `${inr(bal)} still not set off` : 'nothing left to set off'}.`;
+      return `Payable ${inr(totalTax(t.payable))}; set off ${inr(totalTax(t.setOff))}; ${inr(totalTax(t.balance))} still not set off.`;
     },
   },
   {
@@ -134,20 +162,13 @@ export const SELF_CHECK_QUESTIONS: SelfCheckQuestion[] = [
     applies: ({ file9c, gstr9c }) => file9c && (anyNonZero(gstr9c.t11) || anyNonZero(gstr9c.t16) || anyNonZero(gstr9c.partV)),
   },
   {
-    key: 'gstr9c_reasons',
-    step: 'gstr9c',
-    short: 'GSTR-9C reasons as filed',
-    question: 'Do the reasons in GSTR-9C Tables 6, 8, 10, 13 and 15 read as they should in the filed statement, agreed with the client?',
-    allowNa: true,
-    applies: ({ file9c }) => file9c,
-  },
-  {
     key: 'gstr9c_signatory',
     step: 'gstr9c',
-    short: 'GSTR-9C verification and accounts',
-    question: 'Are the GSTR-9C verification details (signatory, place, address) filled, and are the audited financial statements to upload with it in hand?',
+    short: 'Audited accounts in hand',
+    question: 'Are the audited financial statements to upload with GSTR-9C in hand (the final signed version), and is the verification (signatory, place) filled?',
     allowNa: false,
     applies: ({ file9c }) => file9c,
+    hint: ({ gstr9c }) => (gstr9c.certification?.signatory_name?.trim() ? `Signatory: ${gstr9c.certification.signatory_name.trim()}.` : 'No signatory filled on the GSTR-9C step yet.'),
   },
 ];
 

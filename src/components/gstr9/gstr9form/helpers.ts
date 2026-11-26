@@ -5,6 +5,7 @@ import { createElement } from 'react';
 import type { StepKey } from '@/lib/gstr9/engine';
 import type { Formulas, Tax, TaxIn } from '@/lib/gstr9/types';
 import type { CellTone, GridColumn } from '../grid/SheetGrid';
+import { VARIANCE_CELL_CLASS } from '@/lib/gstr9/varianceStyle';
 import type { MatrixHead } from '../ui';
 
 /** The form's own column order: Taxable value, Central, State/UT, Integrated, Cess. */
@@ -106,7 +107,7 @@ export const fyStartYear = (fy: string): number => Number(String(fy).slice(0, 4)
 
 /** Tailwind classes for a CellTone outside the grid (FormTable cells). */
 export const toneClass = (t: CellTone): string =>
-  t === 'error' ? 'text-destructive-strong font-medium' : t === 'ok' ? 'text-success-strong' : t === 'muted' ? 'text-muted-foreground' : t === 'warn' ? 'bg-warning/15 text-foreground' : '';
+  t === 'error' ? 'text-destructive-strong font-medium' : t === 'ok' ? 'text-success-strong' : t === 'muted' ? 'text-muted-foreground' : t === 'warn' ? 'bg-warning/15 text-foreground' : t === 'variance' ? VARIANCE_CELL_CLASS : '';
 
 /** A single sticky "Particulars" column showing the row code and label. */
 export const particularsCol = <R extends { code: string; label: string; title?: string }>(header = 'Particulars', width = 250): GridColumn<R> => ({

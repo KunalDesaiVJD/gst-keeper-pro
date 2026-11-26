@@ -32,7 +32,7 @@ const KINDS: Record<ExportKind, { label: string; hint: string; icon: React.React
 
 const ORDER: ExportKind[] = ['excel', 'wppdf', 'gstr9pdf', 'noticepdf', 'gstr9cjson'];
 
-/** Steps 1–14: each can be exported on its own (its papers, with the cover and index). */
+/** Steps 1–13: each can be exported on its own (its papers, with the cover and index). */
 const TAB_STEPS = STEP_META.filter((s) => STEP_PAPERS[s.key]);
 const tabName = (k: StepKey): string => {
   const m = STEP_META.find((s) => s.key === k);

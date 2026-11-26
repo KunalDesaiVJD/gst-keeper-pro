@@ -50,7 +50,7 @@ const INK = 'FF000000';
 const GREY = 'FF595959';
 const MUTED = 'FF808080';
 const SRC_COLOUR = { typed: 'FF0000FF', portal: 'FF00612E' } as const;
-const STATUS_FILL = { bad: 'FFF8D7DA', info: 'FFDCE6F1', good: 'FFE2EFDA' } as const;
+const STATUS_FILL = { bad: 'FFF8D7DA', info: 'FFDCE6F1', good: 'FFE2EFDA', variance: 'FFFCD5B4' } as const;
 
 export const NUM_FMT = '#,##0.00_);(#,##0.00);"–"_)';
 export const RATE_FMT = '0.00"%"';

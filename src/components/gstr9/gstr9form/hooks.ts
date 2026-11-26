@@ -12,9 +12,10 @@ import { docFormulas, FORM_HEAD_LABELS, seedTaxIn, setDocFormulas, TAX_ORDER } f
 export const useGoStep = () => {
   const [params, setParams] = useSearchParams();
   return useCallback(
-    (step: StepKey) => {
+    (step: StepKey, tab?: Record<string, string>) => {
       const next = new URLSearchParams(params);
       next.set('step', step);
+      Object.entries(tab ?? {}).forEach(([k, v]) => next.set(k, v));
       setParams(next);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },

@@ -2,6 +2,7 @@ import React from 'react';
 import { totalTax, tin } from '@/lib/gstr9/engine';
 import { newId, zIn } from '@/lib/gstr9/defaults';
 import type { AnnexureOtherPayment } from '@/lib/gstr9/types';
+import { PAYABLE_EPS } from '@/lib/gstr9/payables';
 import { useWorkspace } from '../WorkspaceContext';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { SheetGrid, type GridColumn } from '../grid/SheetGrid';
@@ -70,12 +71,15 @@ const Annexure3: React.FC = () => {
 
   // ------------------------------------------------------------ Total → DRC-03
   const positive = (_h: string, v: number) => (v > tol ? ('error' as const) : undefined);
+  const hasAny = (t: { i: number; c: number; s: number; x: number }) => Math.abs(t.i) + Math.abs(t.c) + Math.abs(t.s) + Math.abs(t.x) > PAYABLE_EPS;
+  // Extra rows after 4, numbered in turn: the same lines the Payables step discloses.
+  const extra: FixedTaxRow[] = [];
+  if (hasAny(w.cg186)) extra.push({ id: 'cg186', kind: 'computed', value: w.cg186, label: `${5 + extra.length}. Capital goods sold u/s 18(6): shortfall not yet reversed`, hint: 'Annexure-5 (Sales · Capital goods sold), input side', link: salesCg() });
+  if (hasAny(w.rule4243)) extra.push({ id: 'rule4243', kind: 'computed', value: w.rule4243, label: `${5 + extra.length}. Rule 42 / 43 reversal still due, with interest u/s 50`, hint: 'ITC reco › Rule 42/43: final for the year less reversed in the GSTR-3Bs, input side' });
   const sumRows: FixedTaxRow[] = [
-    ...(totalTax(w.cg186) > 0.005
-      ? [{ id: 'cg186', kind: 'computed', value: w.cg186, label: '5. Capital goods sold u/s 18(6): shortfall not yet reversed', hint: 'Annexure-5 (Sales · Capital goods sold), input side', link: salesCg() } as FixedTaxRow]
-      : []),
-    { id: 'total', kind: 'computed', value: w.total, emphasis: true, label: totalTax(w.cg186) > 0.005 ? 'Total (1 + 2 + 3 + 4 + 5)' : 'Total (1 + 2 + 3 + 4)', hint: 'Signed, as the sheet (D46)' },
-    { id: 'payable', kind: 'computed', value: w.payable, label: 'DRC-03 payable', hint: 'Heads that come out positive' },
+    ...extra,
+    { id: 'total', kind: 'computed', value: w.total, emphasis: true, label: `Total (${Array.from({ length: 4 + extra.length }, (_, i) => i + 1).join(' + ')})`, hint: 'Signed, as the sheet (D46)' },
+    { id: 'payable', kind: 'computed', value: w.payable, label: 'DRC-03 payable', hint: 'Heads that come out positive, output side and input side taken apart (as on Payables)' },
     { id: 'excess', kind: 'computed', value: w.excessPaid, label: 'Excess paid — not payable by DRC-03', hint: 'Heads that come out negative, shown positive' },
     {
       id: 'already', kind: 'computed', value: w.alreadyPaid,
@@ -136,9 +140,9 @@ const Annexure3: React.FC = () => {
       <FixedTaxGrid rows={sumRows} label="Annexure-3 total and DRC-03 balance" readOnly={readOnly} showNo={false} labelWidth={432} />
 
       <Note tone="position">
-        The total keeps the sheet&apos;s signed sum; DRC-03 is payable only on heads that come out positive, excess paid is shown
-        separately. What is set off comes only from the{' '}
-        <StepLink step="payables">set-off register</StepLink>, where the payable is also disclosed output-wise and input-wise.
+        The total keeps the sheet&apos;s signed sum; DRC-03 is payable only on heads that come out positive, output side and input
+        side taken apart, and excess paid is shown separately. Annexure-3 and the{' '}
+        <StepLink step="payables">set-off register</StepLink> are one register: the same lines, the same set-offs, the same balance.
         Row 2 defaults to nil and row 3 to Table 12 — the sheet types them (§6 item 7).
       </Note>
     </SectionCard>

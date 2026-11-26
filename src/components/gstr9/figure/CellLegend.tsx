@@ -5,12 +5,14 @@
 
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { VARIANCE_CELL_CLASS } from '@/lib/gstr9/varianceStyle';
 
 const Swatch: React.FC<{ className: string; children: React.ReactNode }> = ({ className, children }) => (
   <span className={cn('inline-flex h-5 items-center rounded-sm border px-1.5 font-medium tabular-nums', className)}>{children}</span>
 );
 
-export const CellLegend: React.FC<{ readOnly?: boolean; className?: string }> = ({ readOnly, className }) => (
+/** `variance`: the GSTR-9 step also shows a final figure that differs from the system-computed GSTR-9. */
+export const CellLegend: React.FC<{ readOnly?: boolean; variance?: boolean; className?: string }> = ({ readOnly, variance, className }) => (
   <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground', className)} aria-label="What the cells mean">
     {!readOnly && (
       <span className="inline-flex items-center gap-1.5">
@@ -26,5 +28,11 @@ export const CellLegend: React.FC<{ readOnly?: boolean; className?: string }> = 
       <Swatch className="bg-muted/40 text-foreground">1,000</Swatch>
       Computed or locked
     </span>
+    {variance && (
+      <span className="inline-flex items-center gap-1.5">
+        <Swatch className={cn('border-transparent', VARIANCE_CELL_CLASS)}>1,000</Swatch>
+        Differs from the system-computed GSTR-9 (hover for both figures)
+      </span>
+    )}
   </div>
 );

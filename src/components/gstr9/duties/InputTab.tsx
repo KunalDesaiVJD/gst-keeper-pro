@@ -1,5 +1,4 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { applyHandEdits, type FieldEdit } from '@/lib/gstr9/portalImport';
 import { hasRateLines, meaningfulLines, rollUpRateLines } from '@/lib/gstr9/rateWise';
 import { FY_MONTHS, type DtiMonth, type DtRateLine, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
 import { useWorkspace } from '../WorkspaceContext';
@@ -11,22 +10,19 @@ import PortalNote from './PortalNote';
 import RateWiseDialog, { rateWiseCol } from './RateWiseDialog';
 import { FooterLabel } from './parts';
 import { FigLink } from '../figure/FigLink';
-import { dutiesLyeRow, itcReco6A1, portal3b, portalG9T4, purchasesSummaryRow, rcmPartA, rcmPartB } from '../figure/targetsData';
+import { dutiesLyeRow, itcReco6A1, portal3b, portalG9T4, purchasesSummaryRow, rcmDiffTotal, rcmPartA, rcmPartB } from '../figure/targetsData';
 import {
   computedCols,
   diffCells,
   diffCols,
-  footerStatusLabel,
   headsFor,
   linkCells,
   mirroredTaxCols,
   monthCol,
   monthRowF,
   portal3bCols,
-  portalEdits,
   prefixF,
   sameF,
-  soft,
   unprefixF,
   useGoStep,
   withoutPrefix,
@@ -69,7 +65,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
   // Compact: the four suspended-ITC groups fold into their net. Books vs 3B: every typed books group is hidden.
   const compact = view === 'compact';
   const recon = view === 'recon';
-  const { docs, workings, update, readOnly, canEditSource } = useWorkspace();
+  const { docs, workings, update, readOnly } = useWorkspace();
   const goStep = useGoStep();
   const dti = workings.dti;
   const tol = workings.tolerance;
@@ -129,17 +125,15 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
     [docs.duties_input.months, docs.portal],
   );
 
-  // Books edits go to duties_input; "As per 3B" edits are portal hand edits (typed + remembered expression).
+  // Books edits go to duties_input. "As per 3B" is read-only here (Portal › As-filed 3B is its one editor).
   const onRowsChange = useCallback(
     (next: DtiRow[]) => {
       const prev = new Map(rows.map((r) => [r.id, r]));
       const books: DtiRow[] = [];
-      const edits: FieldEdit[] = [];
       next.forEach((r) => {
         const p = prev.get(r.id);
         if (!p || r === p) return;
         if (GROUPS.some((g) => r[g.field] !== p[g.field]) || !sameF(withoutPrefix(r.f, 'itcExclRcm'), withoutPrefix(p.f, 'itcExclRcm'))) books.push(r);
-        edits.push(...portalEdits(r.id, 'itcExclRcm', { tax: p.itcExclRcm, f: p.f }, { tax: r.itcExclRcm, f: r.f }));
       });
       if (books.length) {
         update('duties_input', (d) => {
@@ -159,7 +153,6 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           return { ...d, months };
         });
       }
-      if (edits.length) update('portal', (p) => applyHandEdits(p, edits));
     },
     [rows, update],
   );
@@ -224,17 +217,15 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
       ...portal3bCols<DtiRow>({
         field: 'itcExclRcm',
         get: (r) => r.itcExclRcm,
-        set: (r, t) => ({ ...r, itcExclRcm: t }),
         portal: docs.portal,
         cess,
         group: 'As per 3B',
         what: WHAT_3B,
-        canEdit: canEditSource,
       }),
       ...diffCols<DtiRow>((r) => dti.months[r.id].diff, { cess, tolerance: tol, group: 'Diff (Books − 3B)', hasLine: (m) => lineKeys.has(`dti.${m}`) }),
     );
     return cols;
-  }, [compact, recon, cess, dti, docs.portal, tol, lineKeys, canEditSource]);
+  }, [compact, recon, cess, dti, docs.portal, tol, lineKeys]);
 
   const footer = useMemo<GridFooterRow[]>(() => {
     const t = dti.totals;
@@ -261,12 +252,15 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         },
       },
       {
+        // Read-only: the RCM figures this year's total needs (the sheet's row 23). Books vs portal for RCM is
+        // compared, and its difference justified, on RCM › Books vs portal only.
         key: 'rcm',
-        label: footerStatusLabel(
-          <FooterLabel soft title="RCM tax only: RCM Part B (books, RCM step) vs 3.1(d) of the as-filed 3B (RCM Part A) — the sheet's row 23">
-            RCM tax figures only
-          </FooterLabel>,
-          'dti.rcm',
+        label: (
+          <span title="RCM tax only: RCM Part B (books) and 3.1(d) of the as-filed 3B (RCM Part A) — the sheet's row 23. Compared and justified on RCM › Books vs portal.">
+            <FigLink to={rcmDiffTotal} className="text-left font-normal">
+              RCM tax figures only → RCM › Books vs portal
+            </FigLink>
+          </span>
         ),
         tone: 'total',
         cells: {
@@ -277,7 +271,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
             (h) => (rcmAnnual ? portalG9T4('rchrg', h) : rcmPartA('total', h, rcmNoItc)),
             true,
           ),
-          ...soft(diffCells('diff', dti.rcmDiff, cess, tol)),
+          ...linkCells(taxFooter('diff', dti.rcmDiff, cess), () => rcmDiffTotal, true),
         },
       },
       {
@@ -317,15 +311,17 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         cells: linkCells(taxFooter('net', dti.asPerPl, cess), (h) => purchasesSummaryRow('79', h), true),
       },
       {
+        // P&L vs Duties & Taxes net is compared, and its difference justified, on Purchases › PL-INPUT row 81 only.
         key: 'plDiff',
-        label: footerStatusLabel(
-          <FooterLabel soft title="As per P&L − Net ITC (the sheet's row 29 = U28 − U26) — P&L (PL-INPUT row 79) vs Duties & Taxes net">
-            P&amp;L − D&amp;T
-          </FooterLabel>,
-          'dti.pl',
+        label: (
+          <span title="As per P&L − Net ITC (the sheet's row 29) — compared, and justified, on Purchases › PL-INPUT row 81 (Difference P&L − D&T)">
+            <FigLink to={purchasesSummaryRow('81')} className="text-left font-normal">
+              P&amp;L − D&amp;T → Purchases › row 81
+            </FigLink>
+          </span>
         ),
         tone: 'total',
-        cells: diffCells('net', dti.plDiff, cess, tol),
+        cells: {},
       },
     ];
   }, [dti, compact, cess, tol, rcmNoItc, rcmAnnual]);
@@ -365,7 +361,7 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           ) : (
             <>follows this figure unless typed on the ITC reco step. </>
           )}
-          <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => goStep('itc', { itctab: 'next' })}>
+          <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => goStep('itc', { itctab: 'working' })}>
             Open ITC reco
           </button>
         </li>
@@ -405,18 +401,6 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
         title="Input tax credit by month (excluding RCM)"
         description="Purchases, debit notes and suspended ITC from the ITC ledgers, against the as-filed GSTR-3B."
         excelRef="DUTIES & TAXES-INPUT B7:AC29"
-        actions={
-          <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="text-muted-foreground">RCM books vs 3B:</span>
-              <JustifyControl lineKey="dti.rcm" />
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="text-muted-foreground">P&amp;L vs D&amp;T net:</span>
-              <JustifyControl lineKey="dti.pl" />
-            </span>
-          </span>
-        }
       >
         <PortalNote what={WHAT_3B} missingKey="dti.no3b" />
         <SheetGrid<DtiRow>
@@ -454,7 +438,8 @@ const InputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: strin
           A month’s books figures can be typed directly, or entered rate by rate with its Rate-wise button: Purchase and Debit note are then the
           totals of its rate lines and are changed there.
           Difference = Books − 3B, per head. A month needs a reason when any head is off by more than ₹{tol} (per-client tolerance; the workbook
-          has none). RCM and P&amp;L lines are for information.
+          has none). The RCM and P&amp;L lines are for information: RCM books vs portal is compared on RCM › Books vs portal, and P&amp;L vs
+          Duties &amp; Taxes on Purchases › PL-INPUT row 81.
         </Note>
       </SectionCard>
 

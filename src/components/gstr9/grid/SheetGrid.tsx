@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { figAnchor } from '@/lib/gstr9/figureLinks';
+import { VARIANCE_CELL_CLASS } from '@/lib/gstr9/varianceStyle';
 import { Button } from '@/components/ui/button';
 import { fmtMoney, fmtRate, parseClipboard, parseClipboardHtml, parseEntry } from './money';
 
@@ -20,7 +21,8 @@ import { fmtMoney, fmtRate, parseClipboard, parseClipboardHtml, parseEntry } fro
  *    computed from the rate) until something is typed over it.
  */
 
-export type CellTone = 'error' | 'warn' | 'ok' | 'muted' | undefined;
+/** `variance`: a final figure that differs from the system-computed GSTR-9 (src/lib/gstr9/variance.ts). */
+export type CellTone = 'error' | 'warn' | 'ok' | 'muted' | 'variance' | undefined;
 
 export interface CellEdit {
   /** Parsed number (money/percent), or null when cleared. */
@@ -549,6 +551,7 @@ export function SheetGrid<R>({
                           cTone === 'warn' && 'bg-warning/15 font-medium text-foreground',
                           cTone === 'ok' && 'text-success-strong',
                           cTone === 'muted' && 'text-muted-foreground',
+                          cTone === 'variance' && VARIANCE_CELL_CLASS,
                           isActive && !isEditing && 'outline outline-2 -outline-offset-2 outline-primary',
                         )}
                         style={col.width ? { minWidth: col.width, width: col.width } : undefined}

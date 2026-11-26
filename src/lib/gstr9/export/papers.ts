@@ -39,6 +39,10 @@ import { hasRateLines, rateLinesByRate, rateLinesTotal } from '../rateWise';
 import { REVIEW_CHECKLIST, ROLE_LABEL } from '../signoff';
 import { ANSWER_LABEL, selfCheckStatus } from '../selfCheck';
 import { buildGstr9cPortalJson } from '../gstr9cJson';
+import {
+  gatherRemarks, remarksForCell, rulesSummary, systemVariances, varianceByCode, varianceDigest, varianceTitle,
+  VARIANCE_COL_LABEL, type VarianceCell, type VarianceRemark,
+} from '../variance';
 import { displayName, overrideText, toSignoffState, type SignoffState, type Stamp } from '../signoffFlow';
 import type { AnnualReturnPeriod } from '../store';
 import {
@@ -192,9 +196,9 @@ const MONTH_SHORT: Record<MonthKey, string> = {
 /** Step names for the DIFFERENCES paper (mirrors src/components/gstr9/steps/registry.ts). */
 const STEP_NAME: Record<string, string> = {
   overview: '0 · Overview', portal: '1 · Portal data', sales: '2 · Sales (PL-OUTPUT)', purchases: '3 · Purchases & ITC (PL-INPUT)',
-  duties: '4 · Duties & Taxes', rcm: '5 · RCM', outward: '6 · Outward reco (GSTR 9-OUTPUT)', itc: '7 · ITC reco (GSTR 9-INPUT)',
-  expense: '8 · 9C expense heads (GSTR 9C)', annexures: '9 · Annexures', gstr9: '10 · GSTR-9', gstr9c: '11 · GSTR-9C',
-  notice: '12 · Notice format', review: '13 · Review & lock', payables: '14 · Payables & set-off',
+  duties: '4 · Duties & Taxes', rcm: '5 · RCM', outward: '6 · Outward reco (GSTR 9-OUTPUT)', itc: '7 · ITC reco (GSTR 9-INPUT, incl. 9C Table 14)',
+  annexures: '8 · Annexures', gstr9: '9 · GSTR-9', gstr9c: '10 · GSTR-9C',
+  notice: '11 · Notice format', review: '12 · Review & lock', payables: '13 · Payables & set-off',
 };
 
 const PORTAL_SOURCE_LABEL: Record<string, string> = {
@@ -706,7 +710,7 @@ function dti(c: Ctx): WorkingPaper {
   t.data(lbl('LAST YEAR EFFECT', 1 + 6 * n), ...taxCells(w.dti.lye, heads));
   t.total(lbl('NET', 1 + 6 * n), ...taxCells(w.dti.net, heads));
   t.data(lbl('AS PER P&L (PL-INPUT NET ITC)', 1 + 6 * n), ...taxCells(w.dti.asPerPl, heads));
-  t.sub(lbl('DIFF (P&L - NET)', 1 + 6 * n), ...taxCells(w.dti.plDiff, heads), ...pad(2), just('dti.pl'));
+  t.sub(lbl('DIFF (P&L - NET)', 1 + 6 * n), ...taxCells(w.dti.plDiff, heads), ...pad(2), just('purchases.dt'));
   adjustmentBlock(c, p, 'OTHER ADJUSTMENTS IN DR SIDE', docs.duties_input.adjustments, w.dti.adjustments, 'REASON OF ADJ.', ['TOTAL DR', w.dti.totalDr]);
   rateWiseBlock(c, p, 'RATE-WISE BREAKUP OF BOOKS FIGURES', [
     ['Purchase', (m) => docs.duties_input.months[m].rateWise?.purchase],
@@ -1060,9 +1064,9 @@ function gstr9Input(c: Ctx): WorkingPaper {
   }
   vrow('data', nz(I.cgNotInBooks) ? 'AS PER BOOK (AFTER THE s.18(6) REVERSAL)' : 'AS PER BOOK (DUTIES & TAXES NET, AFTER LAST YEAR EFFECT)', null, I.asPerBook);
   vrow('subtotal', 'DIFFERENCE (7J - BOOK)', null, I.residual, just('itc.books'));
-  vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12; 8C AS NEGATIVE) — SUGGESTED', null, I.t12Suggested);
+  vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12) — SUGGESTED', null, I.t12Suggested);
   vrow('data', `   Table 12 used (${w.g9.t12Source === 'override' ? 'typed' : 'computed'})`, null, w.g9.t12, '', w.g9.t12Source === 'override' ? 'typed' : undefined).at('C2.t12');
-  vrow('data', 'ITC TO BE CLAIMED IN NEXT YEAR (TABLE 13; 8C) — SUGGESTED', null, I.t13Suggested);
+  vrow('data', 'ITC TO BE CLAIMED IN NEXT YEAR (TABLE 13; 8C FOLLOWS IT UNLESS TYPED) — SUGGESTED', null, I.t13Suggested);
   vrow('data', '   Table 13 typed', null, w.g9.t13, '', 'typed').at('C2.t13');
   return paper(c, {
     ref: 'C2', title: 'GSTR 9-INPUT — ITC working for GSTR-9', sheet: 'C2 GSTR 9-INPUT', phase: 'reconcile', master: 'GSTR 9-INPUT',
@@ -1117,7 +1121,7 @@ function gstr9cHeads(c: Ctx): WorkingPaper {
   t.data('', 'NET ITC AS PER PL-INPUT', ...valCells(w.purchases.netItc, heads), sum(w.purchases.netItc));
   t.sub('', 'CHECK (PL-INPUT - R)', ...valCells(w.c14.check, heads), sum(w.c14.check));
   t.data('S', 'ITC CLAIMED IN GSTR-9 (7J)', null, ...taxCells(w.c14.S, heads), sum(w.c14.S)).at('C3.S');
-  t.total('T', 'UN-RECONCILED ITC (R - S)', null, ...taxCells(w.c14.T, heads), sum(w.c14.T), just('gstr9c.14T')).at('C3.T');
+  t.total('T', 'UN-RECONCILED ITC (S − R)', null, ...taxCells(w.gstr9c.t14.T, heads), sum(w.gstr9c.t14.T), just('gstr9c.14T')).at('C3.T');
   return paper(c, {
     ref: 'C3', title: 'GSTR 9C — ITC by expense head (Table 14)', sheet: 'C3 GSTR 9C', phase: 'reconcile', master: 'GSTR 9C',
     source: 'Source: books ITC by GSTR-9C expense head (B2 PL-INPUT, B5 RCM) against GSTR-9 7J — GSTR 9C of MASTER_PMS',
@@ -1176,13 +1180,15 @@ function annexure(c: Ctx): WorkingPaper {
   a3.data(sr(3), `EXCESS ITC CLAIMED AS PER RECO${docs.annexures.a3ExcessItc === null ? ' — suggested (Table 12)' : ''}`, ...(docs.annexures.a3ExcessItc === null ? taxCells(A3.excessItc, all) : srcTax(A3.excessItc, all, () => 'typed')));
   a3.data(sr(4), 'ANY OTHER PAYMENT (TO BE SPECIFIED)', ...taxCells(A3.other, all));
   docs.annexures.a3Other.forEach((o) => a3.data('', `   ${o.description || 'Other'}`, ...srcTax(tin(o), all, () => 'typed')));
-  if (nz(A3.cg186)) a3.data(sr(5), 'CAPITAL GOODS SOLD u/s 18(6): SHORTFALL NOT YET REVERSED (C6 ANNEXURE-5)', ...taxCells(A3.cg186, all));
+  let a3n = 5;
+  if (nz(A3.cg186)) a3.data(sr(a3n++), 'CAPITAL GOODS SOLD u/s 18(6): SHORTFALL NOT YET REVERSED (C6 ANNEXURE-5)', ...taxCells(A3.cg186, all));
+  if (nz(A3.rule4243)) a3.data(sr(a3n++), 'RULE 42 / 43 REVERSAL STILL DUE, WITH INTEREST u/s 50 (C2A)', ...taxCells(A3.rule4243, all));
   a3.total(lbl('TOTAL'), ...taxCells(A3.total, all));
-  a3.data('', 'DRC-03 PAYABLE (POSITIVE HEADS)', ...taxCells(A3.payable, all));
+  a3.data('', 'DRC-03 PAYABLE (POSITIVE HEADS, OUTPUT AND INPUT SIDE APART)', ...taxCells(A3.payable, all));
   a3.data('', 'EXCESS PAID (NEGATIVE HEADS)', ...taxCells(A3.excessPaid, all));
-  a3.data('', 'DRC-03 ALREADY PAID', ...taxCells(A3.alreadyPaid, all));
+  a3.data('', 'SET OFF — DRC-03 / GSTR-3B (E1)', ...taxCells(A3.alreadyPaid, all));
   a3.total('', 'BALANCE TO PAY', ...taxCells(A3.balance, all));
-  p.note('DRC-03 already paid is what the set-off register (E1) records against an imported DRC-03 or a GSTR-3B effect.');
+  p.note('Annexure-3 and the Payables register (E1) are one register: the same lines and the same set-offs, the payable and balance taken output side and input side apart, so the balance here is the balance on E1.');
 
   // Annexure-4
   p.h2('ANNEXURE-4 (DETAILS OF PREVIOUS YEAR GSTR-09 CLAUSE-8, 10, 11, 12 & 13)');
@@ -1343,7 +1349,17 @@ const formAnchor = (prefix: string, t: FormTable, row: FormRow): string | undefi
 };
 
 /** A form-table paper (GSTR-9, NOTICE FORMATE): part heading, table title, header row, rows. */
-function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: boolean; cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined; links?: FormLinks } = {}): void {
+function formBlocks(
+  p: PaperBuilder,
+  tables: FormTable[],
+  opts: {
+    numberRow?: boolean;
+    cellSrc?: (t: FormTable, rowIdx: number, col: number) => Src | undefined;
+    links?: FormLinks;
+    /** A figure that differs from the system-computed GSTR-9 (variance.ts): filled, with both figures in its comment. */
+    variance?: (t: FormTable, row: FormRow, key: string) => VarianceCell | null;
+  } = {},
+): void {
   let part: string | undefined;
   tables.forEach((t) => {
     if (t.part && t.part !== part) {
@@ -1364,6 +1380,8 @@ function formBlocks(p: PaperBuilder, tables: FormTable[], opts: { numberRow?: bo
         if (typeof v !== 'number') return v;
         const s = opts.cellSrc?.(t, ri, ci);
         const link = opts.links?.link(t, row, keys[ci]);
+        const vr = opts.variance?.(t, row, keys[ci]) ?? null;
+        if (vr) return { v, src: s, link, fill: 'variance' as const, note: varianceTitle(vr.portal, vr.final) };
         return s || link ? { v, src: s, link } : v;
       })];
       b.row(row.bold ? 'subtotal' : 'data', cells).at(opts.links && formAnchor(opts.links.prefix, t, row));
@@ -1524,12 +1542,60 @@ function gstr9CellLink(c: Ctx): FormLinks['link'] {
   };
 }
 
+const REMARK_KIND: Record<VarianceRemark['kind'], string> = { reason: 'Reason', gstr9c: 'GSTR-9C', selfcheck: 'Self-check' };
+
+/** D1's first block: the figures that differ from the system-computed GSTR-9, the remarks on them and the summary (§12). */
+function varianceBlock(c: Ctx, p: PaperBuilder, cells: VarianceCell[]): void {
+  if (c.w.g9.t4Source !== 'portal') return;
+  p.h2('DIFFERENCES FROM THE SYSTEM-COMPUTED GSTR-9');
+  if (!cells.length) {
+    p.note(`The final GSTR-9 agrees with the system-computed GSTR-9 (Tables 4, 5, 6A, 6G, 8A and the Table 9 payable) within ₹${c.w.tolerance}.`);
+    return;
+  }
+  const remarks = gatherRemarks(c.docs, c.w);
+  const saved = c.docs.gstr9.varianceSummary ?? null;
+  const s = saved ?? { ...rulesSummary(cells, remarks), source: 'rules' as const, at: '', by: null, digest: '' };
+  const stale = !!saved && saved.digest !== varianceDigest(cells, remarks);
+  p.note(
+    saved
+      ? `Summary: ${s.source === 'ai' ? 'GST Assistant' : 'rules summary'}${c.forClient || !saved.by ? '' : `, by ${displayName(saved.by)}`}, ${fmtDateTime(saved.at)}${stale ? '. The differences or remarks have changed since it was written.' : '.'}`
+      : 'Summary: rules summary, built when this file was printed (no summary saved on the GSTR-9 step).',
+  );
+  p.note(s.overall);
+  s.tables.forEach((t) => p.note(`Table ${t.table}. ${t.summary}`));
+  if (s.unexplained.length) p.note(`Unexplained: ${s.unexplained.map((u) => `${u.label} (${u.note})`).join('; ')}.`);
+  const b = p.table([['ROW', 'PARTICULARS', 'HEAD', 'SYSTEM-COMPUTED', 'FINAL', 'DIFFERENCE', wide('REMARKS THAT BEAR ON IT', 5)]], { keyCols: 2 });
+  cells.forEach((v) => {
+    const rs = remarksForCell(v, remarks);
+    const text = rs.length
+      ? rs.map((r) => `${REMARK_KIND[r.kind]} · ${r.label}: ${r.text}${r.effect ? ` (effect: ${r.effect})` : ''}`).join('\n')
+      : 'No remark';
+    b.data(
+      v.row,
+      v.rowLabel,
+      VARIANCE_COL_LABEL[v.col],
+      v.portal,
+      { v: v.final, fill: 'variance', link: { sheet: D1_SHEET, anchor: `D1.${v.table}.${v.code}`, col: v.col } },
+      v.diff,
+      { v: text, span: 5, ...(rs.length ? {} : { fill: 'bad' as const }) },
+    );
+  });
+  p.space();
+}
+
 function gstr9Form(c: Ctx): WorkingPaper {
   const { w } = c;
   const p = new PaperBuilder();
+  const cells = systemVariances(c.docs, w);
+  const at = varianceByCode(cells);
   p.note('(Amount in ₹ in all tables)');
-  p.note('A figure underlined in blue comes from another paper: click it to go to the row it is taken from.');
-  formBlocks(p, gstr9FormTables(w), { cellSrc: gstr9CellSrc(c), links: { prefix: 'D1', link: gstr9CellLink(c) } });
+  p.note('A figure underlined in blue comes from another paper: click it to go to the row it is taken from. A figure filled orange differs from the system-computed GSTR-9.');
+  varianceBlock(c, p, cells);
+  formBlocks(p, gstr9FormTables(w), {
+    cellSrc: gstr9CellSrc(c),
+    links: { prefix: 'D1', link: gstr9CellLink(c) },
+    variance: (t, row, key) => (t.no ? at(t.no, row.key ?? row.code, key) : null),
+  });
   return paper(c, {
     ref: 'D1', title: 'GSTR-9 — Annual return, Tables 4 to 19', sheet: 'D1 GSTR-9', phase: 'returns', master: 'GSTR-9',
     source: 'Source: the reconciliations (C1–C4), GSTR-9 system-computed figures (B6) and the cells typed on the GSTR-9 step — GSTR-9 of MASTER_PMS',

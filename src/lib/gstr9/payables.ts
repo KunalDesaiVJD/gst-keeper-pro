@@ -13,6 +13,13 @@ import type { Tax } from './types';
 export type PayableSide = 'output' | 'input';
 export type SetOffMethod = 'drc03' | 'gstr3b';
 
+/**
+ * One threshold for "anything left": a balance above it can be set off (the Record a set-off
+ * buttons show), a balance at or below it counts as fully set off (the step is done), and a
+ * DRC-03 with no more than it left is fully used. Half a paisa, so any rupee remainder counts.
+ */
+export const PAYABLE_EPS = 0.005;
+
 export const SIDE_LABEL: Record<PayableSide, string> = { output: 'Output tax', input: 'Input tax credit' };
 export const METHOD_LABEL: Record<SetOffMethod, string> = { drc03: 'DRC-03', gstr3b: 'GSTR-3B' };
 

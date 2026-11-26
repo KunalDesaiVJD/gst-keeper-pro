@@ -561,8 +561,32 @@ export interface Gstr9ManualDoc {
   t5Extra: { dr_nt: number; amd_pos: number; amd_neg: number };
   /** 4F advances / 4J–4L on the books side not in a Sales ledger (rare; default 0) — added to the Part A buckets in GSTR 9-OUTPUT. */
   t4BooksExtra: { at: ValTax; dr_nt: ValTax; amd_pos: ValTax; amd_neg: ValTax };
+  /**
+   * The last summary of why the final GSTR-9 differs from the portal's system-computed one
+   * (GSTR-9 step, src/lib/gstr9/variance.ts; §12 of docs/GSTR9_9C_WORKINGS.md). Optional:
+   * docs saved before 26 Nov 2026 have none.
+   */
+  varianceSummary?: VarianceSummary | null;
   /** Expressions staff typed into this doc's fixed-row grids, keyed by field path (e.g. "t9.E.c"). */
   f?: Formulas;
+}
+
+/** Why the final GSTR-9 differs from the system-computed GSTR-9, as last summarised (variance.ts). */
+export interface VarianceSummary {
+  /** One or two sentences over every table. */
+  overall: string;
+  /** Per table of the form ("4", "5", "6", "8", "9"): why its figures differ. */
+  tables: Array<{ table: string; summary: string }>;
+  /** Differing cells no remark explains: the cell's id (e.g. "5D.t"), its label, and what is missing. */
+  unexplained: Array<{ id: string; label: string; note: string }>;
+  at: string;
+  by: string | null;
+  /** The GST Assistant, or the rules summary built in the browser. */
+  source: 'ai' | 'rules';
+  /** Digest of the differences and remarks it was written from: a different digest now = stale. */
+  digest: string;
+  /** Why the rules summary stands in for the assistant's, when it does. */
+  note?: string;
 }
 
 // ---------------------------------------------------------------------------

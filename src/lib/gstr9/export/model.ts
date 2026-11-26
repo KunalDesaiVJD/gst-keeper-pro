@@ -44,7 +44,7 @@ export interface WorkingPapersInput {
   /** Sheets saved for the working — "Preparing" rather than "Not started" once there are any. */
   sheets?: number;
   /**
-   * Export only the papers of these steps (1–14), with the cover and index.
+   * Export only the papers of these steps (1–13), with the cover and index.
    * Left out or empty, every paper is exported, as before.
    */
   steps?: StepKey[];
@@ -61,9 +61,8 @@ export const STEP_PAPERS: Partial<Record<StepKey, string[]>> = {
   duties: ['B3', 'B4'],
   rcm: ['B5'],
   outward: ['C1'],
-  itc: ['C2', 'C2A'],
-  expense: ['C3'],
-  annexures: ['C4', 'C6'],
+  itc: ['C2', 'C2A', 'C3'],
+  annexures: ['C4'],
   gstr9: ['D1'],
   gstr9c: ['D2', 'D2A'],
   notice: ['D3'],
@@ -88,8 +87,8 @@ export const stepFileKind = (kind: string, steps: StepKey[] | undefined): string
   return `${kind}_Step${String(n).padStart(2, '0')}_${k}`;
 };
 
-/** Steps 1–14 in the workspace's order (STEP_META of the Annual Return page). */
-const STEP_ORDER: StepKey[] = ['portal', 'sales', 'purchases', 'duties', 'rcm', 'outward', 'itc', 'expense', 'annexures', 'gstr9', 'gstr9c', 'notice', 'review', 'payables'];
+/** Steps 1–13 in the workspace's order (STEP_META of the Annual Return page). */
+const STEP_ORDER: StepKey[] = ['portal', 'sales', 'purchases', 'duties', 'rcm', 'outward', 'itc', 'annexures', 'gstr9', 'gstr9c', 'notice', 'review', 'payables'];
 
 // ---------------------------------------------------------------------------
 // Cells, rows, blocks
@@ -115,8 +114,8 @@ export interface WpCell {
   italic?: boolean;
   muted?: boolean;
   strike?: boolean;
-  /** Status fill: reason needed / justified / matched. */
-  fill?: 'bad' | 'info' | 'good';
+  /** Status fill: reason needed / justified / matched; variance: differs from the system-computed GSTR-9 (variance.ts). */
+  fill?: 'bad' | 'info' | 'good' | 'variance';
   align?: 'left' | 'center' | 'right';
   /** Columns this cell covers. */
   span?: number;

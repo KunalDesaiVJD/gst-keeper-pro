@@ -277,7 +277,6 @@ export const diffTarget = (d: Pick<DiffLine, 'key' | 'step'>): FigTarget => {
   if (k === 'dto.pl') return at('Output tax by month', 'footer:plDiff');
   if (k === 'dti.lye') return at('Last year effect', 'lye');
   if (k === 'dti.rcm') return at(DTI_TABLE, 'footer:rcm');
-  if (k === 'dti.pl') return at(DTI_TABLE, 'footer:plDiff');
   if (k === 'dto.no3b' || k === 'dti.no3b' || k === 'out.portal') return tabOnly;
   if (k.startsWith('dto.')) return at('Output tax by month', rest('dto.'));
   if (k.startsWith('dti.')) return at(DTI_TABLE, rest('dti.'));

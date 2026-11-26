@@ -19,7 +19,7 @@ import { anchorChain, anchorsOf, cellOf, clean, liveLink, tableWidth, type Cell,
 const BAND: RGB = [217, 225, 242];
 const LINK: RGB = [5, 99, 193];
 const SRC_RGB: Record<'typed' | 'portal', RGB> = { typed: [0, 0, 255], portal: [0, 97, 46] };
-const FILL_RGB: Record<'bad' | 'info' | 'good', RGB> = { bad: [248, 215, 218], info: [220, 230, 241], good: [226, 239, 218] };
+const FILL_RGB: Record<'bad' | 'info' | 'good' | 'variance', RGB> = { bad: [248, 215, 218], info: [220, 230, 241], good: [226, 239, 218], variance: [252, 213, 180] };
 
 const PAD_X = 1.2;
 const PAD_Y = 0.75;
