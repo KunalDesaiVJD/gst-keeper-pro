@@ -20,7 +20,7 @@
 //     Summary" dialog.
 
 import { supabase } from '@/integrations/supabase/client';
-import type { ReportTable } from './allClientsReports';
+import type { ReportTable, RowTone } from './allClientsReports';
 import { mmYyyyToShort, formatMonthLabel } from './allClientsReports';
 import { hydrateManualEntriesFromJson } from './gstr1ManualBuild';
 import { buildGstr1Summary } from './buildGstr1Summary';
@@ -151,31 +151,234 @@ export const buildGstr1SummaryReport = async (clientId: string, month: string): 
 };
 
 // ─────────────────── REPORT 3: HSN Summary ────────────────────────────────
+//
+// What a preparer keys into GSTR-9 Table 17 (and checks Table 18 against):
+// the year's Table 12 lines added up by HSN, UQC and rate. Each month is read
+// from the best source it has, in this order:
+//   1. the filed GSTR-1 JSON pulled from the portal (gst_filed_returns.full_json);
+//   2. this app's books draft (gstr1_data.raw_json);
+//   3. the last GSTR-1 JSON this app uploaded to the portal (gstr1_upload_versions,
+//      an accepted upload first), for a month whose draft has since gone;
+//   4. the portal's GSTR-1 summary (gst_filed_returns.summary, pulled with the
+//      filing status): Table 12's totals only, no HSN-wise lines, so the month
+//      is shown as "totals only" and kept out of the HSN-wise table.
+// A month with none of these is listed once on the coverage strip, never as an
+// error: one month missing no longer hides the months that have data.
 
-export const buildGstr1HsnSummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
-  const { client, gstr1, source } = await fetchGstr1Row(clientId, month);
-  const j = gstr1.raw_json || {};
-  // Same dual-shape handling as buildGstr1Summary.ts: older imports carry
-  // hsn.data, newer ones split hsn.hsn_b2b / hsn.hsn_b2c.
-  const hsnRowsRaw: any[] = j.hsn?.data ? j.hsn.data : [...(j.hsn?.hsn_b2b || []), ...(j.hsn?.hsn_b2c || [])];
-  const sorted = [...hsnRowsRaw].sort((a, b) => String(a.hsn_sc || '').localeCompare(String(b.hsn_sc || '')));
+type HsnSource = 'filed' | 'draft' | 'uploaded' | 'summary' | 'none';
 
-  let totQty = 0, totTx = 0, totI = 0, totC = 0, totS = 0, totCess = 0;
-  const rows: (string | number)[][] = sorted.map((h) => {
-    const qty = num(h.qty), tx = num(h.txval), i = num(h.iamt), c = num(h.camt), s = num(h.samt), cess = num(h.csamt);
-    totQty += qty; totTx += tx; totI += i; totC += c; totS += s; totCess += cess;
-    return [h.hsn_sc || '—', h.desc || '', h.uqc || '—', qty, `${num(h.rt)}%`, tx, i, c, s, cess, i + c + s + cess];
+const HSN_SOURCE_LABEL: Record<HsnSource, string> = {
+  filed: 'Filed GSTR-1 (pulled)',
+  draft: 'Books draft',
+  uploaded: 'As uploaded by this app',
+  summary: 'Portal summary (totals only)',
+  none: 'Not available',
+};
+
+interface HsnLine {
+  hsn: string; desc: string; uqc: string; rt: number; supply: 'B2B' | 'B2C' | '';
+  qty: number; txval: number; iamt: number; camt: number; samt: number; csamt: number;
+}
+
+interface HsnMonth {
+  period: string;
+  source: HsnSource;
+  lines: HsnLine[];
+  /** Table 12's totals when only the portal summary is held. */
+  totals?: { txval: number; iamt: number; camt: number; samt: number; csamt: number };
+}
+
+interface HsnReportTable extends ReportTable { hsnMonths?: HsnMonth[]; hsnClient?: ClientLite }
+
+const hsnLinesOf = (j: any): HsnLine[] => {
+  const h = j?.hsn;
+  if (!h) return [];
+  const tagged: { r: any; supply: HsnLine['supply'] }[] = Array.isArray(h.data)
+    ? h.data.map((r: any) => ({ r, supply: '' as const }))
+    : [
+      ...(h.hsn_b2b || []).map((r: any) => ({ r, supply: 'B2B' as const })),
+      ...(h.hsn_b2c || []).map((r: any) => ({ r, supply: 'B2C' as const })),
+    ];
+  return tagged.map(({ r, supply }) => ({
+    hsn: String(r.hsn_sc ?? '').trim(),
+    desc: String(r.desc ?? r.user_desc ?? '').trim(),
+    uqc: String(r.uqc ?? '').trim().toUpperCase(),
+    rt: num(r.rt),
+    supply,
+    qty: num(r.qty), txval: num(r.txval), iamt: num(r.iamt), camt: num(r.camt), samt: num(r.samt), csamt: num(r.csamt),
+  }));
+};
+
+const hasHsn = (j: any): boolean => hsnLinesOf(j).length > 0;
+
+/** Table 12's totals from the portal's GSTR-1 summary (sec_sum "HSN"; ttl_tax is the taxable value). */
+const hsnTotalsFromSummary = (summary: any): HsnMonth['totals'] | undefined => {
+  const secs: any[] = Array.isArray(summary?.sec_sum) ? summary.sec_sum : [];
+  const all = secs.find((x) => x?.sec_nm === 'HSN');
+  const parts = all ? [all] : secs.filter((x) => x?.sec_nm === 'HSN_B2B' || x?.sec_nm === 'HSN_B2C');
+  if (!parts.length) return undefined;
+  const t = { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+  for (const x of parts) {
+    t.txval += num(x.ttl_tax); t.iamt += num(x.ttl_igst); t.camt += num(x.ttl_cgst); t.samt += num(x.ttl_sgst); t.csamt += num(x.ttl_cess);
+  }
+  return t.txval || t.iamt || t.camt || t.samt || t.csamt ? t : undefined;
+};
+
+const loadHsnMonth = async (clientId: string, month: string): Promise<{ client: ClientLite; month: HsnMonth }> => {
+  const shortMonth = mmYyyyToShort(month);
+  const [clientRes, filedRes, draftRes, versionsRes] = await Promise.all([
+    supabase.from('clients').select('id, name, gstin').eq('id', clientId).maybeSingle(),
+    supabase.from('gst_filed_returns').select('full_json, summary').eq('client_id', clientId).eq('period_month', month).eq('return_type', 'GSTR1').maybeSingle(),
+    supabase.from('gstr1_data').select('raw_json').eq('client_id', clientId).eq('period_month', shortMonth).maybeSingle(),
+    supabase.from('gstr1_upload_versions').select('payload, action_type, status, version_number')
+      .eq('client_id', clientId).eq('period_month', shortMonth).order('version_number', { ascending: false }).limit(50),
+  ]);
+  const client: ClientLite = (clientRes.data || { id: clientId, name: 'Unknown', gstin: '' }) as any;
+  const filed = filedRes.data as { full_json?: any; summary?: any } | null;
+  const draft = (draftRes.data as { raw_json?: any } | null)?.raw_json;
+  const versions = (versionsRes.data || []) as { payload: any; action_type: string; status: string }[];
+
+  if (hasHsn(filed?.full_json)) return { client, month: { period: month, source: 'filed', lines: hsnLinesOf(filed!.full_json) } };
+  if (hasHsn(draft)) return { client, month: { period: month, source: 'draft', lines: hsnLinesOf(draft) } };
+  const uploaded = versions.find((v) => v.action_type === 'UPLOAD' && v.status === 'accepted' && hasHsn(v.payload))
+    ?? versions.find((v) => hasHsn(v.payload));
+  if (uploaded) return { client, month: { period: month, source: 'uploaded', lines: hsnLinesOf(uploaded.payload) } };
+  const totals = hsnTotalsFromSummary(filed?.summary);
+  if (totals) return { client, month: { period: month, source: 'summary', lines: [], totals } };
+  return { client, month: { period: month, source: 'none', lines: [] } };
+};
+
+const monthSort = (a: string, b: string) => {
+  const k = (p: string) => { const [m, y] = p.split('/').map(Number); return (y || 0) * 100 + (m || 0); };
+  return k(a) - k(b);
+};
+
+/** "Apr 2025 to Mar 2026" for a run of consecutive months, else the months listed. */
+const describeMonths = (periods: string[]): string => {
+  const sorted = [...periods].sort(monthSort);
+  const idx = (p: string) => { const [m, y] = p.split('/').map(Number); return y * 12 + m; };
+  const runs: string[][] = [];
+  for (const p of sorted) {
+    const last = runs[runs.length - 1];
+    if (last && idx(p) === idx(last[last.length - 1]) + 1) last.push(p); else runs.push([p]);
+  }
+  return runs.map((r) => (r.length > 2 ? `${formatMonthLabel(r[0])} to ${formatMonthLabel(r[r.length - 1])}` : r.map(formatMonthLabel).join(', '))).join(', ');
+};
+
+const HSN_HEADERS = ['HSN/SAC', 'Description', 'UQC', 'Qty', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'];
+
+/** The HSN table (one or several months) from the months read. */
+const hsnTableOf = (client: ClientLite, months: HsnMonth[]): HsnReportTable => {
+  const sortedMonths = [...months].sort((a, b) => monthSort(a.period, b.period));
+  const periods = sortedMonths.map((m) => m.period);
+  const several = periods.length > 1;
+
+  // HSN-wise: one line per HSN, UQC and rate, across the months (and B2B / B2C).
+  interface Agg { hsn: string; desc: string; uqc: string; rt: number; qty: number; txval: number; iamt: number; camt: number; samt: number; csamt: number }
+  const byKey = new Map<string, Agg>();
+  for (const m of sortedMonths) {
+    for (const l of m.lines) {
+      const key = `${l.hsn}|${l.uqc}|${l.rt}`;
+      const cur = byKey.get(key) || { hsn: l.hsn, desc: '', uqc: l.uqc, rt: l.rt, qty: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+      if (!cur.desc && l.desc) cur.desc = l.desc;
+      cur.qty += l.qty; cur.txval += l.txval; cur.iamt += l.iamt; cur.camt += l.camt; cur.samt += l.samt; cur.csamt += l.csamt;
+      byKey.set(key, cur);
+    }
+  }
+  const aggs = [...byKey.values()].sort((a, b) => a.hsn.localeCompare(b.hsn) || a.rt - b.rt || a.uqc.localeCompare(b.uqc));
+  const tot = { qty: 0, txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 };
+  const rows: (string | number)[][] = aggs.map((a) => {
+    tot.qty += a.qty; tot.txval += a.txval; tot.iamt += a.iamt; tot.camt += a.camt; tot.samt += a.samt; tot.csamt += a.csamt;
+    return [a.hsn || '—', a.desc, a.uqc || '—', a.qty, `${a.rt}%`, a.txval, a.iamt, a.camt, a.samt, a.csamt, a.iamt + a.camt + a.samt + a.csamt];
   });
-  rows.push(['', 'TOTAL', '', totQty, '', totTx, totI, totC, totS, totCess, totI + totC + totS + totCess]);
+  if (rows.length) rows.push(['', 'TOTAL', '', tot.qty, '', tot.txval, tot.iamt, tot.camt, tot.samt, tot.csamt, tot.iamt + tot.camt + tot.samt + tot.csamt]);
+
+  // Coverage: each month's source and Table 12 totals.
+  const withLines = sortedMonths.filter((m) => m.lines.length > 0);
+  const totalsOnly = sortedMonths.filter((m) => m.source === 'summary');
+  const missing = sortedMonths.filter((m) => m.source === 'none');
+  const monthTotals = (m: HsnMonth) => m.totals ?? m.lines.reduce((t, l) => ({
+    txval: t.txval + l.txval, iamt: t.iamt + l.iamt, camt: t.camt + l.camt, samt: t.samt + l.samt, csamt: t.csamt + l.csamt,
+  }), { txval: 0, iamt: 0, camt: 0, samt: 0, csamt: 0 });
+  const coverageRows: (string | number)[][] = sortedMonths.map((m) => {
+    const t = monthTotals(m);
+    const status = m.lines.length ? 'HSN-wise' : m.source === 'summary' ? 'Totals only' : 'Missing';
+    return [formatMonthLabel(m.period), HSN_SOURCE_LABEL[m.source], status, m.lines.length, t.txval, t.iamt, t.camt, t.samt, t.csamt, t.iamt + t.camt + t.samt + t.csamt];
+  });
+  const covTot = sortedMonths.reduce((acc, m) => { const t = monthTotals(m); return { txval: acc.txval + t.txval, tax: acc.tax + t.iamt + t.camt + t.samt + t.csamt, i: acc.i + t.iamt, c: acc.c + t.camt, s: acc.s + t.samt, cess: acc.cess + t.csamt }; }, { txval: 0, tax: 0, i: 0, c: 0, s: 0, cess: 0 });
+  coverageRows.push(['TOTAL', '', `${withLines.length} of ${sortedMonths.length} HSN-wise`, withLines.reduce((n, m) => n + m.lines.length, 0), covTot.txval, covTot.i, covTot.c, covTot.s, covTot.cess, covTot.tax]);
+
+  const notes: string[] = [];
+  if (missing.length) notes.push(`No GSTR-1 data held for ${describeMonths(missing.map((m) => m.period))} (${missing.length} month${missing.length === 1 ? '' : 's'}): pull the filed GSTR-1 with the Pull button, or import a draft on GSTR-1 Data.`);
+  if (totalsOnly.length) notes.push(`${describeMonths(totalsOnly.map((m) => m.period))}: only the portal's GSTR-1 summary is held, so Table 12's totals are shown here but not its HSN-wise lines. Pull the filed GSTR-1 to add them to the HSN-wise table.`);
+  if (sortedMonths.some((m) => m.source === 'draft' || m.source === 'uploaded')) notes.push('Months marked Books draft or As uploaded by this app are this app\'s own GSTR-1, not the copy filed on the portal. Pull the filed GSTR-1 before keying GSTR-9 Table 17.');
+
+  // Month-wise detail: every Table 12 line as read, for tracing a Table 17 figure back.
+  const detailRows: (string | number)[][] = sortedMonths.flatMap((m) => m.lines
+    .slice().sort((a, b) => a.hsn.localeCompare(b.hsn) || a.rt - b.rt)
+    .map((l) => [formatMonthLabel(m.period), HSN_SOURCE_LABEL[m.source], l.supply || '—', l.hsn || '—', l.desc, l.uqc || '—', l.qty, `${l.rt}%`, l.txval, l.iamt, l.camt, l.samt, l.csamt, l.iamt + l.camt + l.samt + l.csamt]));
+
+  const sources = [...new Set(withLines.map((m) => m.source))];
+  const periodText = several ? `${formatMonthLabel(periods[0])} to ${formatMonthLabel(periods[periods.length - 1])}` : formatMonthLabel(periods[0] ?? '');
+  const sourceText = sources.length === 1 && sources[0] === 'filed' && withLines.length === sortedMonths.length
+    ? sourceNote('filed')
+    : withLines.length === 0 ? 'No HSN-wise data held for the period' : `Source: ${sources.map((s) => HSN_SOURCE_LABEL[s]).join(', ')}`;
+  const fileMonth = several ? `${periods[0].replace('/', '-')}_to_${periods[periods.length - 1].replace('/', '-')}` : (periods[0] ?? '').replace('/', '-');
 
   return {
-    title: 'GSTR-1 HSN Summary Report',
-    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${formatMonthLabel(month)}   |   ${sourceNote(source)}`,
-    headers: ['HSN/SAC', 'Description', 'UQC', 'Qty', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
+    title: several ? 'GSTR-1 HSN Summary (for GSTR-9 Table 17)' : 'GSTR-1 HSN Summary Report',
+    subtitle: `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${periodText}   |   ${sourceText}`,
+    headers: HSN_HEADERS,
     rows,
-    fileNameBase: `GSTR1_HSN_Summary_${fileSafe(client.name)}_${month.replace('/', '-')}`,
+    sheetName: several ? 'HSN-wise (Table 17)' : 'HSN Summary',
+    fileNameBase: `GSTR1_HSN_Summary_${fileSafe(client.name)}_${fileMonth}`,
     columnWidths: [12, 30, 8, 10, 8, 16, 14, 14, 14, 12, 14],
+    kpis: [
+      { label: 'Months with HSN data', value: `${withLines.length} of ${sortedMonths.length}`, tone: withLines.length === sortedMonths.length ? 'good' : withLines.length ? 'warn' : 'bad' },
+      { label: 'HSN lines', value: aggs.length },
+      { label: 'Taxable value', value: tot.txval },
+      { label: 'Total tax', value: tot.iamt + tot.camt + tot.samt + tot.csamt },
+    ],
+    summary: {
+      title: 'Coverage by month',
+      headers: ['Month', 'Source', 'Status', 'HSN Lines', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
+      rows: coverageRows,
+      columnWidths: [12, 26, 14, 10, 16, 14, 14, 14, 12, 14],
+      notes,
+      rowTones: [...sortedMonths.map((m) => (m.lines.length ? (m.source === 'filed' ? 'good' : 'info') : m.source === 'summary' ? 'warn' : 'bad') as RowTone), null],
+      toneColumn: 2,
+    },
+    extraSheets: detailRows.length ? [{
+      name: 'Month-wise lines',
+      title: 'Table 12 lines by month, as read',
+      headers: ['Month', 'Source', 'Supply', 'HSN/SAC', 'Description', 'UQC', 'Qty', 'Rate', 'Taxable Value', 'IGST', 'CGST', 'SGST', 'Cess', 'Total Tax'],
+      rows: detailRows,
+      columnWidths: [10, 22, 8, 12, 28, 8, 10, 8, 16, 14, 14, 14, 12, 14],
+      pdf: false,
+    }] : undefined,
+    coverage: {
+      periods: sortedMonths.map((m) => ({
+        period: m.period,
+        label: formatMonthLabel(m.period),
+        status: m.lines.length ? 'ok' : m.source === 'summary' ? 'partial' : 'missing',
+        source: HSN_SOURCE_LABEL[m.source],
+      })),
+      action: notes.join(' '),
+    },
+    hsnMonths: sortedMonths,
+    hsnClient: client,
+    // Several months add up by HSN (Table 17 is the year's), rather than one band per month.
+    merge: (tables: ReportTable[]) => {
+      const all = tables.flatMap((t) => (t as HsnReportTable).hsnMonths ?? []);
+      const c = tables.map((t) => (t as HsnReportTable).hsnClient).find(Boolean) ?? client;
+      return hsnTableOf(c, all);
+    },
   };
+};
+
+export const buildGstr1HsnSummaryReport = async (clientId: string, month: string): Promise<ReportTable> => {
+  const { client, month: m } = await loadHsnMonth(clientId, month);
+  return hsnTableOf(client, [m]);
 };
 
 // ─────────────────── REPORT 4: Customer Wise ──────────────────────────────

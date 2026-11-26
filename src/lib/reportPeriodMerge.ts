@@ -152,6 +152,41 @@ const namingEveryYear = (merged: ReportTable, tables: ReportTable[], years: stri
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthLabel = (period: string): string | null => {
+  const m = /^(\d{2})\/(\d{4})$/.exec(period.trim());
+  return m && +m[1] >= 1 && +m[1] <= 12 ? `${MONTHS_SHORT[+m[1] - 1]} ${m[2]}` : null;
+};
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Every period failed: one line per distinct reason, naming its periods once
+ * ("… for X in Apr 2025, May 2025 … Use Pull …"), not the same paragraph
+ * twelve times over. A reason is the same when it differs only by its period
+ * (written MM/YYYY or "Apr 2025"). Lines are separated by a newline.
+ */
+export const groupFailures = (periods: string[], messages: string[]): string => {
+  const groups = new Map<string, string[]>();
+  messages.forEach((msg, i) => {
+    const p = periods[i];
+    const label = monthLabel(p);
+    let key = msg;
+    if (label) key = key.replace(new RegExp(escapeRe(label), 'g'), '{period}');
+    if (p) key = key.replace(new RegExp(escapeRe(p), 'g'), '{period}');
+    const list = groups.get(key) ?? [];
+    list.push(p);
+    groups.set(key, list);
+  });
+  return [...groups.entries()].map(([key, ps]) => {
+    const names = ps.map((p) => monthLabel(p) ?? p);
+    if (!key.includes('{period}')) return `${names.join(', ')}: ${key}`;
+    const joined = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+    // The first mention names every period; later mentions read "these months".
+    let first = true;
+    return key.replace(/\{period\}/g, () => (first ? ((first = false), joined) : (names.length > 1 ? 'these periods' : joined)));
+  }).join('\n');
+};
+
 /**
  * A period that could not be built, as a block of the merge: its heading and,
  * for a report with a summary, the reason in the notes (the document list stays
@@ -204,7 +239,7 @@ export const buildForPeriods = async (
   const settled = await Promise.allSettled(runs.map((r) => report.build({ month: r.month, clientId })));
   const built = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
   if (!built.length) {
-    throw new Error(settled.map((s, i) => `${list[i]}: ${messageOf((s as PromiseRejectedResult).reason)}`).join('  '));
+    throw new Error(groupFailures(list, settled.map((s) => messageOf((s as PromiseRejectedResult).reason))));
   }
   // A failed period's block takes the merge's own shape (its "Not built" line as wide as the rest).
   const template = templateOf(built);
