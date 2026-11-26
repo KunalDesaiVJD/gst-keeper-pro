@@ -195,7 +195,7 @@ BEGIN
             AND a.attname = CASE WHEN c.relname = 'clients' THEN 'id' ELSE 'client_id' END)
   LOOP
     v_pred := format(
-      '(%1$I IS NULL OR (SELECT public.gst_actor_client_scope()) IS NULL OR %1$I = ANY ((SELECT public.gst_actor_client_scope())))',
+      '(%1$I IS NULL OR (SELECT public.gst_actor_client_scope()) IS NULL OR %1$I = ANY ((SELECT public.gst_actor_client_scope())::uuid[]))',
       r.col);
     EXECUTE format('DROP POLICY IF EXISTS staff_client_scope_guard ON public.%I', r.relname);
     EXECUTE format('CREATE POLICY staff_client_scope_guard ON public.%I AS RESTRICTIVE FOR ALL TO public USING %s WITH CHECK %s',
