@@ -10274,6 +10274,78 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_client_allotment_log: {
+        Row: {
+          action: string
+          actor_id: string | null
+          at: string
+          client_id: string | null
+          client_name: string | null
+          id: number
+          user_id: string
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          at?: string
+          client_id?: string | null
+          client_name?: string | null
+          id?: number
+          user_id: string
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          at?: string
+          client_id?: string | null
+          client_name?: string | null
+          id?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      staff_client_allotments: {
+        Row: {
+          allotted_at: string
+          allotted_by: string | null
+          client_id: string
+          user_id: string
+        }
+        Insert: {
+          allotted_at?: string
+          allotted_by?: string | null
+          client_id: string
+          user_id: string
+        }
+        Update: {
+          allotted_at?: string
+          allotted_by?: string | null
+          client_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      staff_client_scope: {
+        Row: {
+          restricted: boolean
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+        }
+        Insert: {
+          restricted?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+        }
+        Update: {
+          restricted?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       staff_user_extra_permissions: {
         Row: {
           granted_at: string
@@ -12909,6 +12981,10 @@ export type Database = {
       staff_add_level: {
         Args: { p_actor_id: string; p_actor_password?: string | null; p_level: string; p_target_user_id: string }
         Returns: boolean
+      }
+      staff_set_client_allotment: {
+        Args: { p_actor_id: string; p_client_ids: string[]; p_restricted: boolean; p_user_id: string }
+        Returns: Json
       }
       staff_set_user_extras: {
         Args: { p_actor_id: string; p_keys: string[]; p_user_id: string }

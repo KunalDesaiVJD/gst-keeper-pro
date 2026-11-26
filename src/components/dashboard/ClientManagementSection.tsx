@@ -34,7 +34,7 @@ interface Client {
 
 const ClientManagementSection: React.FC = () => {
   const navigate = useNavigate();
-  const { canAddEditClients, canDeleteClients } = useAuth();
+  const { canAddEditClients, canAddClients, canDeleteClients } = useAuth();
   const confirm = useConfirm();
   const [searchTerm, setSearchTerm] = useState('');
   const [clients, setClients] = useState<Client[]>([]);
@@ -107,7 +107,7 @@ const ClientManagementSection: React.FC = () => {
       }
       description={`${clients.length} clients in database`}
       actions={
-        canAddEditClients() && (
+        canAddClients() && (
           <Button onClick={() => navigate('/add-client')} size="sm" className={WS_BTN}>
             <Plus className="h-3.5 w-3.5" />
             Add Client

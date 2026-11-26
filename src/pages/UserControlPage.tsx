@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  BriefcaseBusiness, History, ListChecks, Loader2, Plus, PlusCircle, Save, Shield, Trash2, Users,
+  BriefcaseBusiness, Building2, History, ListChecks, Loader2, Plus, PlusCircle, Save, Shield, Trash2, Users,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
@@ -28,6 +28,7 @@ import {
   PERMISSIONS, PERMISSION_GROUPS, PERMISSION_LABEL, ROLE_ONLY_CONTROLS, permissionsInGroup,
 } from '@/lib/permissionCatalog';
 import { setStaffLevel, STAFF_LEVEL_LABEL, type StaffLevel } from '@/lib/staffLevels';
+import ClientAccessTab from '@/components/userControl/ClientAccessTab';
 
 /**
  * User Control — roles plus extra permissions.
@@ -69,7 +70,7 @@ interface LogRow {
   actor_id: string | null;
 }
 
-type Tab = 'people' | 'positions' | 'catalog' | 'log';
+type Tab = 'people' | 'positions' | 'clients' | 'catalog' | 'log';
 
 const ROLE_LABEL: Record<Staff['role'], string> = { gst_manager: 'GST Manager', employee: 'Employee' };
 const NONE = '__none__';
@@ -362,7 +363,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         compact
         embedded={embedded}
         title="User Control"
-        subtitle="Each employee gets a role, plus any extra permissions you give them"
+        subtitle="Each employee gets a role, any extra permissions you give them, and, if you choose, only the clients allotted to them"
         icon={<Shield />}
       />
 
@@ -378,6 +379,7 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
         {([
           ['people', 'People', <Users key="i" className="h-4 w-4" />],
           ['positions', 'Roles', <BriefcaseBusiness key="i" className="h-4 w-4" />],
+          ['clients', 'Client access', <Building2 key="i" className="h-4 w-4" />],
           ['catalog', 'Permission list', <ListChecks key="i" className="h-4 w-4" />],
           ['log', 'Change log', <History key="i" className="h-4 w-4" />],
         ] as const).map(([k, label, icon]) => (
@@ -614,6 +616,12 @@ const UserControlPage: React.FC<UserControlPageProps> = ({ embedded = false }) =
             )}
           </SectionCard>
         </div>
+      ) : tab === 'clients' ? (
+        <ClientAccessTab
+          people={employees}
+          actorId={user?.id || ''}
+          nameOf={(id) => (id ? nameOf.get(id) || (id === user?.id ? 'You' : 'Superadmin') : '—')}
+        />
       ) : tab === 'catalog' ? (
         <SectionCard
           title="Permission list"

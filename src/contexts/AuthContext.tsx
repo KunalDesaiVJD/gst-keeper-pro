@@ -157,6 +157,15 @@ interface AuthContextType {
   /** Accept a BU agreement value without the client's confirmation. */
   canOverrideBuAgreement: () => boolean;
   hasPermission: (permission: keyof UserPermissions) => boolean;
+  /**
+   * The clients this sign-in may reach, when a GST Manager limited the employee
+   * to their allotted clients (Settings → User Control → Client access); null =
+   * every client. The database holds the limit itself (policy
+   * staff_client_scope_guard, 20261125140000); this only lets screens say so.
+   */
+  clientScope: { clientIds: string[] } | null;
+  /** Add a new client: needs Add / edit clients, and an employee limited to allotted clients cannot. */
+  canAddClients: () => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -619,6 +628,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return hasPermission('add_edit_clients');
   }, [user, hasPermission]);
 
+  // The allotted-clients limit of an employee's sign-in (null = every client).
+  const [clientScope, setClientScope] = useState<{ clientIds: string[] } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setClientScope(null);
+    if (!user || user.role !== 'employee') return;
+    (async () => {
+      const { data: scope, error } = await supabase
+        .from('staff_client_scope').select('restricted').eq('user_id', user.id).maybeSingle();
+      if (!live || error || !scope?.restricted) return;
+      const { data: rows } = await supabase
+        .from('staff_client_allotments').select('client_id').eq('user_id', user.id);
+      if (live) setClientScope({ clientIds: (rows || []).map((r) => r.client_id) });
+    })();
+    return () => { live = false; };
+  }, [user]);
+
+  // A limited employee's new client would sit outside their list, so the database refuses it.
+  const canAddClients = useCallback((): boolean => canAddEditClients() && !clientScope, [canAddEditClients, clientScope]);
+
   const canDeleteClients = useCallback((): boolean => {
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
@@ -872,6 +901,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canChangeStaffLevel,
         canOverrideBuAgreement,
         hasPermission,
+        clientScope,
+        canAddClients,
       }}
     >
       {children}

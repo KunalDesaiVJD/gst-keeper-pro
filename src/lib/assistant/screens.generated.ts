@@ -1925,7 +1925,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "staffOnly": false,
   "redirectsTo": null,
   "title": "User Control",
-  "subtitle": "Each employee gets a role, plus any extra permissions you give them",
+  "subtitle": "Each employee gets a role, any extra permissions you give them, and, if you choose, only the clients allotted to them",
   "tabs": [],
   "buttons": [
    "Add",
@@ -1974,7 +1974,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Add",
      "Delete",
      "Save",
-     "Cancel"
+     "Cancel",
+     "Untick"
     ]
    },
    {
