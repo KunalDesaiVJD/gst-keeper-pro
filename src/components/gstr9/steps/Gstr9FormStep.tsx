@@ -15,7 +15,7 @@ import { Table15, Table16, Table17, Table18, Table19 } from '../gstr9form/PartVI
 import { StepLink } from '../gstr9form/shared';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 import { Badge } from '@/components/gstr9/badge';
-import type { VarianceTable } from '@/lib/gstr9/variance';
+import { VARIANCE_TABLES, type VarianceTable } from '@/lib/gstr9/variance';
 import { VarianceCard } from '../gstr9form/VarianceCard';
 import { useVariance } from '../gstr9form/useVariance';
 
@@ -142,7 +142,6 @@ const Gstr9FormStep: React.FC = () => {
   return (
     <div className="space-y-3">
       <OpenDifferences step="gstr9" />
-      <VarianceCard />
 
       {!portalFetched && (
         <Note tone="warn">
@@ -188,7 +187,9 @@ const Gstr9FormStep: React.FC = () => {
         {TABLES.map((t) => {
           const C = t.component;
           return (
-            <TabsContent key={t.key} value={t.key} className="mt-0">
+            <TabsContent key={t.key} value={t.key} className="mt-0 space-y-2">
+              {/* Figures of this table that differ from the system-computed GSTR-9: folded, open on click. */}
+              {(VARIANCE_TABLES as readonly string[]).includes(t.key) && <VarianceCard table={t.key as VarianceTable} />}
               <C />
             </TabsContent>
           );
