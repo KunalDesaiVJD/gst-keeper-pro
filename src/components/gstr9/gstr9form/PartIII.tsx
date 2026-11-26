@@ -1,18 +1,19 @@
 import React from 'react';
-import type { Tax, TaxIn } from '@/lib/gstr9/types';
-import { zIn } from '@/lib/gstr9/defaults';
+import type { Tax } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { type MatrixHead, MatrixRow, MatrixTable, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { FORM_HEAD_LABELS, FORM_MATRIX_SCROLL, FORM_TAX_HEADS, fyStartYear, isManualPath, TAX_ORDER } from './helpers';
-import { FixedRowDef } from './hooks';
-import { EntryHeading, ResetButton, RowSrc, Src, StepLink, TaxEntryGrid } from './shared';
+import { RowSrc, Src, StepLink } from './shared';
 import { itcTableOf } from '../rcm/rcmShared';
 import {
   dutiesLye,
   dutiesSuspended,
   itc6A1,
   itc8C,
+  itcEntry6,
+  itcEntry8,
+  itcBuilderReversal,
   itcT7,
   itcT7Extra,
   itcWorking,
@@ -22,6 +23,7 @@ import {
   salesCgSold,
   type T7EntryRow,
 } from './sourceTargets';
+import { rule42Final7C, rule43Year7D } from '../figure/targetsReco';
 
 const hasTax = (t: Tax, eps = 0.005) => Math.abs(t.i) > eps || Math.abs(t.c) > eps || Math.abs(t.s) > eps || Math.abs(t.x) > eps;
 
@@ -33,12 +35,19 @@ const headsText = (t: Tax): string =>
 
 const Dash = () => <span className="text-muted-foreground">—</span>;
 
+/** Builders on the no-ITC scheme: the same note as ITC reco (workings.ctx.noItcBuilder). */
+const NoItcBuilderNote: React.FC = () => {
+  const { workings } = useWorkspace();
+  if (!workings.ctx.noItcBuilder) return null;
+  return <Note>This client is a builder on the no-ITC scheme — nil ITC is expected, and ITC differences are for information only.</Note>;
+};
+
 // ---------------------------------------------------------------------------
 // Table 6 — ITC availed
 // ---------------------------------------------------------------------------
 
 export const Table6: React.FC = () => {
-  const { workings, docs, update, canEditSource } = useWorkspace();
+  const { workings, docs } = useWorkspace();
   const g = workings.g9;
   const t6 = g.t6;
   const meta = docs.portal.gstr9Meta;
@@ -55,7 +64,7 @@ export const Table6: React.FC = () => {
   const computed = <Src kind="computed" />;
   const unused = <Src kind="unused" title="Nil in this working — RCM ITC is reported as input services" />;
   const rcmBooks = <RowSrc step="rcm" src={<Src kind="books" title="RCM step — Part B categories set to this table and column" />} />;
-  const typed = <Src kind="typed" title="Typed below" />;
+  const typed = <Src kind="typed" title="Typed in ITC reco" />;
 
   // Figure links (sourceTargets.ts): 6C / 6D / 6F open RCM › Where RCM flows, whose 6D / 6F lines show only while an expense is set to them.
   const rcmTableShown = (t: '6C' | '6D' | '6F') => t === '6C' || docs.rcm.categories.some((c) => itcTableOf(c.itcTable) === t);
@@ -107,7 +116,7 @@ export const Table6: React.FC = () => {
       code: '6G',
       label: 'Input Tax credit received from ISD',
       value: t6.G,
-      link: docs.gstr9.t6G == null ? (h) => portalItc('t6G', h) : undefined,
+      link: docs.gstr9.t6G == null ? (h) => portalItc('t6G', h) : itcEntry6('6G'),
       note:
         docs.gstr9.t6G == null ? (
           <RowSrc step="portal" src={<Src kind="portal" meta={meta} manual={isManualPath(manual, 'gstr9.t6G')} />} />
@@ -125,36 +134,22 @@ export const Table6: React.FC = () => {
     },
     { key: '6I', code: '6I', label: 'Sub-total (B to H above)', value: t6.I, total: true, note: computed },
     { key: '6J', code: '6J', label: 'Difference (I − A2 above)', value: t6.J, signed: true, diffKey: 'itc.6J', note: computed, link: (h) => itcWorking('6J', h) },
-    { key: '6K', code: '6K', label: 'Transition Credit through TRAN-1 (including revisions if any)', value: t6.K, note: typed },
-    { key: '6L', code: '6L', label: 'Transition Credit through TRAN-2', value: t6.L, note: typed },
-    { key: '6M', code: '6M', label: 'ITC availed through ITC-01, ITC-02 and ITC-02A (other than GSTR-3B and TRAN forms)', value: t6.M, note: typed },
+    { key: '6K', code: '6K', label: 'Transition Credit through TRAN-1 (including revisions if any)', value: t6.K, note: typed, link: itcEntry6('6K') },
+    { key: '6L', code: '6L', label: 'Transition Credit through TRAN-2', value: t6.L, note: typed, link: itcEntry6('6L') },
+    { key: '6M', code: '6M', label: 'ITC availed through ITC-01, ITC-02 and ITC-02A (other than GSTR-3B and TRAN forms)', value: t6.M, note: typed, link: itcEntry6('6M') },
     { key: '6N', code: '6N', label: 'Sub-total (K to M above)', value: t6.N, total: true, note: computed },
     { key: '6O', code: '6O', label: 'Total ITC availed (I + N) above', value: t6.O, total: true, note: computed, link: (h) => itcWorking('total6O', h) },
   ];
 
-  const defs: FixedRowDef<TaxIn | null>[] = [
-    {
-      id: '6G',
-      code: '6G',
-      label: 'ITC received from ISD',
-      title: canEditSource ? 'Leave blank to use the portal 6G; type to override it' : 'The portal 6G — locked; only a superadmin can type over it',
-      read: (d) => d.t6G,
-      write: (d, v) => ({ ...d, t6G: v }),
-      computed: docs.portal.gstr9.t6G,
-      locked: !canEditSource,
-    },
-    { id: '6K', code: '6K', label: 'TRAN-1 credit', title: 'Transition Credit through TRAN-1 (including revisions if any)', read: (d) => d.t6K, write: (d, v) => ({ ...d, t6K: v ?? zIn() }) },
-    { id: '6L', code: '6L', label: 'TRAN-2 credit', title: 'Transition Credit through TRAN-2', read: (d) => d.t6L, write: (d, v) => ({ ...d, t6L: v ?? zIn() }) },
-    { id: '6M', code: '6M', label: 'ITC-01 / ITC-02 / ITC-02A', title: 'ITC availed through ITC-01, ITC-02 and ITC-02A', read: (d) => d.t6M, write: (d, v) => ({ ...d, t6M: v ?? zIn() }) },
-  ];
 
   return (
     <SectionCard
       title="6 · Details of ITC availed during the financial year"
-      description="6A from the portal, 6B–6H from the ITC working. Only 6G (override), 6K, 6L and 6M are typed here."
+      description="6A from the portal, 6B–6H from the ITC working, 6G (override), 6K, 6L and 6M from ITC reco › Table 6 entries. Nothing is typed here."
       excelRef="GSTR-9 rows 40–64 · GSTR 9-INPUT"
       actions={<StepLink step="itc">ITC reco</StepLink>}
     >
+      <NoItcBuilderNote />
       <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 6" className={FORM_MATRIX_SCROLL} />
       <p className="text-[11px] text-muted-foreground">
         6B input services is the sheet&apos;s balancing figure, so 6I ties to 6A2. Books ITC on the same ledgers:{' '}
@@ -163,16 +158,9 @@ export const Table6: React.FC = () => {
       <Note tone="position">
         6A1 defaults to the Last Year Effect (Duties &amp; Taxes), not a typed figure; RCM ITC goes to 6C input services unless an RCM category is set to 6D or 6F, to inputs or capital goods, or to No ITC (then it is not in Table 6).
       </Note>
-      <EntryHeading
-        actions={
-          <ResetButton show={docs.gstr9.t6G != null} onClick={() => update('gstr9', (d) => ({ ...d, t6G: null }))}>
-            Use portal 6G
-          </ResetButton>
-        }
-      >
-        Typed rows
-      </EntryHeading>
-      <TaxEntryGrid defs={defs} label="GSTR-9 Table 6 typed rows" />
+      <p className="text-[11px] text-muted-foreground">
+        6G (override), 6K, 6L and 6M are typed on <StepLink step="itc" tab={{ itctab: 'working' }}>ITC reco › Table 6 entries</StepLink>; this table only shows them.
+      </p>
     </SectionCard>
   );
 };
@@ -193,14 +181,64 @@ export const Table7: React.FC = () => {
   const t7Link = (row: T7EntryRow) => (h: MatrixHead) => itcT7(row, h);
   const link7H = (id: string) =>
     id === 'h1' ? (h: MatrixHead) => dutiesSuspended('rev', h) : id === 'cg186' ? salesCgSold : (h: MatrixHead) => itcT7Extra(id, h);
+  const note7H = (id: string, computed: boolean) =>
+    id === 'cg186' ? (
+      <Src kind="books" title="The s.18(6) shortfall on capital goods sold (Sales › Capital goods sold; the working is Annexure-5)">Capital goods sold · Annexure-5</Src>
+    ) : computed ? (
+      <Src kind="books" title="Suspended ITC reversed — Duties & Taxes (Input), incl. 180-day">Suspended ITC · Duties &amp; Taxes</Src>
+    ) : (
+      typed
+    );
+
+  // 7C / 7D: their true source (engine: the Rule 42/43 working while switched on — or a superadmin's figure typed over
+  // it — else the ITC reco Table 7 entry; an approved builder ITC reversal adds to either).
+  const r42On = workings.r42.enabled;
+  const ruleSrc = (rule: '42' | '43') => {
+    const override = rule === '42' ? workings.r42.t7CSource === 'override' : workings.r43.t7DSource === 'override';
+    const builder = hasTax(rule === '42' ? workings.builderRev.r42 : workings.builderRev.r43);
+    const workingTarget = rule === '42' ? rule42Final7C : rule43Year7D;
+    if (r42On && override) {
+      return {
+        note: <Src kind="typed" title={`7${rule === '42' ? 'C' : 'D'} typed over the Rule ${rule} working by a superadmin (ITC reco › Rule 42/43)`}>Superadmin override</Src>,
+        link: workingTarget,
+      };
+    }
+    if (r42On) {
+      return {
+        note: (
+          <Src kind="books" title={`Rule ${rule} working (ITC reco › Rule 42/43)${builder ? ', plus the approved Builder › ITC Reversal working posted this year' : ''}`}>
+            Rule {rule} working{builder ? ' + builder' : ''}
+          </Src>
+        ),
+        link: workingTarget,
+      };
+    }
+    const typedAmt = docs.gstr9.t7[rule === '42' ? 'r42' : 'r43'];
+    const typedSome = !!typedAmt && TAX_ORDER.some((h) => Math.abs(Number(typedAmt[h]) || 0) > 0.005);
+    if (builder && !typedSome) {
+      return {
+        note: <Src kind="books" title="The approved Builder › ITC Reversal working posted in this year's GSTR-3B (shown on ITC reco › Rule 42/43)">Builder ITC reversal</Src>,
+        link: itcBuilderReversal,
+      };
+    }
+    if (builder) {
+      return {
+        note: <Src kind="typed" title="Typed in ITC reco › Table 7, plus the approved Builder › ITC Reversal working posted this year">Typed + builder</Src>,
+        link: t7Link(rule === '42' ? 'r42' : 'r43'),
+      };
+    }
+    return { note: typed, link: t7Link(rule === '42' ? 'r42' : 'r43') };
+  };
+  const src7C = ruleSrc('42');
+  const src7D = ruleSrc('43');
 
   const rows: MatrixRow[] = [
     { key: '7A', code: '7A', label: 'As per Rule 37', value: t7.A, note: typed, link: t7Link('r37') },
     { key: '7A1', code: '7A1', label: 'As per Rule 37A', value: t7.A1, note: typed, link: t7Link('r37A') },
     { key: '7A2', code: '7A2', label: 'As per Rule 38', value: t7.A2, note: typed, link: t7Link('r38') },
     { key: '7B', code: '7B', label: 'As per Rule 39', value: t7.B, note: typed, link: t7Link('r39') },
-    { key: '7C', code: '7C', label: 'As per Rule 42', value: t7.C, note: typed, link: t7Link('r42') },
-    { key: '7D', code: '7D', label: 'As per Rule 43', value: t7.D, note: typed, link: t7Link('r43') },
+    { key: '7C', code: '7C', label: 'As per Rule 42', value: t7.C, note: src7C.note, link: src7C.link },
+    { key: '7D', code: '7D', label: 'As per Rule 43', value: t7.D, note: src7D.note, link: src7D.link },
     { key: '7E', code: '7E', label: 'As per section 17(5)', value: t7.E, note: s17, link: t7Link('s17_5') },
     { key: '7F', code: '7F', label: 'Reversal of TRAN-I credit', value: t7.F, note: typed, link: t7Link('tran1') },
     { key: '7G', code: '7G', label: 'Reversal of TRAN-II credit', value: t7.G, note: typed, link: t7Link('tran2') },
@@ -212,7 +250,7 @@ export const Table7: React.FC = () => {
       indent: true,
       value: h.tax,
       link: link7H(h.id),
-      note: h.computed ? <Src kind="books" title="Suspended ITC reversed — Duties & Taxes (Input), incl. 180-day" /> : typed,
+      note: note7H(h.id, h.computed),
     })),
     { key: '7I', code: '7I', label: 'Total ITC Reversed (Sum of A to H above)', value: g.t7I, total: true, note: <Src kind="computed" />, link: (h) => itcT7Extra('footer:7I', h) },
     { key: '7J', code: '7J', label: 'Net ITC Available for Utilization (6O − 7I)', value: g.t7J, total: true, note: <Src kind="computed" />, link: (h) => itcT7Extra('footer:7J', h) },
@@ -221,10 +259,11 @@ export const Table7: React.FC = () => {
   return (
     <SectionCard
       title="7 · Details of ITC reversed and ineligible ITC for the financial year"
-      description="Read-only here — Table 7 is entered in the ITC reco step."
+      description="Read-only here — Table 7 is entered or worked in the ITC reco step (7C / 7D on its Rule 42/43 tab while that working is on); 7H's capital goods line comes from Sales › Capital goods sold."
       excelRef="GSTR-9 rows 66–78 · GSTR 9-INPUT rows 20–23"
       actions={<StepLink step="itc">Edit in ITC reco</StepLink>}
     >
+      <NoItcBuilderNote />
       <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 7" className={FORM_MATRIX_SCROLL} />
       <Note tone="position">
         Suspended-ITC reversals (incl. 180-day) are reported as a 7H other reversal rather than 7A (Rule 37), as in the firm&apos;s sheet.
@@ -244,7 +283,7 @@ export const Table8: React.FC = () => {
   const meta = docs.portal.gstr9Meta;
   const manual = docs.portal.manual;
   const twoB = fyStartYear(financialYear) >= 2023;
-  const typed = <Src kind="typed" title="Typed below" />;
+  const typed = <Src kind="typed" title="Typed in ITC reco" />;
   const computed = <Src kind="computed" />;
   const igstOnly = { c: <Dash />, s: <Dash /> };
 
@@ -264,27 +303,28 @@ export const Table8: React.FC = () => {
       label:
         'ITC on inward supplies (other than imports and inward supplies liable to reverse charge but includes services received from SEZs) received during the financial year but availed in the next financial year up to the specified period',
       value: t8.C,
-      link: docs.gstr9.t8C == null ? itc8C : undefined,
+      link: docs.gstr9.t8C == null ? itc8C : itcEntry8('8C'),
       note:
         docs.gstr9.t8C == null ? (
-          <RowSrc step="itc" src={<Src kind="computed" title="Not typed: Table 13 (ITC of this year availed next year). Type 8C below to leave out imports and RCM." />} />
+          <RowSrc step="itc" src={<Src kind="computed" title="Not typed: Table 13 (ITC of this year availed next year). Type 8C on ITC reco › Table 8 entries to leave out imports and RCM." />} />
         ) : (
           typed
         ),
     },
     { key: '8D', code: '8D', label: 'Difference [A − (B + C)]', value: t8.D, signed: true, total: true, diffKey: 'g9.8D', note: computed },
-    { key: '8E', code: '8E', label: 'ITC available but not availed', value: t8.E, note: typed },
-    { key: '8F', code: '8F', label: 'ITC available but ineligible', value: t8.F, note: typed },
+    { key: '8E', code: '8E', label: 'ITC available but not availed', value: t8.E, note: typed, link: itcEntry8('8E') },
+    { key: '8F', code: '8F', label: 'ITC available but ineligible', value: t8.F, note: typed, link: itcEntry8('8F') },
     {
       key: '8G',
       code: '8G',
       label: 'IGST paid on import of goods (including supplies from SEZ)',
       value: t8.G,
       cells: igstOnly,
-      note: docs.gstr9.t8G == null ? <Src kind="computed" title="Not typed: 8H + 8H1 (IGST on imports availed this year and next year). Type the bills-of-entry figure below." /> : typed,
+      note: docs.gstr9.t8G == null ? <Src kind="computed" title="Not typed: 8H + 8H1 (IGST on imports availed this year and next year). Type the bills-of-entry figure on ITC reco › Table 8 entries." /> : typed,
+      link: itcEntry8('8G'),
     },
     { key: '8H', code: '8H', label: 'IGST credit availed on import of goods (as per 6(E) above)', value: t8.H, cells: igstOnly, note: computed, link: (h) => itcWorking('imp', h) },
-    { key: '8H1', code: '8H1', label: 'IGST credit availed on import of goods in next financial year', value: t8.H1, cells: igstOnly, note: typed },
+    { key: '8H1', code: '8H1', label: 'IGST credit availed on import of goods in next financial year', value: t8.H1, cells: igstOnly, note: typed, link: itcEntry8('8H1') },
     { key: '8I', code: '8I', label: 'Difference (G − H − H1)', value: t8.I, cells: igstOnly, signed: true, note: computed },
     { key: '8J', code: '8J', label: 'ITC available but not availed on import of goods (equal to I)', value: t8.J, cells: igstOnly, note: computed },
     { key: '8K', code: '8K', label: 'Total ITC to be lapsed in current financial year (E + F + J)', value: t8.K, total: true, note: computed },
@@ -293,43 +333,11 @@ export const Table8: React.FC = () => {
   const unsplit = g.t8Unsplit;
   const dPositive = TAX_ORDER.some((h) => t8.D[h] > 0.005);
 
-  const defs: FixedRowDef<TaxIn | null>[] = [
-    {
-      id: '8C',
-      code: '8C',
-      label: 'Availed next FY (excl. imports, RCM)',
-      title: 'ITC of this year availed in the next year, other than imports and reverse charge (SEZ services included). Leave blank to take Table 13.',
-      read: (d) => d.t8C ?? null,
-      write: (d, v) => ({ ...d, t8C: v }),
-      computed: g.t8CDefault,
-    },
-    { id: '8E', code: '8E', label: 'Available, not availed', title: 'ITC available but not availed', read: (d) => d.t8E, write: (d, v) => ({ ...d, t8E: v ?? zIn() }) },
-    { id: '8F', code: '8F', label: 'Available but ineligible', title: 'ITC available but ineligible', read: (d) => d.t8F, write: (d, v) => ({ ...d, t8F: v ?? zIn() }) },
-    {
-      id: '8G',
-      code: '8G',
-      label: 'IGST paid on imports (bills of entry)',
-      title: 'IGST and cess paid on import of goods (incl. from SEZ) as per the bills of entry / ICEGATE. Leave blank to take 8H + 8H1.',
-      read: (d) => d.t8G,
-      write: (d, v) => ({ ...d, t8G: v }),
-      computed: g.t8GDefault,
-      heads: ['i', 'x'],
-    },
-    {
-      id: '8H1',
-      code: '8H1',
-      label: 'Import IGST availed next FY',
-      title: 'IGST credit availed on import of goods in next financial year (Integrated tax and Cess only)',
-      read: (d) => d.t8H1,
-      write: (d, v) => ({ ...d, t8H1: v ?? zIn() }),
-      heads: ['i', 'x'],
-    },
-  ];
 
   return (
     <SectionCard
       title="8 · Other ITC related information"
-      description="8A from the portal; 8C (when not Table 13), 8E, 8F, 8G and 8H1 are typed here — 8E + 8F explain the 8D difference, 8J the IGST on imports not availed."
+      description="8A from the portal; 8C (when not Table 13), 8E, 8F, 8G and 8H1 from ITC reco — 8E + 8F explain the 8D difference, 8J the IGST on imports not availed."
       excelRef="GSTR-9 rows 80–92"
       actions={
         <>
@@ -338,12 +346,14 @@ export const Table8: React.FC = () => {
         </>
       }
     >
+      <NoItcBuilderNote />
       <MatrixTable rows={rows} heads={FORM_TAX_HEADS} headLabels={FORM_HEAD_LABELS} label="GSTR-9 Table 8" className={FORM_MATRIX_SCROLL} />
       <Note tone="position">
         8B = 6(B) + 6(H), as the form reads and the portal computes; the firm&apos;s sheet sums 6(B) only. 8C is Table 13 unless typed (type it to leave out imports and RCM); the sheet took Table 13 − Table 12, which nets a reversal and can go below nil.
       </Note>
-      <EntryHeading>Typed rows</EntryHeading>
-      <TaxEntryGrid defs={defs} label="GSTR-9 Table 8 typed rows" />
+      <p className="text-[11px] text-muted-foreground">
+        8C (when not Table 13), 8E, 8F, 8G and 8H1 are typed on <StepLink step="itc" tab={{ itctab: 'next' }}>ITC reco › Tables 8, 12 &amp; 13</StepLink>; this table only shows them.
+      </p>
       {dPositive && (
         <p className={hasTax(unsplit) ? 'rounded bg-warning/15 px-2 py-1 text-xs text-foreground' : 'text-xs text-success-strong'}>
           {hasTax(unsplit) ? `8D not yet explained by 8E + 8F: ${headsText(unsplit)}.` : '8D is fully explained by 8E + 8F.'}

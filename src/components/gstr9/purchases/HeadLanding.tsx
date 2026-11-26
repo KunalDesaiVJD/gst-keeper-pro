@@ -2,14 +2,15 @@ import React, { useMemo } from 'react';
 import { ArrowRight, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { EXPENSE_HEAD_LABEL, EXPENSE_HEAD_ROW, maxAbs, resolveHead, totalTax, type StepKey } from '@/lib/gstr9/engine';
+import { EXPENSE_HEAD_LABEL, EXPENSE_HEAD_ROW, maxAbs, resolveHead, totalTax } from '@/lib/gstr9/engine';
+import { useGoToStep } from '../overview/steps';
 import type { ExpenseHead, ValTax } from '@/lib/gstr9/types';
 import { Money, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { suggestHead } from './purchaseRows';
 import { figAnchor } from '@/lib/gstr9/figureLinks';
 
-/** Accessible label of the head table; figure links (reco/targetsReco.ts) anchor on its rows (expense head, or 'Q.bal'). */
+/** Accessible label of the head table; figure links (figure/targetsReco.ts) anchor on its rows (expense head, or 'Q.bal'). */
 export const HEAD_LANDING_LABEL = 'Ledgers per GSTR-9C expense head';
 
 const HEADS = Object.keys(EXPENSE_HEAD_LABEL) as ExpenseHead[];
@@ -18,7 +19,8 @@ const HEADS = Object.keys(EXPENSE_HEAD_LABEL) as ExpenseHead[];
  * "Where each ledger lands": how many PL-INPUT ledgers feed each GSTR-9C
  * Table 14 row (the firm's GSTR 9C sheet), with the engine's figures.
  */
-export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo }) => {
+export const HeadLanding: React.FC = () => {
+  const onGo = useGoToStep();
   const { docs, workings, update, readOnly } = useWorkspace();
   const rows = docs.purchases.rows;
   const c14 = workings.c14;
@@ -49,7 +51,7 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
   const applySuggestions = () => {
     const map = new Map(suggestions.map((s) => [s.id, s.head]));
     update('purchases', (d) => ({ ...d, rows: d.rows.map((r) => (r.head === null && map.has(r.id) ? { ...r, head: map.get(r.id)! } : r)) }));
-    toast.success(`Tagged ${map.size} expense ledger${map.size === 1 ? '' : 's'} from their names — check them in grid (B).`, {
+    toast.success(`Tagged ${map.size} expense ledger${map.size === 1 ? '' : 's'} from their names — check them below.`, {
       action: {
         label: 'Undo',
         onClick: () =>
@@ -70,8 +72,8 @@ export const HeadLanding: React.FC<{ onGo: (step: StepKey) => void }> = ({ onGo 
               <Wand2 className="mr-1 h-3.5 w-3.5" /> Suggest heads for {suggestions.length} untagged
             </Button>
           )}
-          <Button type="button" variant="ghost" size="sm" onClick={() => onGo('expense')}>
-            9C expense heads <ArrowRight className="ml-1 h-3.5 w-3.5" />
+          <Button type="button" variant="ghost" size="sm" onClick={() => onGo('itc', { itctab: 'table14' })}>
+            ITC reco › 9C Table 14 <ArrowRight className="ml-1 h-3.5 w-3.5" />
           </Button>
         </>
       }

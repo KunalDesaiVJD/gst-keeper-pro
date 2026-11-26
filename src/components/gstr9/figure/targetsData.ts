@@ -115,12 +115,23 @@ export const salesAuditLine = (row: 'total' | 'report' | 'diff'): FigTarget => (
   label: row === 'report' ? 'Sales › Audit report total' : row === 'total' ? 'Sales › Books total (Part A + B)' : 'Sales › Audit report difference',
 });
 
-/** GSTR-9 Table 5 from Part B (sales/Table5Preview.tsx): the rows it shows. */
-const T5_PREVIEW_ROWS = ['A', 'B', 'C', 'C1', 'D', 'E', 'F', 'G', 'H'];
-export const salesT5Books = (code: string): FigTarget | undefined =>
-  T5_PREVIEW_ROWS.includes(code)
-    ? { step: 'sales', tab: { salestab: 't5' }, table: 'GSTR-9 Table 5 (books)', row: code, col: 't', label: `Sales › Table 5${code} from Part B` }
-    : undefined;
+/**
+ * GSTR-9 › Table 5 (gstr9form/PartII.tsx, FormTable "GSTR-9 Table 5" keyed by code, e.g. 5A): the one
+ * place books (Sales Part B, by nature) and the portal's Table 5 are compared (Position C). Without a
+ * code it opens the table.
+ */
+export const gstr9T5Row = (code?: string): FigTarget => ({
+  step: 'gstr9',
+  tab: { gstr9tab: '5' },
+  table: code ? 'GSTR-9 Table 5' : undefined,
+  row: code ? `5${code}` : undefined,
+  col: code ? 't' : undefined,
+  label: code ? `GSTR-9 › Table 5${code} (books vs portal)` : 'GSTR-9 › Table 5 (books vs portal)',
+});
+
+/** A books Table 5 line (A to H, as T5_BOOKS_CODE gives it): its row on GSTR-9 › Table 5, books beside the portal. */
+const T5_BOOKS_ROWS = ['A', 'B', 'C', 'C1', 'D', 'E', 'F', 'G', 'H'];
+export const salesT5Books = (code: string): FigTarget | undefined => (T5_BOOKS_ROWS.includes(code) ? gstr9T5Row(code) : undefined);
 
 /** The books Table 5 row a GSTR-9 Table 5 key is compared with (as Gstr9Section's T5_BOOKS_ROW). */
 export const T5_BOOKS_CODE: Partial<Record<T5Key, string>> = {
@@ -136,6 +147,20 @@ export const salesCgTotal = (col: 'payable' | 'shortfall' | 'disposalValue'): Fi
   col,
   label: 'Sales › Capital goods sold',
 });
+
+/**
+ * The output tax on capital goods sold (the Total row's tax-on-value column):
+ * where the part of Duties & Taxes › Output "As per P&L" from sales outside the
+ * P&L revenue comes from (engine: cg.outTaxOutsidePl, the sales not ticked "In Sales ledgers").
+ */
+export const salesCgOutsidePl: FigTarget = {
+  step: 'sales',
+  tab: { salestab: 'cgsold' },
+  table: 'Capital goods sold',
+  row: 'footer:total',
+  col: 'tv',
+  label: 'Sales › Capital goods sold (output tax outside the P&L)',
+};
 
 /** A typed figure of the builder advance roll-forward (sales/BuilderAdvances.tsx, "FY … figures"). */
 export const builderAdvFigure = (code: '5B' | '5C' | '5H' | '5I'): FigTarget => ({
@@ -199,7 +224,7 @@ export const dutiesLyeRow = (head: Head): FigTarget => ({
 /** 6A1 typed on ITC reco (steps/ItcRecoStep.tsx). */
 export const itcReco6A1 = (head: TaxHead): FigTarget => ({
   step: 'itc',
-  tab: { itctab: 'next' },
+  tab: { itctab: 'working' },
   table: 'GSTR-9 6A1',
   row: 't6A1',
   col: head,

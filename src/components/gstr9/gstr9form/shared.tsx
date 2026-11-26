@@ -71,12 +71,12 @@ export const Src: React.FC<{ kind: SrcKind; meta?: PortalMeta | null; manual?: b
 };
 
 /** A small link that opens another step (keeps the client in the URL). */
-export const StepLink: React.FC<{ step: StepKey; children?: React.ReactNode; className?: string }> = ({ step, children, className }) => {
+export const StepLink: React.FC<{ step: StepKey; tab?: Record<string, string>; children?: React.ReactNode; className?: string }> = ({ step, tab, children, className }) => {
   const go = useGoStep();
   return (
     <button
       type="button"
-      onClick={() => go(step)}
+      onClick={() => go(step, tab)}
       className={cn(
         'inline-flex items-center gap-0.5 whitespace-nowrap rounded text-[11px] font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,

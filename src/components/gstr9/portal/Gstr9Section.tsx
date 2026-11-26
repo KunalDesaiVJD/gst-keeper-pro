@@ -29,14 +29,14 @@ import {
   typedCount,
 } from '@/lib/gstr9/portalImport';
 import { AsFiledReturn, loadGstr9Calc, saveUploadedGstr9Calc } from '@/lib/gstr9/store';
-import type { PortalDoc, PortalMeta, T5Key } from '@/lib/gstr9/types';
+import type { PortalDoc, PortalMeta } from '@/lib/gstr9/types';
 import { MatrixTable, Money, Note, SectionCard, SourceChip } from '../ui';
 import { StepTab, StepTabsList } from '../reco/StepTabs';
 import { useWorkspace } from '../WorkspaceContext';
 import { ImportPreviewDialog } from './ImportPreviewDialog';
 import { PortalFieldCol, PortalFieldGrid, PortalFieldRow } from './PortalFieldGrid';
 import { FigLink } from '../figure/FigLink';
-import { portalG9Itc, portalG9T4, portalG9T9, salesT5Books, T5_BOOKS_CODE } from '../figure/targetsData';
+import { gstr9T5Row, portalG9Itc, portalG9T4, portalG9T9 } from '../figure/targetsData';
 
 /** The browser-extension bridge the Portal step shares between its two sections. */
 export interface PullBridge {
@@ -69,11 +69,6 @@ const HEADS_T: PortalFieldCol[] = [
   { key: 'i', header: 'Integrated' },
   { key: 'x', header: 'Cess', width: 100 },
 ];
-
-/** GSTR-9 Table 5 key → the engine's books-side Table 5 row (PL-OUTPUT Part B). */
-const T5_BOOKS_ROW: Record<T5Key, 'A' | 'B' | 'C' | 'C1' | 'D' | 'E' | 'F' | 'H' | 'I' | 'J' | 'K'> = {
-  zero_rtd: 'A', sez: 'B', rchrg: 'C', ecom_14: 'C1', exmt: 'D', nil: 'E', non_gst: 'F', cr_nt: 'H', dr_nt: 'I', amd_pos: 'J', amd_neg: 'K',
-};
 
 interface PreviewState {
   title: string;
@@ -494,21 +489,11 @@ export const Gstr9Section: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             labelHeader="Nature of supplies"
             labelWidth={320}
             maxHeight="max(300px, calc(100vh - 520px))"
-            extra={{
-              header: 'Books (Part B)',
-              width: 140,
-              // The books side is Sales › GSTR-9 Table 5 from Part B (5I–5K have no books row there).
-              render: (row) => {
-                const code = T5_BOOKS_CODE[row.id as T5Key];
-                return (
-                  <FigLink to={code ? salesT5Books(code) : undefined} className="block w-full">
-                    <Money value={workings.g9.t5[T5_BOOKS_ROW[row.id as T5Key]].t} className="block text-right" />
-                  </FigLink>
-                );
-              },
-            }}
           />
-          <p className="text-[11px] text-muted-foreground">Table 5 is not compared line by line in the sheet; it is kept here so the books side (Sales step, Part B) can be checked against what the portal shows.</p>
+          <p className="text-[11px] text-muted-foreground">
+            The portal&apos;s figures only. The books side (Sales › Part B) is set against them, row by row, in one place:{' '}
+            <FigLink to={gstr9T5Row()} className="text-left">Books vs portal on GSTR-9 › Table 5</FigLink>.
+          </p>
         </TabsContent>
 
         <TabsContent value="itc" className="space-y-2">

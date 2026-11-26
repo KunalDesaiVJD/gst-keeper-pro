@@ -94,7 +94,7 @@ const OLD_TAB_PARAM = 'tab9c';
 const OLD_TAB: Record<string, string> = { turnover: '5', tax: '9', itc: '12', liability: 'liability', certification: 'certification' };
 
 /**
- * Step 11 — GSTR-9C, the official reconciliation statement. Every figure is
+ * Step 10 — GSTR-9C, the official reconciliation statement. Every figure is
  * prefilled from the working (engine `workings.gstr9c`); italic figures are
  * computed and can be typed over, and each un-reconciled line carries its
  * justification. One tab per table, so each opens in one screen.

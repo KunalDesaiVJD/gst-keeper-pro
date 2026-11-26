@@ -9,7 +9,8 @@ import { useGoStep } from './helpers';
 /**
  * Where "AS PER 3B" comes from (§5 data-source rule): the as-filed GSTR-3B
  * pulled from the portal on the Portal data step — never the app's own
- * GSTR-3B — with a month count, a link to go and fetch it, and the engine's
+ * GSTR-3B — with a month count, a link to Portal › As-filed 3B (the one
+ * place those figures are fetched or edited; they are read-only here), and the engine's
  * single "GSTR-3B not fetched for …" line (`missingKey`) when there is one.
  */
 const PortalNote: React.FC<{ what: string; missingKey: 'dto.no3b' | 'dti.no3b' }> = ({ what, missingKey }) => {
@@ -40,9 +41,9 @@ const PortalNote: React.FC<{ what: string; missingKey: 'dto.no3b' | 'dti.no3b' }
       <div className="space-y-1.5">
         <div>
           <span className="font-medium">As per 3B</span> is {what} of the <span className="font-medium">as-filed GSTR-3B</span> from the
-          GST portal — never the app’s own GSTR-3B. <span className="tabular-nums">{parts.join(' · ')}.</span>{' '}
-          <Button type="button" variant="link" className="h-auto gap-1 p-0 text-xs [&_svg]:size-3" onClick={() => goStep('portal', { portaltab: 'gstr3b' })}>
-            Go to Portal data to fetch it <ArrowRight aria-hidden="true" />
+          GST portal — never the app’s own GSTR-3B. <span className="tabular-nums">{parts.join(' · ')}.</span> Read-only here.{' '}
+          <Button type="button" variant="link" className="h-auto gap-1 p-0 text-xs [&_svg]:size-3" onClick={() => goStep('portal', { portaltab: 'gstr3b', g3btab: 'reco' })}>
+            Edit on Portal › As-filed 3B <ArrowRight aria-hidden="true" />
           </Button>
         </div>
         {missingLine && (

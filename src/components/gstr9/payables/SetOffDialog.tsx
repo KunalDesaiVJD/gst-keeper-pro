@@ -11,7 +11,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { addSetOff, loadDrc03s, uploadEvidence } from '@/lib/gstr9/store';
-import { drc03Available, drc03MatchesFY, GSTR3B_TABLES, SIDE_LABEL, type PayableSide, type SetOffMethod } from '@/lib/gstr9/payables';
+import { drc03Available, drc03MatchesFY, GSTR3B_TABLES, PAYABLE_EPS, SIDE_LABEL, type PayableSide, type SetOffMethod } from '@/lib/gstr9/payables';
 import type { Tax } from '@/lib/gstr9/types';
 import { fmtMoney, parsePlain } from '../grid/money';
 import { Note } from '../ui';
@@ -251,7 +251,7 @@ export const SetOffDialog: React.FC<{ open: boolean; onOpenChange: (o: boolean) 
                   ) : (
                     <RadioGroup value={drc03Id} onValueChange={setDrc03Id} className="max-h-60 space-y-1 overflow-y-auto rounded-md border p-1">
                       {drcList.map(({ d, left, fy }) => {
-                        const nothingLeft = sumTax(left) < 0.5;
+                        const nothingLeft = sumTax(left) <= PAYABLE_EPS;
                         return (
                           <label key={d.id} className={cn('flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted', drc03Id === d.id && 'bg-primary/5', nothingLeft && 'opacity-60')}>
                             <RadioGroupItem value={d.id} id={`drc-${d.id}`} className="mt-0.5" disabled={nothingLeft} />

@@ -16,7 +16,7 @@ import { StepLink } from '../gstr9form/shared';
 import { OpenBadge, StepTab, StepTabsList } from '../reco/StepTabs';
 
 /**
- * Step 10 — Form GSTR-9, Tables 4–19, assembled from the workings (the
+ * Step 9 — Form GSTR-9, Tables 4–19, assembled from the workings (the
  * firm's "GSTR-9" sheet). Every figure is an engine value (workings.g9);
  * only the few cells the sheet types by hand are entered here: 5I–5K, 6G
  * override, 6K–6M, 8E/8F/8H1, Table 9 payable overrides, 10, 11, 14–19.
@@ -60,7 +60,7 @@ const PARTS: PartDef[] = [
     tables: [
       { key: '6', no: '6', name: 'ITC availed during the financial year', component: Table6 },
       { key: '7', no: '7', name: 'ITC reversed and ineligible ITC', component: Table7 },
-      { key: '8', no: '8', name: 'Other ITC related information', component: Table8, owns: (d) => d.key === 'g9.8D' },
+      { key: '8', no: '8', name: 'Other ITC related information', component: Table8, owns: (d) => d.key === 'g9.8C' || d.key === 'g9.8D' },
     ],
   },
   {

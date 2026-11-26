@@ -1,0 +1,211 @@
+import React, { useMemo } from 'react';
+import { Badge } from '@/components/gstr9/badge';
+import { maxAbs, resolveHead, totalTax } from '@/lib/gstr9/engine';
+import type { ExpenseHead, Tax, ValTax } from '@/lib/gstr9/types';
+import { useWorkspace } from '../WorkspaceContext';
+import { JustifyControl, KpiTile, Note, SectionCard } from '../ui';
+import { diffTone } from '../grid/columns';
+import { fmtMoney } from '../grid/money';
+import { FigureTable, type FigColumn, type FigRow } from './FigureTable';
+import { anyValTax } from './helpers';
+import { useGoToStep } from '../overview/steps';
+import { FigLink, type FigTarget } from '../figure/FigLink';
+import { gstr9Row, purchasesHead, purchasesSummaryRow, rcmEligible } from '../figure/targetsReco';
+import { HEAD_FILTER_PARAM } from '../purchases/LedgersByHead';
+
+// ITC reco › 9C Table 14 — the firm's "GSTR 9C" sheet: ITC by expense head,
+// feeding GSTR-9C Table 14. Every figure is workings.c14; nothing is typed
+// here. The only input, the 9C head of each P&L ledger
+// (docs.purchases.rows[].head), is set on Purchases › 9C heads.
+
+/** Rows in the sheet's order, with the sheet's own labels. `head` links a row to its ledgers. */
+const C14_ROWS: Array<{ k: string; label: string; head?: ExpenseHead }> = [
+  { k: 'A', label: 'PURCHASES', head: 'purchases' },
+  { k: 'A1', label: 'SUSPENDED ITC' },
+  { k: 'A2', label: 'NET PURCHASE (A − A1)' },
+  { k: 'B', label: 'FREIGHT / CARRIAGE', head: 'freight' },
+  { k: 'C', label: 'POWER AND FUEL', head: 'power_fuel' },
+  { k: 'D', label: 'IMPORTED GOODS (INCLUDING RECEIVED FROM SEZS)', head: 'imported_goods' },
+  { k: 'E', label: 'RENT AND INSURANCE', head: 'rent_insurance' },
+  { k: 'F', label: 'GOODS LOST, STOLEN, DESTROYED, WRITTEN OFF OR DISPOSED OF BY WAY OF GIFT OR FREE SAMPLES', head: 'goods_lost' },
+  { k: 'G', label: 'ROYALTY', head: 'royalty' },
+  { k: 'H', label: "EMPLOYEES' COST (SALARIES, BONUS ETC.)", head: 'employees_cost' },
+  { k: 'I', label: 'CONVEYANCE CHARGES', head: 'conveyance' },
+  { k: 'J', label: 'BANK CHARGES', head: 'bank_charges' },
+  { k: 'K', label: 'ENTERTAINMENT CHARGES', head: 'entertainment' },
+  { k: 'L', label: 'STATIONERY EXPENSES (INCLUDING POSTAGE ETC.)', head: 'stationery' },
+  { k: 'M', label: 'REPAIR AND MAINTENANCE', head: 'repair_maintenance' },
+  { k: 'N', label: 'OTHER MISCELLANEOUS EXPENSES', head: 'other_misc' },
+  { k: 'O', label: 'CAPITAL GOODS', head: 'capital_goods' },
+  { k: 'P', label: 'ANY OTHER EXPENSE 1 (RCM)' },
+  { k: 'Q', label: 'ANY OTHER EXPENSE 2', head: 'other2' },
+  { k: 'R', label: 'TOTAL AMOUNT OF ELIGIBLE ITC AVAILED' },
+];
+
+const COLUMNS: FigColumn[] = [
+  { key: 't', header: 'Value', width: 124 },
+  { key: 'i', header: 'IGST' },
+  { key: 'c', header: 'CGST' },
+  { key: 's', header: 'SGST' },
+  { key: 'x', header: 'Cess', width: 88 },
+  { key: 'tot', header: 'Total tax', width: 116 },
+];
+
+const figs = (v: Partial<ValTax> | Tax, withValue = true): Record<string, number | null> => ({
+  t: withValue && 't' in v ? v.t ?? null : null,
+  i: v.i ?? 0,
+  c: v.c ?? 0,
+  s: v.s ?? 0,
+  x: v.x ?? 0,
+  tot: totalTax({ i: v.i ?? 0, c: v.c ?? 0, s: v.s ?? 0, x: v.x ?? 0 }),
+});
+
+const COL_KEYS = ['t', 'i', 'c', 's', 'x', 'tot'] as const;
+/** Figure links for every column of a row (figure/targetsReco.ts); `skipT` leaves the value column unlinked. */
+const linkAll = (to: (col: (typeof COL_KEYS)[number]) => FigTarget | undefined, skipT = false): Record<string, FigTarget | undefined> =>
+  Object.fromEntries(COL_KEYS.filter((k) => !(skipT && k === 't')).map((k) => [k, to(k)]));
+
+/** The Table 14 working fills the screen below the step's header area and scrolls inside itself. */
+const MAX_HEIGHT = 'max(360px, calc(100vh - 300px))';
+
+const Table14Card: React.FC = () => {
+  const { docs, workings } = useWorkspace();
+  const goTo = useGoToStep();
+  const C = workings.c14;
+  const tol = workings.tolerance;
+
+  const ledgers = docs.purchases.rows;
+  const counts = useMemo(() => {
+    const c: Partial<Record<ExpenseHead, number>> = {};
+    ledgers.forEach((r) => {
+      const h = resolveHead(r);
+      c[h] = (c[h] ?? 0) + 1;
+    });
+    return c;
+  }, [ledgers]);
+
+  /** "n ledgers" on a Table 14 row: open Purchases › 9C heads, filtered to that head (the one place heads are tagged). */
+  const showLedgers = (h: ExpenseHead) => goTo('purchases', { purchasestab: 'heads', [HEAD_FILTER_PARAM]: h });
+
+  const balancingFlag = maxAbs(C.qBalancing, true) > tol;
+  const checkFlag = maxAbs(C.check, true) > 0.005;
+  const tFlag = maxAbs(C.T) > tol;
+
+  // ------------------------------------------------------------ the 9C table
+  const rows: FigRow[] = [];
+  C14_ROWS.forEach(({ k, label, head }) => {
+    const v = C.rows[k];
+    if (!v) return;
+    const n = head ? counts[head] ?? 0 : 0;
+    rows.push({
+      key: k,
+      code: k,
+      label,
+      values: figs(v),
+      // Figure links: a head's row opens Purchases › Where each ledger lands; A1 its PL-INPUT row 73, P RCM's flows.
+      links:
+        head && head !== 'other2' && n > 0
+          ? linkAll((col) => purchasesHead(head, col))
+          : k === 'A1'
+            ? linkAll((col) => purchasesSummaryRow('73', col), true)
+            : k === 'P'
+              ? linkAll((col) => rcmEligible(col))
+              : undefined,
+      kind: k === 'R' ? 'total' : 'row',
+      muted: k !== 'R' && !anyValTax(v),
+      note:
+        head && n > 0 ? (
+          <button type="button" className="text-[10px] text-primary hover:underline" onClick={() => showLedgers(head)} title="Show these ledgers on Purchases › 9C heads">
+            {n} ledger{n === 1 ? '' : 's'}
+          </button>
+        ) : k === 'A1' ? (
+          <span className="text-[10px] text-muted-foreground">Duties &amp; Taxes, net of reclaims</span>
+        ) : k === 'P' ? (
+          <span className="text-[10px] text-muted-foreground">RCM Part B (books)</span>
+        ) : undefined,
+    });
+    if (k === 'Q') {
+      rows.push({
+        key: 'Q.tagged',
+        kind: 'sub',
+        label: 'Tagged ledgers',
+        values: figs(C.qTagged),
+        links: (counts.other2 ?? 0) > 0 ? linkAll((col) => purchasesHead('other2', col)) : undefined,
+      });
+      rows.push({
+        key: 'Q.bal',
+        kind: 'sub',
+        label: 'Balancing figure',
+        values: figs(C.qBalancing),
+        tones: balancingFlag ? { t: 'warn', i: 'warn', c: 'warn', s: 'warn', x: 'warn', tot: 'warn' } : undefined,
+        note: balancingFlag ? (
+          <Badge variant="warning" className="text-[10px] font-normal">
+            Above ₹{tol}
+          </Badge>
+        ) : undefined,
+      });
+    }
+  });
+  const checkTones = Object.fromEntries(['t', 'i', 'c', 's', 'x', 'tot'].map((h) => [h, diffTone(figs(C.check)[h] ?? 0, 0)]));
+  rows.push(
+    { key: 'hchk', kind: 'heading', label: 'Check' },
+    { key: 'netItc', label: 'Net ITC as per P&L (PL-INPUT row 79)', values: figs(workings.purchases.netItc), links: linkAll((col) => purchasesSummaryRow('79', col)) },
+    { key: 'check', label: 'Difference — should equal nil', values: figs(C.check), tones: checkTones },
+  );
+  // S and T (14T, with its reason) are pinned at the foot of the table's scroll box, so they stay in sight.
+  const footRows: FigRow[] = [
+    { key: 'hst', kind: 'heading', label: 'GSTR-9C Table 14 — against GSTR-9' },
+    { key: 'S', code: 'S', label: 'ITC claimed in GSTR-9 (7J)', values: figs(C.S, false), links: linkAll((col) => gstr9Row('7', '7J', col), true) },
+    {
+      key: 'T',
+      code: 'T',
+      kind: 'total',
+      // The form's 14T (S − R), the figure the reason and the portal JSON carry.
+      label: 'Un-reconciled ITC (S − R)',
+      values: figs(workings.gstr9c.t14.T, false),
+      tones: Object.fromEntries(['i', 'c', 's', 'x', 'tot'].map((h) => [h, diffTone(figs(workings.gstr9c.t14.T, false)[h] ?? 0, tol)])),
+      status: workings.diffs.some((d) => d.key === 'gstr9c.14T') ? <JustifyControl lineKey="gstr9c.14T" /> : undefined,
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-3">
+        <KpiTile label="R · Eligible ITC by head (total tax)" value={fmtMoney(totalTax(C.rows.R ?? { i: 0, c: 0, s: 0, x: 0 }))} />
+        <KpiTile label="S · ITC claimed in GSTR-9, 7J (total tax)" value={<FigLink to={gstr9Row('7', '7J')}>{fmtMoney(totalTax(C.S))}</FigLink>} />
+        <KpiTile
+          label="T · Un-reconciled (S − R)"
+          value={fmtMoney(totalTax(workings.gstr9c.t14.T))}
+          hint={`IGST ${fmtMoney(workings.gstr9c.t14.T.i)} · CGST ${fmtMoney(workings.gstr9c.t14.T.c)} · SGST ${fmtMoney(workings.gstr9c.t14.T.s)}`}
+          tone={tFlag ? 'error' : 'ok'}
+        />
+      </div>
+    <SectionCard
+      title="ITC working for GSTR-9C (Table 14)"
+      description="ITC of the P&L ledgers by expense head. Row Q takes the untagged expense ledgers plus the balancing figure, so R always ties to the P&L's net ITC."
+      excelRef="GSTR 9C B6:H30"
+    >
+      {workings.ctx.noItcBuilder && (
+        <Note>This client is a builder on the no-ITC scheme — nil ITC is expected, and 14T is for information only.</Note>
+      )}
+      <FigureTable label="GSTR 9C sheet: ITC by expense head" firstHeader="Particulars" columns={COLUMNS} rows={rows} footer={footRows} maxHeight={MAX_HEIGHT} labelWidth={230} />
+      <div className="grid gap-2 lg:grid-cols-2">
+        <Note>
+          The sheet picked ledgers by fixed cell references (e.g. E = PL-INPUT D34 + D42 + …), which broke whenever a ledger moved. Here each ledger carries its head — set on Purchases › 9C heads. Untagged expense ledgers go to Q.
+        </Note>
+        <Note tone="position">
+          Row P is the books’ RCM Part B with all expense blocks added; the sheet’s RCM D28:D39 adds only two, which understated P’s value.
+        </Note>
+      </div>
+      {balancingFlag && (
+        <Note tone="warn">
+          Row Q carries a balancing figure beyond ₹{tol} on some head. It usually comes from the “suspended ITC as per Duties &amp; Taxes (other adjustments)” line on the Purchases step (PL-INPUT row 75), which has no ledger of its own. Confirm it before filing.
+        </Note>
+      )}
+      {checkFlag && <Note tone="warn">R should always equal the net ITC as per the P&amp;L, and here it does not — a figure is being lost. Report it before filing.</Note>}
+    </SectionCard>
+    </div>
+  );
+};
+
+export default Table14Card;

@@ -1,16 +1,15 @@
 import React from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, ClipboardPaste } from 'lucide-react';
 import { Badge } from '@/components/gstr9/badge';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { StepTab, StepTabsList, TabSub } from '../reco/StepTabs';
+import { useTabParam } from '../reco/helpers';
 import { useWorkspace } from '../WorkspaceContext';
 import { KpiTile, OpenDifferences, useDiffLine } from '../ui';
 import { fmtMoney } from '../grid/money';
 import PartAGrid from '../sales/PartAGrid';
 import PartBGrid from '../sales/PartBGrid';
 import AuditReconciliation from '../sales/AuditReconciliation';
-import Table5Preview from '../sales/Table5Preview';
 import { CapitalGoodsSold } from '../sales/CapitalGoodsSold';
 import BuilderAdvances from '../sales/BuilderAdvances';
 import { FigLink } from '../figure/FigLink';
@@ -20,8 +19,10 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** URL parameter that remembers the open part (the page keeps ?client= and ?step= alongside). */
 const TAB_PARAM = 'salestab';
-const TABS = ['a', 'b', 'cgsold', 'audit', 't5', 'advances'] as const;
+// No Table 5 tab here (Position C): GSTR-9 › Table 5 is the one home of books vs portal Table 5; an old ?salestab=t5 opens Part A.
+const TABS = ['a', 'b', 'audit', 'cgsold', 'advances'] as const;
 type TabKey = (typeof TABS)[number];
+const TABS_NO_ADV = TABS.filter((t): t is Exclude<TabKey, 'advances'> => t !== 'advances');
 
 /** Small count pill on a tab trigger. */
 const Count: React.FC<{ n: number; label: string }> = ({ n, label }) => (
@@ -92,15 +93,9 @@ const EmptyExplainer: React.FC = () => (
 /** Step 2 — Sales (PL-OUTPUT): Part A taxable income, Part B non-taxable income, audit-report match. */
 const SalesStep: React.FC = () => {
   const { docs, workings, client } = useWorkspace();
-  const isBuilder = client.regular_sub_type === 'Builder';
-  const [params, setParams] = useSearchParams();
-  const fromUrl = params.get(TAB_PARAM);
-  const tab: TabKey = TABS.some((t) => t === fromUrl) && (fromUrl !== 'advances' || isBuilder) ? (fromUrl as TabKey) : 'a';
-  const setTab = (v: string) => {
-    const next = new URLSearchParams(params);
-    next.set(TAB_PARAM, v);
-    setParams(next, { replace: true });
-  };
+  // The advances tab drives GSTR-9C Table 5: shown for a Builder, and whenever a roll-forward is already saved, so that data is never hidden.
+  const showAdvances = client.regular_sub_type === 'Builder' || !!docs.gstr9c.builderAdv;
+  const [tab, setTab] = useTabParam<TabKey>(TAB_PARAM, showAdvances ? TABS : TABS_NO_ADV, 'a');
 
   const s = workings.sales;
   const cg = workings.cg;
@@ -131,6 +126,16 @@ const SalesStep: React.FC = () => {
               Part B · Non-taxable
               <Count n={docs.sales.partB.length} label={plural(docs.sales.partB.length, 'ledger')} />
             </StepTab>
+            <StepTab value="audit">
+              Audit report
+              {auditLine?.open ? (
+                <Badge variant="destructive" className="h-4 rounded-full px-1.5 text-[10px] font-medium leading-none">
+                  {auditLine.stale ? 'Re-check' : 'Reason needed'}
+                </Badge>
+              ) : s.auditReportTotal === null ? (
+                <span className="text-[10px] font-normal text-muted-foreground">not entered</span>
+              ) : null}
+            </StepTab>
             <StepTab value="cgsold" title="Capital goods sold in the year: s.18(6), Rule 40(2), Rule 44(6)">
               Capital goods sold
               <TabSub>s.18(6)</TabSub>
@@ -142,22 +147,9 @@ const SalesStep: React.FC = () => {
                 </span>
               )}
             </StepTab>
-            <StepTab value="audit">
-              Audit report
-              {auditLine?.open ? (
-                <Badge variant="destructive" className="h-4 rounded-full px-1.5 text-[10px] font-medium leading-none">
-                  {auditLine.stale ? 'Re-check' : 'Reason needed'}
-                </Badge>
-              ) : s.auditReportTotal === null ? (
-                <span className="text-[10px] font-normal text-muted-foreground">not entered</span>
-              ) : null}
-            </StepTab>
-            <StepTab value="t5">
-              GSTR-9 Table 5
-            </StepTab>
-            {isBuilder && (
+            {showAdvances && (
               <StepTab value="advances" title="Builder advance roll-forward (fills GSTR-9C Table 5)">
-                Advances
+                9C Table 5 · Advances
                 {workings.gstr9c.builderAdv && Math.abs(workings.gstr9c.t5.R) > 1 && (
                   <span className="text-[10px] font-normal text-muted-foreground">9C 5R open</span>
                 )}
@@ -171,16 +163,13 @@ const SalesStep: React.FC = () => {
         <TabsContent value="b">
           <PartBGrid />
         </TabsContent>
-        <TabsContent value="cgsold">
-          <CapitalGoodsSold />
-        </TabsContent>
         <TabsContent value="audit">
           <AuditReconciliation />
         </TabsContent>
-        <TabsContent value="t5">
-          <Table5Preview />
+        <TabsContent value="cgsold">
+          <CapitalGoodsSold />
         </TabsContent>
-        {isBuilder && (
+        {showAdvances && (
           <TabsContent value="advances">
             <BuilderAdvances />
           </TabsContent>

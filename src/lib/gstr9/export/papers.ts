@@ -192,9 +192,9 @@ const MONTH_SHORT: Record<MonthKey, string> = {
 /** Step names for the DIFFERENCES paper (mirrors src/components/gstr9/steps/registry.ts). */
 const STEP_NAME: Record<string, string> = {
   overview: '0 · Overview', portal: '1 · Portal data', sales: '2 · Sales (PL-OUTPUT)', purchases: '3 · Purchases & ITC (PL-INPUT)',
-  duties: '4 · Duties & Taxes', rcm: '5 · RCM', outward: '6 · Outward reco (GSTR 9-OUTPUT)', itc: '7 · ITC reco (GSTR 9-INPUT)',
-  expense: '8 · 9C expense heads (GSTR 9C)', annexures: '9 · Annexures', gstr9: '10 · GSTR-9', gstr9c: '11 · GSTR-9C',
-  notice: '12 · Notice format', review: '13 · Review & lock', payables: '14 · Payables & set-off',
+  duties: '4 · Duties & Taxes', rcm: '5 · RCM', outward: '6 · Outward reco (GSTR 9-OUTPUT)', itc: '7 · ITC reco (GSTR 9-INPUT, incl. 9C Table 14)',
+  annexures: '8 · Annexures', gstr9: '9 · GSTR-9', gstr9c: '10 · GSTR-9C',
+  notice: '11 · Notice format', review: '12 · Review & lock', payables: '13 · Payables & set-off',
 };
 
 const PORTAL_SOURCE_LABEL: Record<string, string> = {
@@ -706,7 +706,7 @@ function dti(c: Ctx): WorkingPaper {
   t.data(lbl('LAST YEAR EFFECT', 1 + 6 * n), ...taxCells(w.dti.lye, heads));
   t.total(lbl('NET', 1 + 6 * n), ...taxCells(w.dti.net, heads));
   t.data(lbl('AS PER P&L (PL-INPUT NET ITC)', 1 + 6 * n), ...taxCells(w.dti.asPerPl, heads));
-  t.sub(lbl('DIFF (P&L - NET)', 1 + 6 * n), ...taxCells(w.dti.plDiff, heads), ...pad(2), just('dti.pl'));
+  t.sub(lbl('DIFF (P&L - NET)', 1 + 6 * n), ...taxCells(w.dti.plDiff, heads), ...pad(2), just('purchases.dt'));
   adjustmentBlock(c, p, 'OTHER ADJUSTMENTS IN DR SIDE', docs.duties_input.adjustments, w.dti.adjustments, 'REASON OF ADJ.', ['TOTAL DR', w.dti.totalDr]);
   rateWiseBlock(c, p, 'RATE-WISE BREAKUP OF BOOKS FIGURES', [
     ['Purchase', (m) => docs.duties_input.months[m].rateWise?.purchase],
@@ -1060,9 +1060,9 @@ function gstr9Input(c: Ctx): WorkingPaper {
   }
   vrow('data', nz(I.cgNotInBooks) ? 'AS PER BOOK (AFTER THE s.18(6) REVERSAL)' : 'AS PER BOOK (DUTIES & TAXES NET, AFTER LAST YEAR EFFECT)', null, I.asPerBook);
   vrow('subtotal', 'DIFFERENCE (7J - BOOK)', null, I.residual, just('itc.books'));
-  vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12; 8C AS NEGATIVE) — SUGGESTED', null, I.t12Suggested);
+  vrow('data', 'ITC TO BE REVERSED IN NEXT YEAR (TABLE 12) — SUGGESTED', null, I.t12Suggested);
   vrow('data', `   Table 12 used (${w.g9.t12Source === 'override' ? 'typed' : 'computed'})`, null, w.g9.t12, '', w.g9.t12Source === 'override' ? 'typed' : undefined).at('C2.t12');
-  vrow('data', 'ITC TO BE CLAIMED IN NEXT YEAR (TABLE 13; 8C) — SUGGESTED', null, I.t13Suggested);
+  vrow('data', 'ITC TO BE CLAIMED IN NEXT YEAR (TABLE 13; 8C FOLLOWS IT UNLESS TYPED) — SUGGESTED', null, I.t13Suggested);
   vrow('data', '   Table 13 typed', null, w.g9.t13, '', 'typed').at('C2.t13');
   return paper(c, {
     ref: 'C2', title: 'GSTR 9-INPUT — ITC working for GSTR-9', sheet: 'C2 GSTR 9-INPUT', phase: 'reconcile', master: 'GSTR 9-INPUT',
@@ -1117,7 +1117,7 @@ function gstr9cHeads(c: Ctx): WorkingPaper {
   t.data('', 'NET ITC AS PER PL-INPUT', ...valCells(w.purchases.netItc, heads), sum(w.purchases.netItc));
   t.sub('', 'CHECK (PL-INPUT - R)', ...valCells(w.c14.check, heads), sum(w.c14.check));
   t.data('S', 'ITC CLAIMED IN GSTR-9 (7J)', null, ...taxCells(w.c14.S, heads), sum(w.c14.S)).at('C3.S');
-  t.total('T', 'UN-RECONCILED ITC (R - S)', null, ...taxCells(w.c14.T, heads), sum(w.c14.T), just('gstr9c.14T')).at('C3.T');
+  t.total('T', 'UN-RECONCILED ITC (S − R)', null, ...taxCells(w.gstr9c.t14.T, heads), sum(w.gstr9c.t14.T), just('gstr9c.14T')).at('C3.T');
   return paper(c, {
     ref: 'C3', title: 'GSTR 9C — ITC by expense head (Table 14)', sheet: 'C3 GSTR 9C', phase: 'reconcile', master: 'GSTR 9C',
     source: 'Source: books ITC by GSTR-9C expense head (B2 PL-INPUT, B5 RCM) against GSTR-9 7J — GSTR 9C of MASTER_PMS',
@@ -1176,13 +1176,15 @@ function annexure(c: Ctx): WorkingPaper {
   a3.data(sr(3), `EXCESS ITC CLAIMED AS PER RECO${docs.annexures.a3ExcessItc === null ? ' — suggested (Table 12)' : ''}`, ...(docs.annexures.a3ExcessItc === null ? taxCells(A3.excessItc, all) : srcTax(A3.excessItc, all, () => 'typed')));
   a3.data(sr(4), 'ANY OTHER PAYMENT (TO BE SPECIFIED)', ...taxCells(A3.other, all));
   docs.annexures.a3Other.forEach((o) => a3.data('', `   ${o.description || 'Other'}`, ...srcTax(tin(o), all, () => 'typed')));
-  if (nz(A3.cg186)) a3.data(sr(5), 'CAPITAL GOODS SOLD u/s 18(6): SHORTFALL NOT YET REVERSED (C6 ANNEXURE-5)', ...taxCells(A3.cg186, all));
+  let a3n = 5;
+  if (nz(A3.cg186)) a3.data(sr(a3n++), 'CAPITAL GOODS SOLD u/s 18(6): SHORTFALL NOT YET REVERSED (C6 ANNEXURE-5)', ...taxCells(A3.cg186, all));
+  if (nz(A3.rule4243)) a3.data(sr(a3n++), 'RULE 42 / 43 REVERSAL STILL DUE, WITH INTEREST u/s 50 (C2A)', ...taxCells(A3.rule4243, all));
   a3.total(lbl('TOTAL'), ...taxCells(A3.total, all));
-  a3.data('', 'DRC-03 PAYABLE (POSITIVE HEADS)', ...taxCells(A3.payable, all));
+  a3.data('', 'DRC-03 PAYABLE (POSITIVE HEADS, OUTPUT AND INPUT SIDE APART)', ...taxCells(A3.payable, all));
   a3.data('', 'EXCESS PAID (NEGATIVE HEADS)', ...taxCells(A3.excessPaid, all));
-  a3.data('', 'DRC-03 ALREADY PAID', ...taxCells(A3.alreadyPaid, all));
+  a3.data('', 'SET OFF — DRC-03 / GSTR-3B (E1)', ...taxCells(A3.alreadyPaid, all));
   a3.total('', 'BALANCE TO PAY', ...taxCells(A3.balance, all));
-  p.note('DRC-03 already paid is what the set-off register (E1) records against an imported DRC-03 or a GSTR-3B effect.');
+  p.note('Annexure-3 and the Payables register (E1) are one register: the same lines and the same set-offs, the payable and balance taken output side and input side apart, so the balance here is the balance on E1.');
 
   // Annexure-4
   p.h2('ANNEXURE-4 (DETAILS OF PREVIOUS YEAR GSTR-09 CLAUSE-8, 10, 11, 12 & 13)');

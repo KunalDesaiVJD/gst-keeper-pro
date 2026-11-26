@@ -21,7 +21,7 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]['key'];
 
-/** Step 9 — the ANNEXURE sheet: income reco, ITC reco, DRC-03 working, previous year's GSTR-9 clauses. */
+/** Step 8 — the ANNEXURE sheet: income reco, ITC reco, DRC-03 working, previous year's GSTR-9 clauses. */
 const AnnexuresStep: React.FC = () => {
   const { workings } = useWorkspace();
   const [params, setParams] = useSearchParams();

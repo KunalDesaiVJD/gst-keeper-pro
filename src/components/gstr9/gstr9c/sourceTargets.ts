@@ -109,7 +109,7 @@ export const dutiesLye = (h: FormHead): FigTarget => ({
   label: 'Duties & Taxes › Last year effect',
 });
 
-/** ITC reco › 6A1 · Tables 12 & 13, the typed Table 13 (steps/ItcRecoStep.tsx). */
+/** ITC reco › Tables 12 & 13 · 8C, the typed Table 13 (steps/ItcRecoStep.tsx). */
 export const itcTable13 = (h: FormHead): FigTarget => ({
   step: 'itc',
   tab: { itctab: 'next' },
@@ -119,14 +119,14 @@ export const itcTable13 = (h: FormHead): FigTarget => ({
   label: 'ITC reco › Table 13',
 });
 
-/** 9C expense heads › Table 14 (steps/ExpenseHeadStep.tsx FigureTable, rows A … R, columns t i c s x). */
+/** ITC reco › 9C Table 14 (reco/Table14Card.tsx FigureTable, rows A … R, columns t i c s x). */
 export const expenseHead = (row: string, h: FormHead): FigTarget => ({
-  step: 'expense',
-  tab: { expensetab: 'table14' },
+  step: 'itc',
+  tab: { itctab: 'table14' },
   table: 'GSTR 9C sheet: ITC by expense head',
   row,
   col: h,
-  label: `9C expense heads › ${row}`,
+  label: `ITC reco › 9C Table 14 › ${row}`,
 });
 
 /** RCM › Part B books (by expense and month; the rate-wise split is not a table of its own). */

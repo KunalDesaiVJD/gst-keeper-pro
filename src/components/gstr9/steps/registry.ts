@@ -8,7 +8,6 @@ import DutiesStep from './DutiesStep';
 import RcmStep from './RcmStep';
 import OutwardRecoStep from './OutwardRecoStep';
 import ItcRecoStep from './ItcRecoStep';
-import ExpenseHeadStep from './ExpenseHeadStep';
 import AnnexuresStep from './AnnexuresStep';
 import Gstr9FormStep from './Gstr9FormStep';
 import Gstr9cStep from './Gstr9cStep';
@@ -45,10 +44,8 @@ export const STEPS: StepDef[] = [
     intro: 'Reverse-charge expenses by month (books) against 3.1(d) of the as-filed GSTR-3B (portal).' },
   { key: 'outward', short: 'Outward reco', label: 'Outward reco', phase: 'Reconcile', excel: 'GSTR 9-OUTPUT', component: OutwardRecoStep,
     intro: 'Books against the GSTR-9 auto-populated Table 4, category by category.' },
-  { key: 'itc', short: 'ITC reco', label: 'ITC reco', phase: 'Reconcile', excel: 'GSTR 9-INPUT · GSTR-9 Table 7/12/13', component: ItcRecoStep,
-    intro: 'The ITC working for GSTR-9 Tables 6 and 7, next-year ITC (Tables 12/13), and 8C.' },
-  { key: 'expense', short: '9C heads', label: '9C expense heads', phase: 'Reconcile', excel: 'GSTR 9C', component: ExpenseHeadStep,
-    intro: 'ITC by expense head for GSTR-9C Table 14, computed from the P&L ledgers.' },
+  { key: 'itc', short: 'ITC reco', label: 'ITC reco', phase: 'Reconcile', excel: 'GSTR 9-INPUT · GSTR-9 Table 7/12/13 · GSTR 9C', component: ItcRecoStep,
+    intro: 'The ITC working for GSTR-9 Tables 6 and 7 (with Rule 42/43), next-year ITC (Tables 12/13) and 8C, and GSTR-9C Table 14 by expense head.' },
   { key: 'annexures', short: 'Annexures', label: 'Annexures', phase: 'Reconcile', excel: 'ANNEXURE 1–4', component: AnnexuresStep,
     intro: 'Income reco, ITC reco, DRC-03 working and the previous year’s GSTR-9 clauses.' },
   { key: 'gstr9', short: 'GSTR-9', label: 'GSTR-9', phase: 'Returns', excel: 'GSTR-9', component: Gstr9FormStep,

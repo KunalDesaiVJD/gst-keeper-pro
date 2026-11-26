@@ -10,6 +10,7 @@ import type { InputSection } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, OpenDifferences, useDiffLine } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { LedgersByHead } from '../purchases/LedgersByHead';
 import { HeadLanding } from '../purchases/HeadLanding';
 import { PurchaseSectionGrid } from '../purchases/PurchaseSectionGrid';
 import { PurchasesSummary } from '../purchases/PurchasesSummary';
@@ -175,8 +176,9 @@ const PurchasesStep: React.FC = () => {
         <TabsContent value="summary">
           <PurchasesSummary onGo={go} />
         </TabsContent>
-        <TabsContent value="heads">
-          <HeadLanding onGo={go} />
+        <TabsContent value="heads" className="space-y-3">
+          <HeadLanding />
+          <LedgersByHead />
         </TabsContent>
       </Tabs>
     </div>

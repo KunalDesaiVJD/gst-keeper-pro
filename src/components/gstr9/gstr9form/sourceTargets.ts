@@ -78,16 +78,19 @@ export const rcmFlow = (table: '6C' | '6D' | '6F', head: Head): FigTarget => ({
   label: `RCM › Where RCM flows (${table})`,
 });
 
-// --- Sales (sales/Table5Preview.tsx, sales/CapitalGoodsSold.tsx) -------------
+// --- Sales (sales/PartBGrid.tsx, sales/CapitalGoodsSold.tsx) ------------------
 
-/** A books Table 5 line from Part B (5A to 5F, 5G, 5H). */
+/**
+ * A books Table 5 line (5A to 5F, 5G, 5H): Sales › Part B, whose ledgers carry the nature that lands
+ * them in Table 5 (its "GSTR-9" column). 5H opens Part B's "of which credit notes" line, the rest its Total.
+ */
 export const salesT5 = (code: 'A' | 'B' | 'C' | 'C1' | 'D' | 'E' | 'F' | 'G' | 'H'): FigTarget => ({
   step: 'sales',
-  tab: { salestab: 't5' },
-  table: 'GSTR-9 Table 5 (books)',
-  row: code,
-  col: 't',
-  label: 'Sales › Table 5 from Part B',
+  tab: { salestab: 'b' },
+  table: 'PL-OUTPUT Part B — non-taxable income',
+  row: code === 'H' ? 'footer:5h' : 'footer:total',
+  col: 'amount',
+  label: code === 'H' ? 'Sales › Part B (credit notes → 5H)' : `Sales › Part B (ledgers of nature 5${code})`,
 });
 
 /** 7H: the s.18(6) shortfall on capital goods sold. */
@@ -137,7 +140,7 @@ export const itcWorking = (row: 'inputs' | 'is' | 'cg' | 'imp' | 'total6O' | 'as
 /** 6A1 typed on ITC reco. */
 export const itc6A1 = (head: Head): FigTarget => ({
   step: 'itc',
-  tab: { itctab: 'next' },
+  tab: { itctab: 'working' },
   table: 'GSTR-9 6A1',
   row: 't6A1',
   col: head,
@@ -165,6 +168,13 @@ export const itcT7 = (row: T7EntryRow, head: Head): FigTarget => ({
   label: 'ITC reco › Table 7 entries',
 });
 
+/** ITC reco › Rule 42/43 (its tab): the approved Builder › ITC Reversal working posted in this FY, shown on that tab, which adds to 7C / 7D. */
+export const itcBuilderReversal: FigTarget = {
+  step: 'itc',
+  tab: { itctab: 'rule42' },
+  label: 'ITC reco › Rule 42/43 (Builder ITC Reversal working)',
+};
+
 /** A further 7H line (by its id), or the 7I / 7J totals under them (`footer:7I`, `footer:7J`). */
 export const itcT7Extra = (row: string, head: Head): FigTarget => ({
   step: 'itc',
@@ -173,4 +183,22 @@ export const itcT7Extra = (row: string, head: Head): FigTarget => ({
   row,
   col: `x7h.${head}`,
   label: 'ITC reco › Table 7 entries',
+});
+
+/** ITC reco › Table 6 / Table 8 entries (gstr9form/ItcEntries.tsx): the typed rows of GSTR-9 Tables 6 and 8, typed on ITC reco since 26 Nov 2026. */
+export const itcEntry6 = (row: '6G' | '6K' | '6L' | '6M') => (head: Head): FigTarget => ({
+  step: 'itc',
+  tab: { itctab: 'working' },
+  table: 'GSTR-9 Table 6 typed rows',
+  row,
+  col: head === 'i' || head === 'c' || head === 's' || head === 'x' ? head : undefined,
+  label: `ITC reco › Table 6 entries › ${row}`,
+});
+export const itcEntry8 = (row: '8C' | '8E' | '8F' | '8G' | '8H1') => (head: Head): FigTarget => ({
+  step: 'itc',
+  tab: { itctab: 'next' },
+  table: 'GSTR-9 Table 8 typed rows',
+  row,
+  col: head === 'i' || head === 'c' || head === 's' || head === 'x' ? head : undefined,
+  label: `ITC reco › Table 8 entries › ${row}`,
 });
