@@ -260,10 +260,13 @@ const getRoleLabel = (role: string) => {
  * mobile drawer.
  */
 export const useSidebarNavItems = (): NavItem[] => {
-  const { user, isStaffRole, canViewChangeHistory } = useAuth();
-  const items = isStaffRole() ? STAFF_NAV_ITEMS : CLIENT_NAV_ITEMS;
+  const { user, isStaffRole, canViewChangeHistory, canOpenPath } = useAuth();
+  const staff = isStaffRole();
+  const items = staff ? STAFF_NAV_ITEMS : CLIENT_NAV_ITEMS;
   return items.filter(item => {
     if (item.can === 'viewChangeHistory' && !canViewChangeHistory()) return false;
+    // The employee's role decides which screens they open (User Control → Roles).
+    if (staff && !canOpenPath(item.path)) return false;
     if (!item.roles) return true;
     return user && item.roles.includes(user.role);
   });

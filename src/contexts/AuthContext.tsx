@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { sessionsEndedAt } from '@/lib/staffLevels';
 import { setChangeLogActor } from '@/lib/changeLogHeaders';
 import { toast } from 'sonner';
+import { moduleForPath, opensEveryScreen, type ModuleKey } from '@/lib/permissionCatalog';
 
 type UserRole = 'superadmin' | 'gst_manager' | 'employee' | 'client';
 
@@ -46,6 +47,21 @@ interface UserPermissions {
   send_client_emails: boolean;
   manage_email_templates: boolean;
   override_bu_agreement: boolean;
+  // Screens (permissionCatalog.ts SCREEN_KEYS); none held = every screen.
+  module_clients: boolean;
+  module_2b: boolean;
+  module_itc: boolean;
+  module_rcm: boolean;
+  module_update_sheet: boolean;
+  module_gstr1: boolean;
+  module_gstr3b: boolean;
+  module_filing_status: boolean;
+  module_annual_return: boolean;
+  module_advances: boolean;
+  module_builder: boolean;
+  module_notices: boolean;
+  module_reports: boolean;
+  module_assistant: boolean;
 }
 
 const DEFAULT_PERMISSIONS: UserPermissions = {
@@ -79,6 +95,20 @@ const DEFAULT_PERMISSIONS: UserPermissions = {
   send_client_emails: false,
   manage_email_templates: false,
   override_bu_agreement: false,
+  module_clients: false,
+  module_2b: false,
+  module_itc: false,
+  module_rcm: false,
+  module_update_sheet: false,
+  module_gstr1: false,
+  module_gstr3b: false,
+  module_filing_status: false,
+  module_annual_return: false,
+  module_advances: false,
+  module_builder: false,
+  module_notices: false,
+  module_reports: false,
+  module_assistant: false,
 };
 
 interface AppUser {
@@ -166,6 +196,15 @@ interface AuthContextType {
   clientScope: { clientIds: string[] } | null;
   /** Add a new client: needs Add / edit clients, and an employee limited to allotted clients cannot. */
   canAddClients: () => boolean;
+  /**
+   * Whether this sign-in may open a screen (Settings → User Control → Roles).
+   * GST Managers, the superadmin and clients: always (clients have their own
+   * menu). An employee: while their role and extras name the screen, or name
+   * no screen at all (a role from before screens).
+   */
+  canOpenModule: (module: ModuleKey) => boolean;
+  /** canOpenModule for the screen a route belongs to; true for a route of no screen. */
+  canOpenPath: (pathname: string) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -648,6 +687,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // A limited employee's new client would sit outside their list, so the database refuses it.
   const canAddClients = useCallback((): boolean => canAddEditClients() && !clientScope, [canAddEditClients, clientScope]);
 
+  const canOpenModule = useCallback((module: ModuleKey): boolean => {
+    if (!user) return false;
+    if (user.role !== 'employee') return true;
+    const held = Object.entries(user.permissions).filter(([, on]) => on === true).map(([k]) => k);
+    if (opensEveryScreen(held)) return true;
+    return user.permissions[module] === true;
+  }, [user]);
+  const canOpenPath = useCallback((pathname: string): boolean => {
+    const m = moduleForPath(pathname);
+    return m ? canOpenModule(m) : true;
+  }, [canOpenModule]);
+
   const canDeleteClients = useCallback((): boolean => {
     if (!user) return false;
     if (user.role === 'superadmin' || user.role === 'gst_manager') return true;
@@ -903,6 +954,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         hasPermission,
         clientScope,
         canAddClients,
+        canOpenModule,
+        canOpenPath,
       }}
     >
       {children}
