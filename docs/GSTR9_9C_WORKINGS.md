@@ -223,12 +223,19 @@ sign-off covers GSTR-9 and GSTR-9C together.
   working. **Self-validation first** (the firm, 25 Nov 2026,
   `20261125100000`): the working may be marked prepared only with no open
   difference and once the preparer has answered every self-validation
-  question that applies (`src/lib/gstr9/selfCheck.ts`: portal figures
-  fetched, books agree with the audited accounts, ineligible ITC reversed,
-  reverse charge paid, GSTR-9 Tables 4 to 19 checked, HSN summary, late fee;
-  and when it applies, additional tax paid with interest (Payables shows a
-  payable), GSTR-9C liability paid through DRC-03, GSTR-9C reasons as filed,
-  GSTR-9C verification details). Each is answered Yes, No (with a remark of
+  question that applies (`src/lib/gstr9/selfCheck.ts`; trimmed on 26 Nov
+  2026 at Kunal's request to what the app cannot check and what would let a
+  wrong return be filed, `20261126110000`): always, books agree with the
+  audited accounts, blocked ITC reversed, HSN summary; only when the figures
+  call for it, missing portal figures explained (a month's 3B or the GSTR-9
+  system-computed figures not in the working), reverse charge paid (RCM in
+  the year), late fee (the due date, 31 December after the FY, has passed),
+  additional tax paid (a payable not yet set off in the register), GSTR-9C
+  liability paid through DRC-03, and, when GSTR-9C is filed, the audited
+  accounts in hand with the verification filled. Only the preparer is asked,
+  and only until the working is marked prepared (or sent back to them): the
+  verifier and the final review see the answers, folded, never the
+  questions. Each is answered Yes, No (with a remark of
   at least 5 characters on why and what is being done) or, where it allows,
   Not applicable; it is asked under the step it concerns ("Self-validation
   on this step") and every one still open is put again in the Mark prepared
