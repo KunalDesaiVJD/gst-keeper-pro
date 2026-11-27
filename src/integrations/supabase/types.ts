@@ -5460,6 +5460,7 @@ export type Database = {
           gstr1_import_mode: string
           id: string
           inactive_at_hand: boolean
+          inactive_from: string | null
           is_first_login: boolean | null
           liberal_2b_reconciliation: boolean
           liberal_changed_at: string | null
@@ -5510,6 +5511,7 @@ export type Database = {
           gstr1_import_mode?: string
           id?: string
           inactive_at_hand?: boolean
+          inactive_from?: string | null
           is_first_login?: boolean | null
           liberal_2b_reconciliation?: boolean
           liberal_changed_at?: string | null
@@ -5559,6 +5561,7 @@ export type Database = {
           gstr1_import_mode?: string
           id?: string
           inactive_at_hand?: boolean
+          inactive_from?: string | null
           is_first_login?: boolean | null
           liberal_2b_reconciliation?: boolean
           liberal_changed_at?: string | null

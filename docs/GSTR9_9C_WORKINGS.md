@@ -871,3 +871,30 @@ Kunal asked (26 Nov 2026) that the GSTR-9 step show where the final GSTR-9 diffe
 - **Summarise with AI** sends the cells, every remark and Tables 10 to 14 to the GST Assistant (`gst-assistant`, mode `variance_summary`, `supabase/functions/gst-assistant/varianceSummary.ts`): a summary per table and the cells no remark explains. Without a key, with the assistant off, a client opted out of AI or any failure, the rules summary (`rulesSummary`: grouped by table, the remarks quoted; a cell is unexplained without a reason on a related difference line) is written instead and says so. The last summary is kept on the working (`docs.gstr9.varianceSummary`: overall, tables, unexplained, at, by, source, digest) through the working's own save, and is marked stale once the digest of the differences and remarks changes. A locked working keeps the one it has.
 - **Exports.** D1 opens with the summary (or a rules summary built at print, marked so) and the table of differences, the final linked to its row; every differing figure of D1's Tables 4 to 9 is filled orange with both figures in its comment (`fill: 'variance'`, Excel and PDF).
 
+
+## 13. Part-year working: a client deactivated or cancelled in the year (27 Nov 2026)
+
+A client marked **Inactive at hand** in Edit Client now carries an **Inactive from**
+date (`clients.inactive_from`, `20261127100000`; the first day not active). The
+year's working covers only the months the client was active
+(`src/lib/gstr9/activePeriod.ts`): from the later of 1 April and the registration
+date to the day before the earlier of Inactive from and the registration's
+Cancellation Date (`registration_cancellation_date`). A month with one active day
+is an active month.
+
+- **Register:** the client stays listed (part year, "inactive from dd/mm/yyyy") in
+  every FY its active period touches, even with Show inactive off; an FY that starts
+  after the date is "Inactive before FY". A tick without a date behaves as before.
+- **Applicability (position):** the ₹2 crore / ₹5 crore limits still read the FY's
+  aggregate turnover, never pro-rated.
+- **Working:** `computeWorkings` takes `ctx.activeMonths`; months outside are never
+  asked for (no "GSTR-3B not fetched" line, self-validation's 3B question), the
+  pull fetches only the active months (a QRMP client also the quarter-end month of
+  a quarter with an active month), and the month strips show them Not active.
+  Figures found after the period are not dropped: they open
+  `period.outside.out` / `period.outside.itc` on the Portal data step, to explain or remove.
+- **Sign-off:** a started working records the period it covers
+  (`settings.coveredPeriod`, a revision-log entry and a change since sign-off). A
+  locked working is not rewritten; the page says the period changed.
+- **Exports:** the cover sheet's PERIOD COVERED, the Excel identification strip and
+  the PDF cover carry the period; the as-filed 3B table marks months Not active.

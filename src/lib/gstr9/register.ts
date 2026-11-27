@@ -17,6 +17,7 @@ export interface RegisterClient {
   cancellation_date: string | null;
   registration_cancellation_date: string | null;
   inactive_at_hand: boolean | null;
+  inactive_from: string | null;
 }
 
 export interface TurnoverEntry {
@@ -56,7 +57,7 @@ export async function loadSchemeHistory(clientId: string): Promise<SchemeChange[
 }
 
 const CLIENT_COLUMNS =
-  'id, name, gstin, registration_type, regular_sub_type, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand';
+  'id, name, gstin, registration_type, regular_sub_type, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, inactive_from';
 
 /** PostgREST returns at most 1000 rows a request; read every page. */
 async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {

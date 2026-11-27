@@ -56,23 +56,24 @@ export const PortalStatusCard: React.FC = () => {
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm font-medium">As-filed GSTR-3B</span>
-          <span className="text-sm font-semibold tabular-nums">{applied.length}/12 months</span>
+          <span className="text-sm font-semibold tabular-nums">{applied.length}/{w.activeMonths.length} months</span>
         </div>
         <div className="grid grid-cols-6 gap-1">
           {FY_MONTHS.map((m) => {
             const ok = applied.includes(m);
+            const off = !ok && !w.activeMonths.includes(m);
             const src = docs.portal.monthMeta[m]?.source;
             return (
               <span
                 key={m}
-                title={ok ? `${MONTH_LABEL[m]}: applied${src ? ` (${src.replace(/_/g, ' ')})` : ''}` : `${MONTH_LABEL[m]}: not fetched`}
+                title={ok ? `${MONTH_LABEL[m]}: applied${src ? ` (${src.replace(/_/g, ' ')})` : ''}` : off ? `${MONTH_LABEL[m]}: not active (after the client's active period)` : `${MONTH_LABEL[m]}: not fetched`}
                 className={cn(
                   'rounded border px-1 py-0.5 text-center text-[10px] font-medium',
-                  ok ? 'border-success/40 bg-success/10 text-foreground' : 'border-dashed text-muted-foreground',
+                  ok ? 'border-success/40 bg-success/10 text-foreground' : off ? 'border-dashed bg-muted/50 text-muted-foreground/60 line-through' : 'border-dashed text-muted-foreground',
                 )}
               >
                 {MONTH_LABEL[m]}
-                <span className="sr-only">{ok ? ' applied' : ' not fetched'}</span>
+                <span className="sr-only">{ok ? ' applied' : off ? ' not active' : ' not fetched'}</span>
               </span>
             );
           })}

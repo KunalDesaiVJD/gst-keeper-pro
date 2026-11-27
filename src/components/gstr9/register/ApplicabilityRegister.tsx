@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
 import { applicability, croreText, panOf, thresholdsFor, type Applicability, type ApplicabilityInput, type Override, type SchemeChange } from '@/lib/gstr9/applicability';
+import { dmyOf } from '@/lib/gstr9/activePeriod';
 import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { useStaffList } from '@/hooks/useStaffList';
 import { loadRegister, saveTurnover, signoffStateOf, type RegisterClient, type TurnoverPatch } from '@/lib/gstr9/register';
@@ -52,6 +53,8 @@ interface Row extends Entry, SignoffRowInfo {
   /** What the engine was given (without changes), for the override dialog. */
   input: ApplicabilityInput;
   inactive: boolean;
+  /** Deactivated during this FY: the working covers the months before the date. */
+  inactivePart: boolean;
 }
 
 type Filter = 'all' | 'file' | 'needed' | 'exempt' | 'na';
@@ -227,6 +230,8 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       schemeHistory: schemes.get(c.id),
       registrationDate: c.registration_date,
       cancellationDate: c.cancellation_date || c.registration_cancellation_date,
+      registrationCancellationDate: c.registration_cancellation_date,
+      inactiveFrom: c.inactive_from,
       turnover: e.turnover,
       gstr9OptIn: e.opt9,
       gstr9cOptIn: e.opt9c,
@@ -249,7 +254,10 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       s: st,
       returns: returnsText(a),
       inScope: a.file9 || a.gstr9 === 'unknown' || st.sheets > 0 || (st.stage !== 'not_started' && st.stage !== 'preparing'),
-      inactive: !!c.inactive_at_hand,
+      // Inactive with a date: only the years after it count as inactive; the year it falls in is a
+      // part-year working (activePeriod.ts), and earlier years are full years.
+      inactive: !!c.inactive_at_hand && (!c.inactive_from || a.period.months.length === 0),
+      inactivePart: !!c.inactive_at_hand && !!c.inactive_from && a.period.months.length > 0 && !!a.period.endReason,
     };
   }), [clients, entries, working, schemes, byPan, financialYear]);
 
@@ -480,6 +488,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         <span className="inline-flex items-center gap-1.5">
           <span>{r.type}</span>
           {r.inactive && <span className="text-[10px] text-muted-foreground">· inactive</span>}
+          {r.inactivePart && <span className="text-[10px] text-muted-foreground">· inactive from {dmyOf(r.c.inactive_from)}</span>}
         </span>
       ),
     },
@@ -632,6 +641,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       GSTIN: r.c.gstin ?? '',
       PAN: r.pan ?? '',
       Registration: r.type + (r.inactive ? ' (inactive)' : ''),
+      Period: r.a.period.partial ? r.a.period.label : '',
       'Aggregate turnover (₹)': r.turnover ?? '',
       'GSTR-9': g9Label(r),
       'GSTR-9C': g9cLabel(r),

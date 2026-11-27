@@ -802,6 +802,11 @@ export interface JustificationsDoc {
 export interface SettingsDoc {
   /** Per-head tolerance in rupees below which a difference needs no reason. */
   tolerance: number;
+  /**
+   * The part-year period the working was last prepared for (activePeriod.ts label), recorded when the
+   * client's dates make it a part-year working; a later change of the dates is then a recorded change.
+   */
+  coveredPeriod?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -893,4 +898,10 @@ export interface WorkspaceContext {
   capitalGoods?: CapitalGoodsAsset[];
   /** Builder clients: the approved Builder ITC Reversal workings (all years); the engine takes those posted in this FY. */
   builderReversals?: import('./builderReversal').BuilderReversalWorking[];
+  /**
+   * The months the client was active in the FY (activePeriod.ts: registration, cancellation,
+   * Inactive from). Months outside it are never asked for; figures found there are flagged.
+   * All twelve when omitted.
+   */
+  activeMonths?: MonthKey[];
 }

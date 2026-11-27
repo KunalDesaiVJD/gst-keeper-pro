@@ -547,6 +547,10 @@ export interface Workings {
 
   /** Which months have 3B figures in the working: any figure, output side, ITC side. */
   monthsPresent: Record<MonthKey, { any: boolean; out: boolean; itc: boolean }>;
+  /** The months the client was active (ctx.activeMonths; all twelve when not limited). */
+  activeMonths: MonthKey[];
+  /** Months outside the active period that still hold books or GSTR-3B figures. */
+  outsidePeriod: MonthKey[];
   /** Quarter-end months whose quarterly GSTR-3B (QRMP) is compared with three months of books, per side. */
   quarterly: { out: MonthKey[]; itc: MonthKey[] };
   /** Capital goods sold in the year — s.18(6) (Annexure-5, capitalGoods.ts). */
@@ -656,6 +660,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const outPresent = byMonth((m) => sidePresent(m, 'outTax'));
   const itcPresent = byMonth((m) => sidePresent(m, 'itcExclRcm'));
   const anyMonthPresent = FY_MONTHS.some((m) => monthsPresent[m]);
+  // The client's active months (part-year working, activePeriod.ts); all twelve when not limited.
+  const active: MonthKey[] = ctx.activeMonths?.length ? FY_MONTHS.filter((m) => ctx.activeMonths!.includes(m)) : [...FY_MONTHS];
   // QRMP: a quarterly GSTR-3B is filed for the quarter's last month only. For a quarterly client, a
   // quarter whose last month has a 3B on a side and whose first two months have none is compared as
   // a quarter: books of the three months against that one 3B (the last month carries the difference).
@@ -1426,13 +1432,20 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   }
   // "Not fetched" lines belong to the Portal data step, where the return is fetched; the Duties and
   // Outward reco steps still show them (PortalNote, the outward compare) by key.
+  // Months after the active period holding figures. A quarterly GSTR-3B filed in a quarter-end month
+  // that is not active still covers the quarter's active months, so it is not "outside".
+  const quarterHasActive = (m: MonthKey) => QUARTERS.some((q) => q[2] === m && q.some((k) => active.includes(k)));
+  const outsidePeriod = FY_MONTHS.filter((m) => !active.includes(m) && (
+    isNonZeroT(dtoMonths[m].net) || isNonZeroT(dtiMonths[m].net)
+    || ((monthsPresent[m] || isNonZeroT(dtoMonths[m].asPer3B) || isNonZeroT(dtiMonths[m].asPer3B)) && !quarterHasActive(m))
+  ));
   const missingLine = (key: string, step: StepKey, what: string, months: MonthKey[], books: Tax) => {
     if (!months.length) return;
     push(key, step, `${what}: GSTR-3B not fetched for ${months.map((m) => MONTH_LABEL[m]).join(', ')}`, withT(0, books), val(), {
       direction: 'Books − 3B', aLabel: 'Books (those months)', bLabel: 'Not fetched',
     });
   };
-  const dtoMissing = FY_MONTHS.filter((m) => !outPresent[m] && !inQuarter(qOut, m) && isNonZeroT(dtoMonths[m].net));
+  const dtoMissing = active.filter((m) => !outPresent[m] && !inQuarter(qOut, m) && isNonZeroT(dtoMonths[m].net));
   missingLine('dto.no3b', 'portal', 'Output tax', dtoMissing, addT(...dtoMissing.map((m) => dtoMonths[m].net)));
   FY_MONTHS.forEach((m) => {
     if (!outPresent[m]) return;
@@ -1446,8 +1459,21 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('dto.pl', 'duties', 'Output tax: P&L vs Duties & Taxes (annual)', withT(0, dtoAsPerPl), withT(0, dtoTotals.net), {
     direction: 'P&L − D&T', aLabel: 'As per P&L (Part A)', bLabel: 'Duties & Taxes net',
   });
-  const dtiMissing = FY_MONTHS.filter((m) => !itcPresent[m] && !inQuarter(qItc, m) && isNonZeroT(dtiMonths[m].net));
+  const dtiMissing = active.filter((m) => !itcPresent[m] && !inQuarter(qItc, m) && isNonZeroT(dtiMonths[m].net));
   missingLine('dti.no3b', 'portal', 'Input tax', dtiMissing, addT(...dtiMissing.map((m) => dtiMonths[m].net)));
+  // A part-year working (client inactive or cancelled during the year): figures after the active
+  // period are not dropped; they open a line to explain (e.g. a final return period) or remove.
+  if (outsidePeriod.length) {
+    const names = outsidePeriod.map((m) => MONTH_LABEL[m]).join(', ');
+    push('period.outside.out', 'portal', `Output tax after the active period (${names}): books vs GSTR-3B`,
+      withT(0, addT(...outsidePeriod.map((m) => dtoMonths[m].net))), withT(0, addT(...outsidePeriod.map((m) => dtoMonths[m].asPer3B))), {
+        direction: 'Books − 3B', aLabel: 'Books (months not active)', bLabel: 'As per GSTR-3B',
+      });
+    push('period.outside.itc', 'portal', `Input tax after the active period (${names}): books vs GSTR-3B`,
+      withT(0, addT(...outsidePeriod.map((m) => dtiMonths[m].net))), withT(0, addT(...outsidePeriod.map((m) => dtiMonths[m].asPer3B))), {
+        direction: 'Books − 3B', aLabel: 'Books (months not active)', bLabel: 'As per GSTR-3B (excl. RCM)',
+      });
+  }
   FY_MONTHS.forEach((m) => {
     if (!itcPresent[m]) return;
     const q = qItc.includes(m) ? QUARTERS.find((x) => x[2] === m)! : null;
@@ -1668,6 +1694,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     },
     notice: { outward: o, inward: inw, defaults: noticeDefaults },
     monthsPresent: byMonth((m) => ({ any: monthsPresent[m], out: outPresent[m], itc: itcPresent[m] })),
+    activeMonths: active,
+    outsidePeriod,
     quarterly: { out: qOut, itc: qItc },
     cg,
     diffs,
