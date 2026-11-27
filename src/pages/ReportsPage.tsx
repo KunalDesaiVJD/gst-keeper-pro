@@ -137,8 +137,8 @@ const ReportsPage: React.FC = () => {
       if (job.mode === 'gstr9_8a_pull') pollAttempts = 420;
       // A full GSTR-1 pull reads every section of up to twelve months: about 2 minutes a month.
       if (job.mode === 'gstr1_full_pull') pollAttempts = Math.max(36, job.periods.length * 15 + 30);
-      // A vendor GSTIN lookup: about 5 seconds a GSTIN on the portal.
-      if (job.mode === 'gstin_search') pollAttempts = Math.max(36, Math.ceil(((job.gstins?.length ?? 0) * 5 + 180) / 10));
+      // A vendor GSTIN lookup: about 15 seconds a GSTIN on the portal's Search Taxpayer page (0.19.2).
+      if (job.mode === 'gstin_search') pollAttempts = Math.max(36, Math.ceil(((job.gstins?.length ?? 0) * 15 + 180) / 10));
       if (job.clientIds) {
         // Several clients, one period: the extension's all-clients pull logs each in turn.
         window.postMessage({

@@ -107,7 +107,7 @@ cancellation reason only where the portal search shows it; lookups not run are
 "Verification required"; the turnover slab is the latest year the portal shows; the
 filing table as last pulled (`LIMITATIONS` in `rules.ts`, printed on the report).
 
-## Search Taxpayer lookup (extension 0.19.0)
+## Search Taxpayer lookup (extension 0.19.0; the page flow since 0.19.2)
 
 The report's **Pull** looks up the client's suppliers on the GST portal's
 logged-in *Search Taxpayer* and keeps every answer in
@@ -129,10 +129,11 @@ row has no `client_id`; `via_client_id` records only whose portal login made it.
 - **Only what is stale.** A GSTIN with an `ok` or `not_found` lookup in the last
   30 days (`vendor_gstin_latest.looked_up_at`) is left out; never looked up first,
   then the oldest. With none stale, all of them again (a refresh, said in a note).
-- **At most 150 a Pull** (about three paced portal requests each, ~10 minutes);
+- **At most 150 a Pull** (each looked up on the portal's page, about 10 to 15 seconds;
+  `ReportsPage` waits about 15 seconds a GSTIN);
   the note says how many are left for the next click.
 - **Extension version.** The plan starts nothing and says "needs browser extension
-  v0.19.0" only when the installed extension is older (or did not say its
+  v0.19.2" (`GSTIN_SEARCH_VERSION`) only when the installed extension is older (or did not say its
   version). `MIN_EXTENSION_VERSION` is unchanged (0.16.0): every other screen
   keeps working with 0.18.7.
 - The job is `{ mode: 'gstin_search', periods: [first month of the FY], gstins, label }`;
@@ -140,56 +141,103 @@ row has no `client_id`; `via_client_id` records only whose portal login made it.
   message (with the app user's `actorId`), and re-checks an open preview for
   about 5 seconds a GSTIN.
 
-### What the extension does (`extension/content.js`, `handleGstinSearch`)
+### What the extension does (`extension/content.js`, `handleGstinSearch`, 0.19.2)
+
+**Seen live with 0.19.1 (27 Nov 2026).** 0.19.0 asked guessed API addresses from
+fowelcome: `POST services/auth/api/search/tp` got the portal firewall's HTML
+"Request Rejected … Your support ID is …" page, and `.../search/taxpayerDetails`
+HTTP 403, which it took for a dropped session: the run stopped after one GSTIN
+(0 found, 1 failed, 149 not looked up) with the person still logged in. 0.19.2
+lets the portal's own page do the search instead.
 
 1. The client's usual login (CAPTCHA typed by a person, the session identity
    check), then `services/auth/fowelcome`.
-2. For each GSTIN, from that page (same origin, the session's cookies), one
-   request at a time, **1.5 s apart**:
-   - the taxpayer's details;
-   - if found, the return filing table; asked once more with the job's FY
-     (`2025-26`) when the plain ask brings none.
-3. One `vendor_gstin_lookups` row per GSTIN, inserted through the extension's
+2. **The Search by GSTIN/UIN page**: the dashboard menu's own link (an `<a>`
+   reading "Search by GSTIN/UIN", or one whose `href` holds `searchtp`), else
+   `services/auth/searchtp`, else the public `services/searchtp` (which asks a
+   CAPTCHA, see below). Each address is tried once; the one whose form shows is
+   kept for the run (and opened again after a re-login).
+3. **For each GSTIN, on that page**: typed into the GSTIN box (`#for_gstin`, else
+   the visible text box whose id / name / placeholder / ng-model names GSTIN or
+   UIN) with input / change / keyup / blur (as `setVal` fills every portal form),
+   then Search pressed (`#lotsearch`, else the visible button reading "Search";
+   once more after 15 s with no answer, never after a refused request). The result
+   is the panel's labels for this GSTIN (the page's text names it, or the labels
+   changed) or the page's own JSON for it; "No records found" / "invalid GSTIN"
+   in the page's message elements (`.err`, `.alert-danger`, `[role=alert]`, …) or
+   its JSON is `not_found`. Then **Show Filing Table** (a button or link reading
+   so) and the table read; for each FY of the job that the page's FY dropdown
+   offers (`2025-2026` or `2025-26`), that FY is chosen (and a Search / Go next to
+   it pressed if the table does not change) and its rows read.
+4. **Two sources, merged.** `inject.js` (page world) copies every
+   services.gst.gov.in request whose address names search / taxpayer / return
+   details (address, method, request body and headers, status, the answer) into
+   `sessionStorage.__gstkGS`; the content script reads the copies made since its
+   Search press. The JSON taxpayer and filing list are mapped as below; every
+   column the JSON does not give is read off the page (label → value, a list's
+   items for Nature of Business Activities and the jurisdictions). `payload`:
+   `flow` (`page` / `replay`), `page` (the address), `sources` (per column:
+   `json`, `page` or `replay`; filings `json`, `page`, `json+page`), `json` (the
+   page's requests and answers), `dom.labels` (every label read and its value),
+   `dom.filings`, `fys` (each FY: shown / read / not offered), `refused`,
+   `replayOff`. An error row keeps the requests seen, the page's messages and a
+   text snapshot of the page, so a wrong selector or mapping can be fixed from it.
+5. **The faster path.** After a lookup whose details and filing table both came
+   as JSON from the page's own `/services/auth/` requests carrying the GSTIN,
+   those requests are sent again (same address, method, body and headers, the
+   GSTIN swapped) for the next GSTINs. Any answer that is not that JSON (the
+   firewall's page, a 403, …) turns this off for the rest of the run and that
+   GSTIN is looked up on the page. The public CAPTCHA API
+   (`services/api/search/taxpayerDetails`) is never called by GST Keeper.
+6. One `vendor_gstin_lookups` row per GSTIN, inserted through the extension's
    usual `/rest/v1` path (`saveVendorGstinLookup` in `background.js`, which sends
    `x-gst-source: extension` and `x-gst-actor` = the job's `actorId`):
    `status` `ok` / `not_found` / `error`, `error` (the reason or the portal's
    words), `looked_up_by` (the app user), `via_client_id`, `extension_version`,
-   and `payload` = the portal's answers as they came, with the address that gave
-   each (`{ details: {url, status, body}, returns: [...] }`; for an error, every
-   address tried). `looked_up_at` is the database's clock.
+   `payload` as above. `looked_up_at` is the database's clock.
 
-**It stops, never loops:** a dropped session (HTTP 401 / 403, the login page, a
-"session expired" answer), a CAPTCHA asked for, no Search Taxpayer address
-answering at all, three failed lookups in a row, or two saves GST Keeper did not
-take. The GSTIN in flight gets an `error` row; the rest are not asked, and the
-banner counts found / not found / failed / not reached. Pull again takes the rest
-(they are still stale). A reload resumes after the last saved GSTIN.
+### Guardrails (`gsConf`)
 
-**No CAPTCHA is ever solved or bypassed.** The public search
-(`services/api/search/taxpayerDetails`) needs one and is never called; only the
-logged-in `/services/auth/` services are.
-
-### Endpoints (not confirmed live, 27 Nov 2026)
-
-Tried in order for the first GSTIN; the first that answers (a taxpayer, or "no
-such GSTIN") is kept for the rest of the job. An address answering 404 / 405 or
-an HTML page is skipped, and a JSON 404 that is only the server's own "Not
-Found" is not taken for "no such GSTIN".
-
-| Purpose | Request |
+| Situation | What happens |
 | --- | --- |
-| Details | `POST https://services.gst.gov.in/services/auth/api/search/tp` `{ gstin }` |
-| Details | `POST https://services.gst.gov.in/services/auth/api/search/taxpayerDetails` `{ gstin }` |
-| Details | `GET https://services.gst.gov.in/services/auth/api/search/tp?gstin=` |
-| Filing table | `POST https://services.gst.gov.in/services/auth/api/search/taxpayerReturnDetails` `{ gstin }`, then `{ gstin, fy }` |
-| Filing table | `GET https://services.gst.gov.in/services/auth/api/search/taxpayerReturnDetails?gstin=` (`&fy=`) |
+| "Request Rejected" page, HTTP 403 / 404 / 405, an HTML answer to a request | "endpoint refused": the GSTIN is retried once (page reloaded), then an `error` row naming the refusal (and its support ID) and "the session was still open"; the run goes on. Never "session ended". |
+| The session really ended | Only on evidence: the tab is on the login / error page, the page shows a login form, or fowelcome (opened to check after a failure on a page that shows no Logout) does. Then the client's usual login runs again, at most twice a run; the lookups resume from the GSTIN not yet saved (nothing is saved twice). A third loss stops the run with the reason. |
+| A CAPTCHA on the search page | Never filled or solved. The banner reads "Type the CAPTCHA on the portal page to continue"; Search is pressed only once the box holds what a person (or the firm's own CAPTCHA extension) typed, steady for one poll. Not typed within 3 minutes: an `error` row for that GSTIN, and the next one. |
+| No answer | 45 s a GSTIN (a CAPTCHA wait not counted), one retry after reloading the page, then an `error` row and the next GSTIN. |
+| A "No records found" left on the page | The page is reloaded before the next GSTIN, so it is never read as that GSTIN's answer. |
+| Failures in a row | The run stops after 5 failed lookups in a row, with the last reason; 4 then a success goes on. |
+| GST Keeper does not take the rows | Two failed saves stop the run. |
+| Pace and progress | 2 to 3 s between GSTINs; the banner shows "n of N" with found / not found / failed. A reload resumes after the last saved GSTIN; Pull again takes what was not reached (still stale). |
 
-"No such GSTIN" is read from the answer's words (`no record`, `not found`,
-`invalid GSTIN`, …, codes `SWEB_9035`, `SWEB_9022`, `FO8000`): also not confirmed
-live. Once the first live run is seen, the `payload` of its rows shows what the
-portal sent; fit the list and the mapping to it.
+**No CAPTCHA is ever solved or bypassed**, and no OCR, solver, proxy or cloud
+runner is involved: the CAPTCHA, where the page asks one, is a person's.
+
+### Not confirmed live (27 Nov 2026)
+
+- The logged-in Search by GSTIN/UIN address (`services/auth/searchtp`) and the
+  menu text; the page's selectors (`#for_gstin`, `#lotsearch`, the result labels,
+  "Show Filing Table", the FY dropdown and whether it needs its own Search) follow
+  the public Search Taxpayer page.
+- Whether the logged-in page asks a CAPTCHA (handled either way).
+- The page's own request addresses and whether a replay of them is accepted (the
+  replay turns itself off on the first refusal).
+- The "No records found" / "invalid GSTIN" wording (codes `SWEB_9035`,
+  `SWEB_9022`, `FO8000` in a JSON answer).
+
+After the first live run, read a row's `payload` (`page`, `sources`, `json`,
+`dom.labels`, `snapshot` on an error) and fit the selectors or the label list
+(`gsLabelMap`) to it.
 
 ### Field mapping (portal key → column)
+
+From the page's own JSON (or a replay of its request). A column the JSON does not
+give is read off the page by its label (`gsLabelMap`): Legal Name of Business,
+Trade Name, Effective Date of registration, Constitution of Business, GSTIN / UIN
+Status, Taxpayer Type, Administrative Office / Other Office (state or centre by
+the "(JURISDICTION - STATE / CENTER)" beside it), Principal Place of Business,
+Nature of Business Activities, Date of Cancellation, Aggregate Turnover (its FY
+from the label), e-invoice where shown; the filing table by its column headers
+(Return Type, Financial Year, Tax Period, Date of filing, Status, Mode).
 
 The taxpayer object is the answer itself or its `data` / `taxpayerInfo` /
 `taxpayerDetails` / `result` wrapper (a JSON string there is parsed).
@@ -214,8 +262,14 @@ The taxpayer object is the answer itself or its `data` / `taxpayerInfo` /
 
 ### Tests
 
-`extension/test/23-gstin-search.test.mjs` (the real `background.js` and
-`content.js` against a fake portal and database): the job carries its GSTINs and
-no other mode's does, the mapping, `not_found`, the fallback address, session
-expiry, CAPTCHA, no address, a server 404, three errors in a row, a bounce to the
-login page, a database refusing the rows, and a resumed run.
+`extension/test/23-gstin-search.test.mjs` (the real `background.js`, `content.js`
+and `inject.js` against a fake portal with a small DOM and a fake database): the
+job carries its GSTINs and no other mode's does; the menu's link, typing, Search,
+the result and Show Filing Table; the mapping from the page's JSON and from the
+page alone (FY dropdown chosen per FY); the replay, and a refused replay falling
+back to the page; "Request Rejected" and a 403 with the person still logged in
+never stop the run; a real logout logs in again and resumes; a third session loss
+stops; a CAPTCHA waited for (never filled), one never typed giving an error row;
+`not_found` and the clean reload after it; five failures in a row stop, four do
+not; a database refusing the rows; a resumed run; no search page anywhere; and
+`inject.js` copying only on services.gst.gov.in.

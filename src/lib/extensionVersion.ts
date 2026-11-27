@@ -124,6 +124,7 @@ const GAINS: [string, string][] = [
   ['0.18.7', "takes GST Receivable Reco's ITC utilised by the return's tax period (a late or same-month filing no longer gives another month's set-off) and reads every page of the credit ledger"],
   ['0.19.0', "looks up suppliers' GST registration and return filing on the portal's Search Taxpayer for the Vendor GSTIN Risk report"],
   ['0.19.1', "pulls every section of each month's filed GSTR-1 in one run for the full-year GSTR-1 documents report, without waiting on the portal's file"],
+  ['0.19.2', "looks up vendor GSTINs on the portal's own Search Taxpayer page, and a refused request or a CAPTCHA no longer stops the whole lookup"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
