@@ -349,7 +349,7 @@
     location.href = 'https://services.gst.gov.in/services/login';
     return;
   }
-  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr9_8a_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
+  if ((job.step === 'ledger' || job.step === 'reversal' || job.step === 'liabilityledger' || job.step === 'cashledger' || job.step === 'notices' || job.step === 'refunds_reg_check' || job.step === 'refunds_warmup' || job.step === 'refunds' || job.step === 'refund_docs' || job.step === 'drc03' || job.step === 'applications' || job.step === 'taxpayerprofile' || job.step === 'challans' || job.step === 'efiledpdf' || job.step === 'efiledview' || job.step === 'twob' || job.step === 'twobdwld' || job.step === 'twoa' || job.step === 'twoadwld' || job.step === 'filing' || job.step === 'gstr3b_pull' || job.step === 'gstr9_pull' || job.step === 'gstr9_8a_pull' || job.step === 'gstr1_pull' || job.step === 'gstr2a_pull' || job.step === 'gstr2b_pull_dash' || job.step === 'gstr2b_pull' || job.step === 'creditledgertxn' || job.step === 'gstr1_json_pull' || job.step === 'gstr1_full_pull' || job.step === 'revrclm_pull' || job.step === 'rcmliab_pull' || uploadSteps.includes(job.step)) && bounced) {
     job.retries = (job.retries || 0) + 1;
     if (job.retries > 2) {
       // 0.8.6: a GSTR-1 upload, NIL, Refresh errors or GSTR-3B push ends with a
@@ -408,6 +408,8 @@
         try { await GSTKdb.replaceCreditLedgerTxns(cur.clientId, job.period, [{ client_id: cur.clientId, period_month: job.period, is_debit: false, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading Credit Ledger' }]); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'gstr1_json_pull') {
         try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the filed GSTR-1 JSON' }); } catch (e2) { /* diagnostic only */ }
+      } else if (job.step === 'gstr1_full_pull') {
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading GSTR-1 section by section' }); } catch (e2) { /* diagnostic only */ }
       } else if (job.step === 'revrclm_pull') {
         const fy = (fyRangeForPull(job.period) || {}).fy || job.period;
         try { await GSTKdb.replaceCreditReversalReclaimEntries(cur.clientId, fy, [{ client_id: cur.clientId, financial_year: fy, description: 'PULL FAILED: session kept dropping (bounced to login/error page 3x) while reading the Credit Reversal and Re-claimed Statement' }]); } catch (e2) { /* diagnostic only */ }
@@ -467,6 +469,7 @@
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
     else if (job.step === 'gstr1_json_pull') await handleGstr1JsonPull(job, cur, progress);
+    else if (job.step === 'gstr1_full_pull') await handleGstr1FullPull(job, cur, progress);
     else if (job.step === 'revrclm_pull') await handleRevRclmPull(job, cur, progress);
     else if (job.step === 'rcmliab_pull') await handleRcmLiabPull(job, cur, progress);
     else if (job.step === 'gstr2b_pull_dash') await handleGstr2bPullDash(job, cur, progress);
@@ -1009,6 +1012,12 @@
         // and / or the 2B that job.want asks for (see stepFor2a2b / afterGstr2a).
         banner('Logged in: reading GSTR-2A and GSTR-2B…' + progress);
         job.step = stepFor2a2b(job);
+        await setJob(job);
+        location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstr1_full_pull') {
+        // 0.19.1: the full-year GSTR-1 documents report's Pull (see handleGstr1FullPull).
+        banner('Logged in — reading filed GSTR-1, every section…' + progress);
+        job.step = 'gstr1_full_pull';
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
       } else if (job.mode === 'gstin_search') {
@@ -6838,6 +6847,341 @@
     ]);
     banner('GSTR-1 filed JSON → saved ✓.' + progress, '#16a34a');
     await sleep(800);
+    await advance(job);
+  }
+
+  // ── 0.19.1: full GSTR-1 pull, every section of every month (mode gstr1_full_pull) ──
+  // The full-year GSTR-1 documents report's Pull. 0.18.7's gstr1_json_pull
+  // waits up to 90 s a month for the portal's offline file and, when the file
+  // is still being prepared (as it is for most months the first time: up to
+  // 20 minutes), saves nothing for that month, so a year took many Pulls. This
+  // mode never waits on the file alone. For each month:
+  //   1. the GSTR-1 summary (api/gstr1/summary, confirmed live): which sections
+  //      hold records, how many, and the counterparties of each;
+  //   2. the offline file once (offline/download/generate): taken if ready,
+  //      otherwise requested so the portal starts preparing it;
+  //   3. without the file, every section read from the portal's GSTR-1 view,
+  //      section by section and, where the summary lists counterparties (B2B,
+  //      CDNR, their amendments) or states (B2CL), one by one; each read is
+  //      tried up to three times, and the address that answers is kept for the
+  //      rest of the job;
+  //   4. what was read is checked against the summary's counts, section by
+  //      section, and saved with that record (full_json._gstk).
+  // A month left incomplete is tried again once at the end of the run, when
+  // its offline file has had time to be prepared (waiting up to 3 minutes for
+  // it then). A dropped session sends the tab to the dashboard without moving
+  // on, so the usual re-login (three at most) resumes the same month.
+  // NOT confirmed live: the section addresses of step 3 (api/gstr1/<section>,
+  // with ctin / state_cd / pos) are the likely ones by analogy with GSTR-2A's
+  // confirmed api/gstr2a/b2b?ctin=; full_json._gstk records which answered.
+  // Declared as functions (hoisted): content.js runs its job before reaching later const lines.
+  function g1Base() { return 'https://return.gst.gov.in/returns/auth/api/'; }
+  // Summary section name → JSON key, the portal's names for its view, and how it is split.
+  function g1Sections() { return [
+    { sec: 'B2B', key: 'b2b', names: ['b2b'], by: 'ctin', docs: (v) => sumLen(v, 'inv') },
+    { sec: 'B2BA', key: 'b2ba', names: ['b2ba'], by: 'ctin', docs: (v) => sumLen(v, 'inv') },
+    { sec: 'B2CL', key: 'b2cl', names: ['b2cl'], by: 'state', docs: (v) => sumLen(v, 'inv') },
+    { sec: 'B2CLA', key: 'b2cla', names: ['b2cla'], by: 'state', docs: (v) => sumLen(v, 'inv') },
+    { sec: 'B2CS', key: 'b2cs', names: ['b2cs'] },
+    { sec: 'B2CSA', key: 'b2csa', names: ['b2csa'] },
+    { sec: 'CDNR', key: 'cdnr', names: ['cdnr', 'cdn'], by: 'ctin', docs: (v) => sumLen(v, 'nt') },
+    { sec: 'CDNRA', key: 'cdnra', names: ['cdnra', 'cdna'], by: 'ctin', docs: (v) => sumLen(v, 'nt') },
+    { sec: 'CDNUR', key: 'cdnur', names: ['cdnur'], docs: (v) => (Array.isArray(v) ? v.length : 0) },
+    { sec: 'CDNURA', key: 'cdnura', names: ['cdnura'], docs: (v) => (Array.isArray(v) ? v.length : 0) },
+    { sec: 'EXP', key: 'exp', names: ['exp'], docs: (v) => sumLen(v, 'inv') },
+    { sec: 'EXPA', key: 'expa', names: ['expa'], docs: (v) => sumLen(v, 'inv') },
+    { sec: 'AT', key: 'at', names: ['at'] },
+    { sec: 'ATA', key: 'ata', names: ['ata'] },
+    { sec: 'TXPD', key: 'txpd', names: ['txp', 'txpd'], alt: ['txp'] },
+    { sec: 'TXPDA', key: 'txpda', names: ['txpa', 'txpda'], alt: ['txpa'] },
+    { sec: 'NIL', key: 'nil', names: ['nil'] },
+    { sec: 'HSN', key: 'hsn', names: ['hsnsum', 'hsn'], alt: ['hsnsum'] },
+    { sec: 'DOC_ISSUE', key: 'doc_issue', names: ['docissue', 'doc_issue', 'docs'], alt: ['docissue', 'doc_det'] },
+    { sec: 'SUPECO', key: 'supeco', names: ['supeco'] },
+    { sec: 'SUPECOA', key: 'supecoa', names: ['supecoa'] },
+    { sec: 'ECOM', key: 'ecom', names: ['ecom'] },
+    { sec: 'ECOMA', key: 'ecoma', names: ['ecoma'] },
+  ]; }
+  function sumLen(v, k) { return Array.isArray(v) ? v.reduce((a, x) => a + (x && Array.isArray(x[k]) ? x[k].length : 0), 0) : 0; }
+  function g1SessionLost(msg) { const e = new Error(msg); e.g1Session = true; return e; }
+
+  // One GET to the portal, three tries. { json } or { problem }; a lost session throws G1SessionLost.
+  async function g1Get(url) {
+    let problem = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await fetch(url, { credentials: 'include' });
+        if (r.status === 401 || r.status === 403) throw g1SessionLost('HTTP ' + r.status);
+        const text = await r.text();
+        if (/<html|<!doctype/i.test(text.slice(0, 200))) {
+          if (/services\/login|accessdenied|session/i.test(text) || /login/i.test(r.url || '')) throw g1SessionLost('the portal answered with its login page');
+          problem = 'HTTP ' + r.status + ', a web page instead of data';
+        } else {
+          let j = null;
+          try { j = JSON.parse(text); } catch (e) { j = null; }
+          // A refusal (5xx, 429…) is tried again; an answer that there is no data is an answer.
+          if (j && typeof j === 'object' && (r.ok || r.status === 404 || g1NoData(j))) return { json: j, status: r.status };
+          problem = 'HTTP ' + r.status + (j ? ': ' + JSON.stringify(j).slice(0, 120) : ', not JSON');
+        }
+        if (r.status === 404) return { problem };
+      } catch (e) {
+        if ((e && e.g1Session)) throw e;
+        problem = (e && e.message) || 'network error';
+      }
+      await sleep(800 * (attempt + 1));
+    }
+    return { problem };
+  }
+
+  // A section's data in an answer: under its key (or one of its other names), else under data.
+  function g1Pick(j, s) {
+    const roots = [j, j && j.data].filter((x) => x && typeof x === 'object');
+    for (const root of roots) {
+      for (const k of [s.key, ...s.names, ...(s.alt || [])]) {
+        if (root[k] !== undefined && root[k] !== null && (Array.isArray(root[k]) || typeof root[k] === 'object')) return root[k];
+      }
+    }
+    return undefined;
+  }
+  function g1NoData(j) {
+    const msg = JSON.stringify((j && (j.error || j.message || j.msg)) || '').toLowerCase();
+    return /no (data|record|invoice|document)|not found|no details/.test(msg);
+  }
+  function g1TooLarge(j) { return !!(j && (j.token || j.est || (j.data && (j.data.token || j.data.est)))); }
+
+  // The summary's sections: { B2B: { expected, cpty: [ctin…], states: [code…] } }.
+  function g1SummarySections(summary) {
+    const out = {};
+    const list = (summary && (summary.sec_sum || summary.secSum)) || [];
+    for (const x of Array.isArray(list) ? list : []) {
+      const name = String(x.sec_nm || x.secNm || '').toUpperCase();
+      if (!name) continue;
+      const cps = Array.isArray(x.cpty_sum) ? x.cpty_sum : [];
+      out[name] = {
+        expected: Number(x.ttl_rec || x.ttlRec || 0) || 0,
+        cpty: [...new Set(cps.map((c) => c && c.ctin).filter(Boolean))],
+        states: [...new Set(cps.map((c) => c && (c.state_cd || c.pos)).filter(Boolean))],
+      };
+    }
+    // A section the summary gives only in parts (B2B_4A, B2B_SEZWP…): its parts added up.
+    for (const s of g1Sections()) {
+      if (out[s.sec]) continue;
+      const parts = Object.keys(out).filter((k) => k.startsWith(s.sec + '_'));
+      if (!parts.length) continue;
+      out[s.sec] = {
+        expected: parts.reduce((a, k) => a + out[k].expected, 0),
+        cpty: [...new Set(parts.flatMap((k) => out[k].cpty))],
+        states: [...new Set(parts.flatMap((k) => out[k].states))],
+      };
+    }
+    return out;
+  }
+
+  // Read one section of the month; job.g1Api keeps the address form that answered.
+  async function g1ReadSection(job, rtnPrd, s, info) {
+    job.g1Api = job.g1Api || {};
+    const remembered = job.g1Api[s.sec];
+    const names = remembered ? [remembered] : s.names;
+    const tried = [];
+    const parts = s.by === 'ctin' && info && info.cpty.length ? info.cpty.map((c) => ['ctin', c])
+      : s.by === 'state' && info && info.states.length ? info.states.map((c) => ['state_cd', c]) : [null];
+    let merged = s.by || ['b2cs', 'b2csa', 'cdnur', 'cdnura', 'exp', 'expa', 'at', 'ata', 'txpd', 'txpda'].includes(s.key) ? [] : null;
+    const failedParts = [];
+    let answered = false;
+    for (const part of parts) {
+      let got = false;
+      for (const name of names) {
+        const qs = 'rtn_prd=' + rtnPrd + (part ? '&' + part[0] + '=' + encodeURIComponent(part[1]) : '');
+        const urls = [g1Base() + 'gstr1/' + name + '?' + qs];
+        if (part && part[0] === 'state_cd') urls.push(g1Base() + 'gstr1/' + name + '?rtn_prd=' + rtnPrd + '&pos=' + encodeURIComponent(part[1]));
+        for (const url of urls) {
+          const a = await g1Get(url);
+          await sleep(150); // deliberate throttle, as for GSTR-2A's suppliers
+          if (a.problem) { tried.push(name + ': ' + a.problem); continue; }
+          if (g1TooLarge(a.json)) { tried.push(name + ': the portal offers this section only as a file'); continue; }
+          const v = g1Pick(a.json, s);
+          if (v === undefined) {
+            if (g1NoData(a.json)) { got = true; answered = true; job.g1Api[s.sec] = name; break; }
+            tried.push(name + ': answered without ' + s.key + ' (' + JSON.stringify(a.json).slice(0, 120) + ')');
+            continue;
+          }
+          got = true; answered = true; job.g1Api[s.sec] = name;
+          if (Array.isArray(v)) { merged = (merged || []).concat(v); } else if (Array.isArray(merged) && v && typeof v === 'object') { merged.push(v); } else { merged = v; }
+          break;
+        }
+        if (got) break;
+      }
+      if (!got && part) failedParts.push(part[1]);
+      if (!got && !part) break;
+    }
+    return { data: answered ? merged : undefined, failedParts, problem: answered ? '' : (tried.slice(-3).join('; ') || 'no answer') };
+  }
+
+  // The offline file: { json } when ready, { pending } when the portal is preparing it, { problem }.
+  async function g1OfflineFile(rtnPrd, waitMs) {
+    const until = Date.now() + (waitMs || 0);
+    for (;;) {
+      const a = await g1Get(g1Base() + 'offline/download/generate?flag=0&rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1');
+      if (a.problem) return { problem: a.problem };
+      const j = a.json;
+      if (j && j.status === 1 && j.data && j.data.url) {
+        try {
+          const urls = Array.isArray(j.data.url) ? j.data.url : [j.data.url];
+          let out = null;
+          for (const u of urls) {
+            const { base64 } = await GSTKdb.fetchCrossOriginAsBase64(u);
+            const part = (await extractJsonFromZip(base64ToArrayBuffer(base64))).json;
+            if (!out) out = part;
+            else for (const [k, v] of Object.entries(part || {})) {
+              if (Array.isArray(v) && Array.isArray(out[k])) out[k] = out[k].concat(v);
+              else if (out[k] === undefined) out[k] = v;
+            }
+          }
+          if (!out) return { problem: 'the file was empty' };
+          // Never another period's file.
+          if (out.fp && String(out.fp) !== rtnPrd) return { problem: 'the portal gave the file of ' + out.fp + ', not ' + rtnPrd };
+          return { json: out };
+        } catch (e) { return { problem: 'the file could not be opened (' + ((e && e.message) || 'unknown') + ')' }; }
+      }
+      if (Date.now() >= until) return { pending: true };
+      await sleep(20000);
+    }
+  }
+
+  // Documents a section holds (null when the section has no document count).
+  function g1Count(s, v) { return s.docs ? s.docs(v) : null; }
+
+  // The record kept with the month: per section what the summary says and what was read.
+  function g1Check(json, sumSecs, sectionNotes) {
+    const sections = {};
+    let complete = true;
+    for (const s of g1Sections()) {
+      const info = sumSecs[s.sec];
+      const v = json ? json[s.key] : undefined;
+      const read = v === undefined ? null : g1Count(s, v);
+      const expected = info ? info.expected : 0;
+      const note = sectionNotes[s.sec] || {};
+      const hasRows = v !== undefined && (Array.isArray(v) ? v.length > 0 : !!v && Object.keys(v).length > 0);
+      if (!info && !hasRows && !note.problem) continue;
+      let ok;
+      if (!info || expected === 0) ok = true;
+      else if (read !== null) ok = read >= expected;
+      else ok = hasRows;
+      if (note.failedParts && note.failedParts.length) ok = false;
+      if (!ok) complete = false;
+      sections[s.sec] = { expected, read, ok, ...(note.api ? { api: note.api } : {}), ...(note.problem ? { problem: note.problem } : {}), ...(note.failedParts && note.failedParts.length ? { failed: note.failedParts.slice(0, 50) } : {}) };
+    }
+    return { sections, complete };
+  }
+
+  async function handleGstr1FullPull(job, cur, progress) {
+    if (!/return\.gst\.gov\.in/.test(location.hostname)) { location.href = 'https://return.gst.gov.in/returns/auth/dashboard'; return; }
+    const [mm, yyyy] = String(job.period || '').split('/').map((n) => parseInt(n, 10));
+    if (!mm || !yyyy) { banner('Bad GSTR-1 period.', '#dc2626'); await clearJob(); return; }
+    const rtnPrd = String(mm).padStart(2, '0') + yyyy;
+    const sweep = !!(job.g1Sweep && job.g1Sweep.includes(job.periodIdx));
+    const stopBeat = startHeartbeat();
+    try {
+      banner('GSTR-1 ' + job.period + ': reading the summary…' + progress);
+      const sa = await g1Get(g1Base() + 'gstr1/summary?rtn_prd=' + rtnPrd);
+      const summary = sa.json && sa.json.status === 1 ? sa.json.data : null;
+      if (!summary) {
+        const why = sa.problem ? 'PULL FAILED: GSTR-1 summary unavailable (' + sa.problem + ')' : 'NOT FILED / NOT FOUND';
+        banner('GSTR-1 ' + job.period + ': ' + (sa.problem ? 'the summary could not be read (' + sa.problem + ')' : 'not filed / not found on the portal') + ' — next month.' + progress, '#f59e0b');
+        try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: why }); } catch (e) { /* diagnostic only */ }
+        await sleep(1000);
+        await g1Next(job);
+        return;
+      }
+      let form = null;
+      try { const fa = await g1Get(g1Base() + 'formdetails?rtn_prd=' + rtnPrd + '&rtn_typ=GSTR1'); if (fa.json && fa.json.status === 1) form = fa.json.data; } catch (e) { if ((e && e.g1Session)) throw e; }
+      const sumSecs = g1SummarySections(summary);
+
+      // The portal's file first: ready → the whole return in one go.
+      banner('GSTR-1 ' + job.period + ': asking the portal for its file' + (sweep ? ' (second try, waiting up to 3 minutes)' : '') + '…' + progress);
+      const file = await g1OfflineFile(rtnPrd, sweep ? 180000 : 0);
+      let json = null, source = '';
+      const sectionNotes = {};
+      if (file.json) { json = file.json; source = 'file'; }
+      if (!json) {
+        // Every section the summary lists (and those it may leave out), read from the portal's view.
+        json = { gstin: cur.creds && cur.creds.gstin, fp: rtnPrd };
+        source = 'sections';
+        // The sections the summary lists with records; every section when the summary lists none
+        // (its shape not recognised); nil, HSN and documents issued always (their counts are not documents).
+        const listed = Object.keys(sumSecs).length > 0;
+        const wanted = g1Sections().filter((s) => !listed || (sumSecs[s.sec] && sumSecs[s.sec].expected > 0) || ['NIL', 'HSN', 'DOC_ISSUE'].includes(s.sec));
+        let i = 0;
+        for (const s of wanted) {
+          i++;
+          const info = sumSecs[s.sec];
+          const n = info && info.expected ? ' (' + info.expected + ' records' + (s.by === 'ctin' && info.cpty.length ? ', ' + info.cpty.length + ' parties' : '') + ')' : '';
+          banner('GSTR-1 ' + job.period + ': reading ' + s.sec + n + ', section ' + i + ' of ' + wanted.length + '…' + progress);
+          const r = await g1ReadSection(job, rtnPrd, s, info);
+          if (r.data !== undefined) json[s.key] = r.data;
+          sectionNotes[s.sec] = { api: job.g1Api && job.g1Api[s.sec], problem: r.problem, failedParts: r.failedParts };
+          await setJob(job);
+        }
+      }
+      const check = g1Check(json, sumSecs, sectionNotes);
+      json._gstk = {
+        v: EXT_VERSION, mode: 'gstr1_full_pull', source, complete: check.complete, at: new Date().toISOString(),
+        fileRequested: source !== 'file', ...(file.problem ? { fileProblem: file.problem } : {}),
+        sections: check.sections,
+      };
+      const patch = {
+        arn: (form && form.arn) || null,
+        filed_date: form && form.fil_dt ? ddmmyyyyToIso(String(form.fil_dt).replace(/-/g, '/')) : null,
+        status: form && form.status === 'FIL' ? 'Filed' : ((form && form.status) || 'Filed'),
+        summary,
+        full_json: json,
+        full_json_pulled_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (!patch.arn) delete patch.arn;
+      if (!patch.filed_date) delete patch.filed_date;
+      let saved = true;
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', patch); } catch (e) { saved = false; }
+      const short = Object.entries(check.sections).filter(([, x]) => !x.ok).map(([k, x]) => k + (x.read !== null && x.expected ? ' ' + x.read + '/' + x.expected : ''));
+      if (!check.complete && !sweep) {
+        job.g1Later = [...new Set([...(job.g1Later || []), job.period])];
+      }
+      debugPanel([
+        'STEP: GSTR-1 full pull  (' + location.pathname + ')',
+        'source            : ' + (source === 'file' ? "the portal's offline file" : 'read section by section'),
+        'complete          : ' + (check.complete ? 'yes' : 'no — ' + short.join(', ')),
+      ]);
+      banner('GSTR-1 ' + job.period + (saved ? ' → saved ✓ ' : ' → could not be saved ') + (check.complete ? '(complete' + (source === 'file' ? ', portal file)' : ', read section by section)') : '(incomplete: ' + short.join(', ') + (sweep ? ')' : '; tried again at the end of the run)')) + progress, saved && check.complete ? '#16a34a' : '#f59e0b');
+      await sleep(900);
+      await g1Next(job);
+    } catch (e) {
+      if ((e && e.g1Session)) {
+        // The session dropped: the usual bounce (re-login, three at most) brings the tab back to this month.
+        banner('GSTR-1 ' + job.period + ': the portal session dropped (' + e.message + ') — logging in again to carry on…' + progress, '#f59e0b');
+        await setJob(job);
+        await sleep(800);
+        location.href = 'https://services.gst.gov.in/services/login';
+        return;
+      }
+      banner('GSTR-1 ' + job.period + ': ' + ((e && e.message) || 'unknown error') + ' — next month.' + progress, '#dc2626');
+      try { await GSTKdb.upsertFiledReturn(cur.clientId, job.period, 'GSTR1', { status: 'PULL FAILED: ' + ((e && e.message) || 'unknown error') }); } catch (e2) { /* diagnostic only */ }
+      await sleep(1200);
+      await g1Next(job);
+    } finally {
+      stopBeat();
+    }
+  }
+
+  // After the last month: the months left incomplete once more (their file has had time), then the usual advance.
+  async function g1Next(job) {
+    const last = job.periodIdx + 1 >= job.periods.length;
+    if (last && Array.isArray(job.g1Later) && job.g1Later.length && !job.g1Swept) {
+      job.g1Swept = true;
+      job.g1Sweep = [];
+      for (const p of job.g1Later) { job.g1Sweep.push(job.periods.length); job.periods.push(p); }
+      banner('GSTR-1: ' + job.g1Later.length + ' month(s) incomplete — trying them once more, with the portal\'s file…', '#2563eb');
+      await setJob(job);
+    }
     await advance(job);
   }
 

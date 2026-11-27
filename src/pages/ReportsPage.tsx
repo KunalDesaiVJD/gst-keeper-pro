@@ -135,6 +135,8 @@ const ReportsPage: React.FC = () => {
       toast.info(`Pulling ${describeJob(job)} in one portal tab: type the CAPTCHA once at login.`);
       if (rest.length) toast.info(`After this finishes, click Pull again to fetch ${rest.map(describeJob).join('; ')}.`);
       if (job.mode === 'gstr9_8a_pull') pollAttempts = 420;
+      // A full GSTR-1 pull reads every section of up to twelve months: about 2 minutes a month.
+      if (job.mode === 'gstr1_full_pull') pollAttempts = Math.max(36, job.periods.length * 15 + 30);
       // A vendor GSTIN lookup: about 5 seconds a GSTIN on the portal.
       if (job.mode === 'gstin_search') pollAttempts = Math.max(36, Math.ceil(((job.gstins?.length ?? 0) * 5 + 180) / 10));
       if (job.clientIds) {

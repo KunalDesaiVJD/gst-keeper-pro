@@ -153,6 +153,24 @@ globalThis.__db = {
   check('all-clients reports need no client picked', ['rcm-tax-paid-vs-itc-claimed-all', 'itc-claimed-vs-utilized-all', 'interest-late-fee-all-clients', 'interest-scrutiny', 'rule42-short-reversal-all-clients'].every((k) => byKey[k].pull?.allClients === true));
 }
 
+// 6b. The full-year GSTR-1 documents report: missing or incomplete months, by the extension's version.
+{
+  const C = 'g1-client';
+  const row = (m, extra = {}) => ({ client_id: C, return_type: 'GSTR1', period_month: m, full_json_pulled_at: '2026-10-01T00:00:00Z', gstk: null, ...extra });
+  globalThis.__db.gst_filed_returns = [
+    ...globalThis.__db.gst_filed_returns.filter((r) => r.client_id !== C),
+    row('04/2025'), row('05/2025', { gstk: { complete: true } }), row('06/2025', { gstk: { complete: false } }), row('07/2025', { full_json_pulled_at: null }),
+  ];
+  const fy = ['04/2025', '05/2025', '06/2025', '07/2025', '08/2025', '09/2025', '10/2025', '11/2025', '12/2025', '01/2026', '02/2026', '03/2026'];
+  const a = await P.planGstr1JsonYear({ clientId: C, periods: ['09/2025'], extVersion: '0.19.1' });
+  check('GSTR-1 year: 0.19.1 reads the incomplete and missing months in one run', a.jobs.length === 1 && a.jobs[0].mode === 'gstr1_full_pull' && same(a.jobs[0].periods, fy.filter((m) => !['04/2025', '05/2025'].includes(m))) && !a.note, JSON.stringify(a));
+  const b = await P.planGstr1JsonYear({ clientId: C, periods: ['09/2025'], extVersion: '0.18.7' });
+  check('GSTR-1 year: an older extension gets the file pull and a note to update', b.jobs[0].mode === 'gstr1_json_pull' && /0\.19\.1/.test(b.note || ''), JSON.stringify(b));
+  const report = REPORTS_CATALOG.find((r) => r.key === 'gstr1-documents-full-year');
+  const c = await report.pull.plan({ clientId: C, periods: ['09/2025'], extVersion: '0.19.1' });
+  check('GSTR-1 year: the catalog passes the extension version on', c.jobs[0].mode === 'gstr1_full_pull', JSON.stringify(c.jobs));
+}
+
 // 7. Every mode a Pull names is one the extension runs.
 {
   const content = readFileSync(path.join(root, 'extension/content.js'), 'utf8');

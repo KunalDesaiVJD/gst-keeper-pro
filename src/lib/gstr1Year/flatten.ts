@@ -98,7 +98,8 @@ const walk = (node: unknown, ctx: FlatRow, section: string, sub: string, out: Se
 /** Every section of one month's GSTR-1 JSON, in the form's order. */
 export const flattenGstr1 = (json: unknown): SectionRow[] => {
   if (!isObj(json)) return [];
-  const keys = Object.keys(json).filter((k) => !HEADER_KEYS.has(k) && (Array.isArray(json[k]) || isObj(json[k])));
+  // `_gstk` (and any `_` key) is the extension's record of the pull, not a section.
+  const keys = Object.keys(json).filter((k) => !HEADER_KEYS.has(k) && !k.startsWith('_') && (Array.isArray(json[k]) || isObj(json[k])));
   keys.sort((a, b) => sectionInfo(a).order - sectionInfo(b).order || a.localeCompare(b));
   const out: SectionRow[] = [];
   for (const k of keys) walk(json[k], {}, k, '', out);
@@ -205,3 +206,28 @@ export const NIL_SUPPLY: Record<string, string> = {
   INTRAB2B: 'Intra-state supplies to registered persons',
   INTRAB2C: 'Intra-state supplies to unregistered persons',
 };
+
+/** The extension's record of a full GSTR-1 pull (full_json._gstk, extension 0.19.1). */
+export interface PullRecord {
+  source: 'file' | 'sections';
+  complete: boolean;
+  sections: Record<string, { expected: number; read: number | null; ok: boolean; api?: string; problem?: string; failed?: string[] }>;
+}
+
+export const pullRecordOf = (json: unknown): PullRecord | null => {
+  const g = json && typeof json === 'object' ? (json as Record<string, unknown>)._gstk : null;
+  if (!g || typeof g !== 'object') return null;
+  const r = g as Record<string, unknown>;
+  return {
+    source: r.source === 'file' ? 'file' : 'sections',
+    complete: r.complete === true,
+    sections: (r.sections && typeof r.sections === 'object' ? r.sections : {}) as PullRecord['sections'],
+  };
+};
+
+/** What a record says is short, in words: "B2B 40 of 42 (2 customers did not answer), HSN not read". */
+export const shortfallOf = (rec: PullRecord): string =>
+  Object.entries(rec.sections).filter(([, x]) => !x.ok).map(([k, x]) => {
+    const n = x.read !== null && x.read !== undefined && x.expected ? `${k} ${x.read} of ${x.expected}` : `${k} not read`;
+    return x.failed && x.failed.length ? `${n} (${x.failed.length} ${x.failed.length === 1 ? 'party' : 'parties'} did not answer)` : n;
+  }).join(', ');

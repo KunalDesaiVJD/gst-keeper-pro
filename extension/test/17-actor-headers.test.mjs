@@ -73,7 +73,7 @@ const ok = (cond, name) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if 
 const restCalls = () => calls.filter((c) => c.url.startsWith(DB + '/rest/v1/'));
 
 const version = JSON.parse(read('manifest.json')).version;
-ok(version === '0.19.0', 'manifest is 0.19.0 (0.17.0 brought these headers; 0.18.x adds the Table 8A pull, the appeal files, the GSTR-1 upload watch and the ledger read by tax period; 0.19.0 the vendor GSTIN lookup)');
+ok(version === '0.19.1', 'manifest is 0.19.1 (0.17.0 brought these headers; 0.18.x adds the Table 8A pull, the appeal files, the GSTR-1 upload watch and the ledger read by tax period; 0.19.0 the vendor GSTIN lookup; 0.19.1 the full GSTR-1 pull)');
 
 // 1. A job the app started: every write names the app user.
 await local.set({ gstk_active_job: { mode: 'filing', actorId: GITA, tabId: 1 } });
