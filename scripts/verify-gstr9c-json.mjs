@@ -64,6 +64,9 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   C.t9.K2 = { t: 500, i: 0, c: 45, s: 45, x: 0 };
   C.t9Other.L = { i: 100, c: 0, s: 0, x: 0 };
   C.t9Q = { i: 5_00_100, c: 4_00_060, s: 4_00_060, x: 0 };
+  // The GSTR-9 the portal checks 5Q and 9Q against (5N + 10 − 11; Table 9 + 14 paid) says the same.
+  d.gstr9.t10 = { t: 1_24_90_000, i: 0, c: 0, s: 0, x: 0 };
+  Object.assign(d.gstr9.t14, { igst: { payable: 5_00_100, paid: 5_00_100 }, cgst: { payable: 4_00_060, paid: 4_00_060 }, sgst: { payable: 4_00_060, paid: 4_00_060 } });
   C.t11.C = { t: 1000, i: 0, c: 90, s: 90, x: 0 };
   C.t16 = { A: 10, B: 10, C: 0, D: 0, E: 1, F: 0 };
   C.partV.C = { t: 1000, i: 0, c: 90, s: 90, x: 0 };
@@ -195,6 +198,38 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   ok("5P / 5R from the utility's own sample tie with the formula", !probs.some((m) => m.includes('table5')), probs.join('; '));
   // The sample's 7A is 0 although its 5P is 55,819,623 (an old FY 2018-19 build); only that one line may differ.
   ok("7E / 7G from the utility's own sample tie with the formula", !probs.some((m) => m.includes('7E') || m.includes('7G')), probs.join('; '));
+}
+
+// 8. The portal's GSTR-9 checks (27 Nov 2026): 5Q = GSTR-9 5N + 10 − 11, 9Q = GSTR-9 Table 9 + 14 paid, per head.
+{
+  // Table 10 tax paid through Table 14 (the case the portal refused): 9Q's default carries it.
+  const d = D.emptyDocs();
+  d.gstr9.t10 = { t: 0, i: 0, c: 17598.93, s: 17598.93, x: 0 };
+  Object.assign(d.gstr9.t14, { cgst: { payable: 17598.93, paid: 17598.93 }, sgst: { payable: 17598.93, paid: 17598.93 } });
+  const w = E.computeWorkings(d, ctx);
+  eq('9Q default carries Table 14 CGST paid', w.gstr9c.t9.Q.c, 17598.93);
+  eq('9Q default carries Table 14 SGST paid', w.gstr9c.t9.Q.s, 17598.93);
+  const line9 = w.diffs.find((x) => x.key === 'gstr9c.9Q');
+  ok('9Q tie line present and matched', !!line9 && !line9.open);
+  const b = build(d);
+  ok('defaults tie: no G9TIE error', !rules(b).includes('G9TIE'), JSON.stringify(b.checks));
+
+  // 9Q typed as Table 9 alone (the refused upload): blocked, and no reason closes it.
+  d.gstr9c.t9Q = { i: 0, c: 0, s: 0, x: 0 };
+  d.justifications = { ...(d.justifications ?? {}), 'gstr9c.9Q': { text: 'explained', by: 'x', at: '2026-11-27' } };
+  const w2 = E.computeWorkings(d, ctx);
+  const l2 = w2.diffs.find((x) => x.key === 'gstr9c.9Q');
+  ok('9Q typed off the GSTR-9: open, whatever the reason', !!l2 && l2.open && !!l2.mustTie);
+  ok('9Q typed off the GSTR-9: JSON refused (G9TIE)', rules(build(d)).filter((r) => r === 'G9TIE').length === 2);
+
+  // 5Q typed off the GSTR-9 turnover: blocked.
+  const d3 = D.emptyDocs();
+  d3.gstr9c.t5Q = 1000;
+  const w3 = E.computeWorkings(d3, ctx);
+  ok('5Q typed off the GSTR-9: open', !!w3.diffs.find((x) => x.key === 'gstr9c.5Q' && x.open));
+  ok('5Q typed off the GSTR-9: JSON refused (G9TIE)', rules(build(d3)).includes('G9TIE'));
+  // A client with no 9C has no such lines.
+  ok('no 9C: no tie lines', !E.computeWorkings(D.emptyDocs(), { ...ctx, no9c: true }).diffs.some((x) => x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q'));
 }
 
 if (failed) {

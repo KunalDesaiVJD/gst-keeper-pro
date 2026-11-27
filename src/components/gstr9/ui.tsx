@@ -206,6 +206,29 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
 
   const canWrite = !readOnly && (mag >= 0.005 || !!text);
 
+  // A line the portal checks for equality: no reason closes it, so it shows what to fix instead.
+  if (d.mustTie) {
+    return (
+      <Popover>
+        <PopoverTrigger asChild>
+          <button type="button" className={cn('inline-flex items-center', className)} aria-label={`${d.label}: ${status.label}`} title={compact ? status.label : undefined}>
+            <Badge variant={status.variant} className={cn('gap-1 whitespace-nowrap text-[10px] font-medium', compact && 'px-1.5')}>
+              {status.icon}
+              {!compact && status.label}
+            </Badge>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-96 space-y-2" align="end">
+          <div className="text-sm font-semibold">{d.label}</div>
+          <div className="text-xs text-muted-foreground">
+            {d.direction}: <span className="font-medium text-foreground">{diffSummary(d)}</span>
+          </div>
+          {d.open ? <Note tone="warn">{d.mustTie} A reason cannot close this line; review and lock stay blocked until it matches.</Note> : <Note>Matches the GSTR-9, as the portal checks.</Note>}
+        </PopoverContent>
+      </Popover>
+    );
+  }
+
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) setDraft(d.justification?.text ?? ''); }}>
       <PopoverTrigger asChild>

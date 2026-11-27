@@ -208,7 +208,12 @@ export interface DiffLine {
    * carries those reasons, so the line stays open until they are typed.
    */
   remarkMissing?: string;
-  /** requiresReason && (no justification || stale || remarkMissing). */
+  /**
+   * A line the GST portal checks for equality (GSTR-9C 5Q and 9Q against the GSTR-9): no
+   * reason closes it, only the figure. Holds what to fix, shown instead of the reason editor.
+   */
+  mustTie?: string;
+  /** requiresReason && (no justification || stale || remarkMissing); a mustTie line: any difference. */
   open: boolean;
 }
 
@@ -1279,8 +1284,12 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   });
   GSTR9C_T9_OTHER_KEYS.forEach((k) => { c9rows[k] = withT(0, C.t9Other[k] || tax()); });
   const c9P = addV(...Object.values(c9rows));
-  // POSITION: 9Q is the tax paid in GSTR-9 Table 9 (cash + ITC), as the form reads; the sheet took the payable.
-  const c9QDefault = tax(t9.igst.paid, t9.cgst.paid, t9.sgst.paid, t9.cess.paid);
+  // POSITION: 9Q is the tax paid as declared in GSTR-9: Table 9 (cash + ITC) plus Table 14's differential
+  // tax paid on Tables 10 / 11, per head, which is what the portal checks tot_amt_paid against (the firm,
+  // 27 Nov 2026, after the portal refused a 9C that carried Table 9 alone); the sheet took the payable.
+  const t14Paid = tax(G.t14.igst.paid, G.t14.cgst.paid, G.t14.sgst.paid, G.t14.cess.paid);
+  const g9TaxPaid = addT(tax(t9.igst.paid, t9.cgst.paid, t9.sgst.paid, t9.cess.paid), t14Paid);
+  const c9QDefault = g9TaxPaid;
   const c9Q = C.t9Q === null || C.t9Q === undefined ? c9QDefault : tin(C.t9Q);
   const c9R = subT(c9Q, taxOf(c9P));
 
@@ -1299,7 +1308,6 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t16Deemed = taxOf(G.t16.deemedSupply);
   const t16Approval = taxOf(G.t16.approvalNotReturned);
   const t15Pending = tax(G.t15.demandPending.i, G.t15.demandPending.c, G.t15.demandPending.s, G.t15.demandPending.x);
-  const t14Paid = tax(G.t14.igst.paid, G.t14.cgst.paid, G.t14.sgst.paid, G.t14.cess.paid);
   const o = {} as Workings['notice']['outward'];
   o.r1 = g4NTax; // 4N
   o.r2 = subT(taxOf(t10), taxOf(t11)); // 10 − 11 (the sheet shifts these one column)
@@ -1352,6 +1360,8 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
       direction: string; aLabel: string; bLabel: string; hasTaxable?: boolean; hasTax?: boolean; informational?: boolean; legacyFlip?: boolean;
       /** The form's own reasons box for this line (GSTR-9C) and its table: blank = open. */
       remark?: { table: string; text: string | null | undefined };
+      /** The portal checks this line for equality: open on any difference, whatever reason is given. */
+      mustTie?: string;
     },
   ) => {
     const hasTaxable = opts.hasTaxable ?? false;
@@ -1359,6 +1369,17 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const diff = subV(a, b);
     const mag = Math.max(hasTax ? maxAbs(diff) : 0, hasTaxable ? Math.abs(diff.t) : 0);
     const informational = !!opts.informational || itcLine(key);
+    if (opts.mustTie) {
+      // The portal compares to the paisa (rounded to two places), so no tolerance applies.
+      const off = mag >= 0.005;
+      diffs.push({
+        key, step, label, a, b, diff,
+        direction: opts.direction, aLabel: opts.aLabel, bLabel: opts.bLabel,
+        hasTaxable, hasTax, informational: false, requiresReason: off,
+        justification: null, stale: false, mustTie: opts.mustTie, open: off,
+      });
+      return;
+    }
     const requiresReason = !informational && mag > tol + 1e-9;
     const j = J[key] || null;
     let stale = false;
@@ -1531,6 +1552,18 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   push('gstr9c.5R', 'gstr9c', 'GSTR-9C 5R: un-reconciled turnover (Q − P)', val(t5Q), val(t5P), {
     direction: 'Q − P', aLabel: 'As per GSTR-9 (Q)', bLabel: 'After adjustments (P)', hasTaxable: true, hasTax: false, remark: { table: '6', text: C.t6Reasons },
   });
+  if (!ctx.no9c) {
+    // The portal refuses the 9C upload when 5Q or 9Q differs from the GSTR-9 (annul_turn_decl,
+    // tot_amt_paid), and then 5R / 9R with them (unrec_turnovr, unrec_tax_turn). No reason closes these.
+    push('gstr9c.5Q', 'gstr9c', 'GSTR-9C 5Q: annual turnover declared vs GSTR-9 (5N + 10 − 11)', val(t5Q), val(totalTurnover.t), {
+      direction: '9C 5Q − GSTR-9', aLabel: 'GSTR-9C 5Q', bLabel: 'GSTR-9 5N + 10 − 11', hasTaxable: true, hasTax: false,
+      mustTie: 'The portal refuses the GSTR-9C when 5Q (annual turnover declared) differs from the GSTR-9: 5N + Table 10 − Table 11. Reset 5Q to the GSTR-9 figure, or correct the GSTR-9 working so it matches the GSTR-9 as filed.',
+    });
+    push('gstr9c.9Q', 'gstr9c', 'GSTR-9C 9Q: total amount paid vs GSTR-9 (Table 9 + Table 14 paid)', withT(0, c9Q), withT(0, g9TaxPaid), {
+      direction: '9C 9Q − GSTR-9', aLabel: 'GSTR-9C 9Q', bLabel: 'GSTR-9 Table 9 + 14 paid',
+      mustTie: 'The portal refuses the GSTR-9C when 9Q (total amount paid) differs, head by head, from the tax paid in the GSTR-9: Table 9 (cash + ITC) plus the differential tax paid in Table 14. Reset 9Q to the GSTR-9 figure, or correct the GSTR-9 working so it matches the GSTR-9 as filed.',
+    });
+  }
   push('gstr9c.7G', 'gstr9c', 'GSTR-9C 7G: un-reconciled taxable turnover (F − E)', val(c7.F), val(c7.E), {
     direction: 'F − E', aLabel: 'As per GSTR-9 (F)', bLabel: 'After adjustments (E)', hasTaxable: true, hasTax: false, remark: { table: '8', text: C.t8Reasons },
   });
@@ -1668,6 +1701,7 @@ export function diffStatus(d: DiffLine, tolerance: number): { kind: DiffStatusKi
   const text = d.justification?.text?.trim() ?? '';
   const mag = Math.max(d.hasTax ? maxAbs(d.diff) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
   if (d.stale) return { kind: 'recheck', label: 'Re-check' };
+  if (d.open && d.mustTie) return { kind: 'open', label: 'Must match GSTR-9' };
   if (d.open) return { kind: 'open', label: d.remarkMissing && text ? `${d.remarkMissing} reasons needed` : 'Reason needed' };
   if (text) return { kind: 'justified', label: 'Justified' };
   if (mag < 0.005) return { kind: 'matched', label: 'Matched' };
