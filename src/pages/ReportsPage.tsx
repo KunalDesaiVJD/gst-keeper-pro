@@ -135,6 +135,8 @@ const ReportsPage: React.FC = () => {
       toast.info(`Pulling ${describeJob(job)} in one portal tab: type the CAPTCHA once at login.`);
       if (rest.length) toast.info(`After this finishes, click Pull again to fetch ${rest.map(describeJob).join('; ')}.`);
       if (job.mode === 'gstr9_8a_pull') pollAttempts = 420;
+      // A vendor GSTIN lookup: about 5 seconds a GSTIN on the portal.
+      if (job.mode === 'gstin_search') pollAttempts = Math.max(36, Math.ceil(((job.gstins?.length ?? 0) * 5 + 180) / 10));
       if (job.clientIds) {
         // Several clients, one period: the extension's all-clients pull logs each in turn.
         window.postMessage({
@@ -153,6 +155,7 @@ const ReportsPage: React.FC = () => {
             period_month: job.periods[0],
             period_months: job.periods,
             ...(job.want ? { want: job.want } : {}),
+            ...(job.gstins ? { gstins: job.gstins } : {}),
             actorId: user?.id ?? null,
           },
         }, '*');

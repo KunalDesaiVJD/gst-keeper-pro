@@ -122,6 +122,7 @@ const GAINS: [string, string][] = [
   ['0.18.5', "downloads the files of an appeal that has no notice yet, from its own case folder"],
   ['0.18.6', "sends a GSTR-1 JSON once per push: if the portal logs out after the upload it logs in again only to read the upload's status, and waits up to 20 minutes for it"],
   ['0.18.7', "takes GST Receivable Reco's ITC utilised by the return's tax period (a late or same-month filing no longer gives another month's set-off) and reads every page of the credit ledger"],
+  ['0.19.0', "looks up suppliers' GST registration and return filing on the portal's Search Taxpayer for the Vendor GSTIN Risk report"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {

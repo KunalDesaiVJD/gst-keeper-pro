@@ -604,6 +604,25 @@ const API = {
   pwRefusalList: async () => Object.entries(await pwRefusals())
     .map(([clientId, m]) => ({ clientId, name: m.name || null, at: m.at, reason: m.reason, message: m.message })),
 
+  // 0.19.0: one Search Taxpayer lookup of a vendor GSTIN (mode gstin_search),
+  // one new row of vendor_gstin_lookups (history: never updated). Only the
+  // table's own columns are sent; looked_up_at is the database's clock.
+  saveVendorGstinLookup: async (row) => {
+    const r = row || {};
+    const gstin = String(r.gstin || '').trim().toUpperCase();
+    if (!/^[0-9A-Z]{15}$/.test(gstin)) throw new Error('not a GSTIN: ' + String(r.gstin || '').slice(0, 20));
+    if (!['ok', 'not_found', 'error'].includes(r.status)) throw new Error('unknown lookup status ' + r.status);
+    const cols = ['status', 'error', 'extension_version', 'looked_up_by', 'via_client_id', 'legal_name', 'trade_name', 'reg_status',
+      'reg_date', 'cancel_date', 'cancel_reason', 'taxpayer_type', 'constitution', 'state_jurisdiction', 'centre_jurisdiction',
+      'address', 'nature_of_business', 'ato_slab', 'einvoice_status', 'filings', 'payload'];
+    const out = { gstin, source: 'gst_portal_search_taxpayer' };
+    for (const k of cols) if (r[k] !== undefined) out[k] = r[k];
+    if (out.looked_up_by != null && !UUID_RE.test(String(out.looked_up_by))) out.looked_up_by = null;
+    if (!out.extension_version) out.extension_version = EXT_VERSION;
+    await post('vendor_gstin_lookups', [out]);
+    return true;
+  },
+
   upsertTaxpayerProfile: async (clientId, patchObj) => {
     const write = async (obj) => {
       const ex = await sel(`gst_taxpayer_profile?client_id=eq.${clientId}&select=id&limit=1`);
@@ -960,6 +979,8 @@ const API = {
       clients: [{ clientId: c.id, creds: { user: c.gst_user_id, name: c.name, gstin: c.gstin, selectedReturns: c.selected_returns || [] } }],
       // 0.13.0: gstr2a2b_pull's per-period list of what to fetch ({ 'MM/YYYY': ['2A', '2B'] }).
       want: (info.want && typeof info.want === 'object' && !Array.isArray(info.want)) ? info.want : null,
+      // 0.19.0: gstin_search's list of vendor GSTINs to look up (only that mode carries one).
+      ...(info.mode === 'gstin_search' ? { gstins: Array.isArray(info.gstins) ? info.gstins.map((g) => String(g || '').trim().toUpperCase()).filter((g) => /^[0-9A-Z]{15}$/.test(g)).slice(0, 500) : [] } : {}),
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;

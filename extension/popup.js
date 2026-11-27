@@ -27,11 +27,13 @@
     ledger: 'Reading the credit ledger', reversal: 'Reading the credit reversal & re-claim ledger',
     liabilityledger: 'Reading the liability ledger', cashledger: 'Reading the cash ledger',
     taxpayerprofile: 'Reading the taxpayer profile', challans: 'Reading challans',
+    gstin_search: 'Looking up vendor GSTINs',
   };
   const MODES = {
     notices_bundle: 'Notices & orders, refunds and DRC-03', notices: 'Notices & orders', refunds: 'Refunds',
     drc03: 'DRC-03', taxpayerprofile: 'Taxpayer profile', challans: 'Challans', filing: 'Filing status',
     gstr9_8a_pull: 'GSTR-9 Table 8A documents',
+    gstin_search: 'Vendor GSTIN lookups',
   };
 
   const cmpVer = (a, b) => {

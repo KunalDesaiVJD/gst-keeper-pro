@@ -10,7 +10,7 @@ import {
   HandCoins, FileWarning, Wallet2, CreditCard, BookOpen, Landmark, PiggyBank, CalendarRange,
   SplitSquareHorizontal, UserSquare2, FileBadge, ReceiptText,
   Calculator, AlarmClock, ShieldAlert, PieChart, Undo2,
-  FileCheck2, FileStack, GitCompareArrows, GitMerge, Scale3d,
+  FileCheck2, FileStack, GitCompareArrows, GitMerge, Scale3d, ShieldCheck,
 } from 'lucide-react';
 import {
   buildSuspendedClosingAllClients,
@@ -107,6 +107,9 @@ import {
   buildFiledGstr2aReport,
   buildFiledGstr2bReport,
 } from '@/utils/filedReturnReports';
+import { buildVendorRiskReport } from '@/utils/vendorRiskReports';
+import { uploadVendorMaster } from '@/lib/vendorRisk/load';
+import { planVendorGstinSearch } from '@/lib/vendorRisk/gstinSearchPull';
 import type { ReportDefinition } from '@/lib/reportRegistry';
 
 /** The GSTR-8A reports read the portal's Table 8A document details, which the portal gives only as a download. */
@@ -674,6 +677,25 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     pull: { mode: 'gstr2a2b_pull', needsMonth: true, plan: (a) => planGstr8aPull(a) },
     upload: GSTR8A_UPLOAD,
     build: ({ clientId, month }) => buildGstr8aThreeWayReport(clientId!, month),
+  },
+  {
+    key: 'vendor-gstin-risk',
+    title: 'Vendor GSTIN Risk Report',
+    description: "Every supplier GSTIN of the client's financial year (portal GSTR-2A / 2B, Import 2B, the books and the vendor master) with its registration status, cancellation or suspension, taxpayer type and composition, reverse charge and TDS / TCS indicators, e-invoice applicability and IRNs, GSTR-1 / GSTR-3B filing, 2B matching and the ITC risk (Critical, High, Medium, Low or verification required), each finding with its source, date, provision and corrective action; a management summary and the lists to act on, clarify and hold. Pull looks the GSTINs up on the portal's Search Taxpayer; upload the vendor master to compare names.",
+    icon: ShieldCheck,
+    category: 'gstr2a2b',
+    status: 'extends-login',
+    needs: 'client+month',
+    periodScope: 'fy',
+    viewKind: 'vendor-risk',
+    pull: { mode: 'gstin_search', needsMonth: true, plan: planVendorGstinSearch },
+    upload: {
+      label: 'Upload vendor master',
+      accept: '.xlsx,.xls,.csv',
+      hint: 'An Excel or CSV with a GSTIN column and a Vendor Name column (a vendor code column is optional), from the books. It replaces the client\'s earlier upload.',
+      run: (a) => uploadVendorMaster(a),
+    },
+    build: ({ clientId, month }) => buildVendorRiskReport(clientId!, month),
   },
   {
     key: 'pan-multiple-company-2a2b',
