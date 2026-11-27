@@ -5218,6 +5218,12 @@ export type Database = {
           financial_year: string
           gstr9_opt_in: boolean
           gstr9c_opt_in: boolean
+          gstr9_override: string | null
+          gstr9c_override: string | null
+          override_at: string | null
+          override_by: string | null
+          override_by_name: string | null
+          override_reason: string | null
           id: string
           itc_directly_attributable_exempt: number | null
           updated_at: string
@@ -5233,6 +5239,12 @@ export type Database = {
           financial_year: string
           gstr9_opt_in?: boolean
           gstr9c_opt_in?: boolean
+          gstr9_override?: string | null
+          gstr9c_override?: string | null
+          override_at?: string | null
+          override_by?: string | null
+          override_by_name?: string | null
+          override_reason?: string | null
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
@@ -5248,6 +5260,12 @@ export type Database = {
           financial_year?: string
           gstr9_opt_in?: boolean
           gstr9c_opt_in?: boolean
+          gstr9_override?: string | null
+          gstr9c_override?: string | null
+          override_at?: string | null
+          override_by?: string | null
+          override_by_name?: string | null
+          override_reason?: string | null
           id?: string
           itc_directly_attributable_exempt?: number | null
           updated_at?: string
