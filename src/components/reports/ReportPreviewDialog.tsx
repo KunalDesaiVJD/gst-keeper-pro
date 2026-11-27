@@ -28,6 +28,7 @@ import { AllClientsSnapshotView } from './views/AllClientsSnapshotView';
 import { AnnualTrendView } from './views/AnnualTrendView';
 import { ExceptionsListView } from './views/ExceptionsListView';
 import { WorkingPaperView } from './views/WorkingPaperView';
+import { Gstr1YearDocumentsView } from './views/Gstr1YearDocumentsView';
 import { ReasonReconciliationView } from './views/ReasonReconciliationView';
 import { ItcThreeWayView } from './views/ItcThreeWayView';
 
@@ -94,6 +95,8 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
       return <ReasonReconciliationView table={table} report={report} />;
     case 'itc-three-way':
       return <ItcThreeWayView table={table} report={report} />;
+    case 'gstr1-year-documents':
+      return <Gstr1YearDocumentsView table={table} report={report} />;
   }
 };
 

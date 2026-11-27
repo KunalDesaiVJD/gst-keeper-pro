@@ -195,3 +195,24 @@ export const planAllClientsGstr3b = async ({ periods }: { periods: string[] }): 
   if (!jobs.length) return { jobs, note: `Every client's GSTR-3B of the month${months.length === 1 ? '' : 's'} picked is already pulled.${left}` };
   return { jobs, note: `Each client needs its own CAPTCHA in the portal tab.${left}` };
 };
+
+/**
+ * The full-year GSTR-1 documents report: each month of the FY (up to last
+ * month) whose filed GSTR-1 JSON is not stored yet, in one gstr1_json_pull run
+ * (the extension walks the months one after another, 0.18.7 and earlier). A
+ * month still generating on the portal, failed or not filed is asked again.
+ * With every month held, the months picked are pulled again.
+ */
+export const planGstr1JsonYear = async ({ clientId, periods }: { clientId: string; periods: string[] }): Promise<PullPlan> => {
+  const months = fyMonthsUpTo(periods, 'last-month');
+  if (!months.length) return { jobs: [], note: 'No GSTR-1 of that financial year can be filed yet.' };
+  const { data, error } = await supabase
+    .from('gst_filed_returns').select('period_month, full_json_pulled_at')
+    .eq('client_id', clientId).eq('return_type', 'GSTR1').in('period_month', months);
+  if (error) throw error;
+  const have = new Set((data || []).filter((r) => r.full_json_pulled_at).map((r) => r.period_month));
+  const missing = months.filter((p) => !have.has(p));
+  if (missing.length) return { jobs: [{ mode: 'gstr1_json_pull', periods: missing, label: `Filed GSTR-1 JSON of ${ranges(missing)}` }] };
+  const refresh = valid(periods);
+  return { jobs: [{ mode: 'gstr1_json_pull', periods: refresh, label: `Filed GSTR-1 JSON of ${ranges(refresh)}` }], note: 'Every month of the year is pulled; pulling the selected months again.' };
+};
