@@ -160,7 +160,8 @@ export const Table5Card: React.FC = () => {
         write: (d, v) => ({ ...d, t5Q: v ? n0(v.t) : null }),
         link: g9TotalTurnover,
         source: 'GSTR-9 5N+10−11',
-        sourceTitle: 'GSTR-9 total turnover: 5N + Table 10 − Table 11',
+        sourceTitle: 'GSTR-9 total turnover: 5N + Table 10 − Table 11. The portal checks 5Q against it.',
+        tieKey: 'gstr9c.5Q',
       },
       {
         id: 'R',

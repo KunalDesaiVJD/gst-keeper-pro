@@ -69,6 +69,8 @@ export interface FormLine {
   sourceTitle?: string;
   /** Difference line key (engine `diffs`) — shows its JustifyControl on the row. */
   diffKey?: string;
+  /** A line the portal checks for equality (engine `mustTie`): its status shows on the row while it differs. */
+  tieKey?: string;
   emphasis?: 'total' | 'diff';
   /** A per-cell warning (e.g. a negative figure in a row the form subtracts). */
   warn?: (h: FormHead, v: number) => string | null;

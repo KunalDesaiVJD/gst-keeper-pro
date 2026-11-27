@@ -5,7 +5,7 @@ import { Badge } from '@/components/gstr9/badge';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { diffTone, SGST_LOCKED_TITLE } from '../grid/columns';
 import { fmtMoney } from '../grid/money';
-import { JustifyControl } from '../ui';
+import { JustifyControl, useDiffLine } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import type { Formulas, Gstr9cDoc } from '@/lib/gstr9/types';
 import { LOCKED_TITLE } from '@/lib/gstr9/sourceLock';
@@ -13,6 +13,12 @@ import { enterLine, Figures, FORM_HEAD_LABEL, FormHead, FormLine, fPath, fPaths,
 import { FigLink } from '../figure/FigLink';
 import { PIN_LAST_ROW } from '../gstr9form/helpers';
 import { CellIsland } from '../grid/CellIsland';
+
+/** The portal's equality check for a typed-over line (5Q, 9Q), shown only while it fails. */
+const TieStatus: React.FC<{ tieKey: string }> = ({ tieKey }) => {
+  const d = useDiffLine(tieKey);
+  return d?.open ? <JustifyControl lineKey={tieKey} compact /> : null;
+};
 
 const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean; onReset: () => void }> = ({ line, readOnly, locked, onReset }) => {
   if (line.diffKey) {
@@ -33,6 +39,7 @@ const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean;
     }
     return (
       <CellIsland>
+        {line.tieKey && <TieStatus tieKey={line.tieKey} />}
         <Badge variant="secondary" title={[line.sourceTitle ? `Typed over: ${line.sourceTitle}` : '', locked ? 'Typed by a superadmin — locked.' : ''].filter(Boolean).join(' ') || undefined} className="gap-1 text-[10px] font-normal">
           {locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />}
           Typed

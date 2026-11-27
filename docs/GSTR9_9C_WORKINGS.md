@@ -430,9 +430,20 @@ screen where it applies.
 8. **Table 9 tax payable** is the portal's figure (what the portal
    pre-fills), else 4N tax, and can be overridden. The sheet mixes the two
    (IGST from the portal, CGST/SGST from 4N). **GSTR-9C 9Q is the tax
-   paid** in GSTR-9 Table 9 (cash + ITC, per head), as the form reads
-   ("total amount paid as declared in annual return"); the sheet, and this
-   app before 24 Oct 2026, took the tax payable.
+   paid** as declared in GSTR-9: Table 9 (cash + ITC) **plus Table 14's
+   differential tax paid**, per head, as the form reads ("total amount paid
+   as declared in annual return"); the sheet, and this app before 24 Oct
+   2026, took the tax payable, and until 27 Nov 2026 Table 14 was left out
+   (the portal refused Elenza Arista's 9C: `tot_amt_paid` CGST / SGST did
+   not match GSTR-9, the Table 14 amounts exactly). **5Q and 9Q must equal
+   the GSTR-9** (5N + 10 − 11; Table 9 + 14 paid): the portal refuses the
+   upload otherwise (`annul_turn_decl`, `tot_amt_paid`, then `unrec_turnovr`
+   / 9R with them). The lines `gstr9c.5Q` / `gstr9c.9Q` are *must match*
+   differences (`DiffLine.mustTie`): no reason closes them, so they block
+   Mark prepared, Verify and Review & lock until the figure is reset or the
+   GSTR-9 working is corrected, and the Portal JSON tab refuses the file
+   (rule `G9TIE`). The app cannot see the GSTR-9 as filed, so a GSTR-9
+   working changed after filing still has to be compared by hand.
 9. **Table 13 is typed**, with the ITC reco's suggestion (MAX(books − 7J, 0),
    the negated row 28) shown next to it, because the residual is often an
    unexplained monthly difference rather than ITC actually availed in the

@@ -77,7 +77,7 @@ export const LockPanel: React.FC = () => {
     if (!action) return;
     const c = can(s, me, action);
     if (!c.ok) { toast.info(c.reason ?? 'Not available.'); return; }
-    if (blockers.length) { toast.info(`${blockers.length} difference${blockers.length === 1 ? ' needs' : 's need'} a reason first — see below.`); return; }
+    if (blockers.length) { toast.info(`${blockers.length} difference${blockers.length === 1 ? ' needs' : 's need'} a reason or a fix first — see below.`); return; }
     setDialog(action);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wanted]);
@@ -302,14 +302,14 @@ export const LockPanel: React.FC = () => {
         blockers.length > 0 ? (
           <Note tone="warn">
             <span className="font-medium">
-              {cur === 'verify' ? 'Verification' : 'The lock'} is blocked by {blockers.length === 1 ? '1 difference' : `${blockers.length} differences`} without a reason:
+              {cur === 'verify' ? 'Verification' : 'The lock'} is blocked by {blockers.length === 1 ? '1 difference' : `${blockers.length} differences`} without a reason, or not matching the GSTR-9 as the portal checks:
             </span>
             <ul className="mt-1 space-y-0.5">
               {blockers.slice(0, SHOW_BLOCKERS).map((d) => (
                 <li key={d.key}>
                   <button type="button" onClick={() => goFig(diffTarget(d))}
                     className="inline-flex items-center gap-1 text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}
+                    <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}{d.mustTie && <span className="text-destructive-strong"> (must match GSTR-9)</span>}
                     <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden />
                   </button>
                 </li>

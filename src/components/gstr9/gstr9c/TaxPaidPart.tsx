@@ -94,7 +94,7 @@ export const Table9Card: React.FC = () => {
   const W = workings.gstr9c;
   const def = W.defaults;
 
-  const qSourceTitle = 'GSTR-9 Table 9 tax paid, through cash and ITC, per head';
+  const qSourceTitle = 'GSTR-9 tax paid per head: Table 9 (cash + ITC) plus Table 14 differential tax paid. The portal checks 9Q against it.';
 
   const t9Lines = useMemo<FormLine[]>(() => {
     const lines: FormLine[] = GSTR9C_T9_RATE_KEYS.map((k) => {
@@ -139,7 +139,8 @@ export const Table9Card: React.FC = () => {
         fKey: 't9Q',
         write: (d, v) => ({ ...d, t9Q: v ? toTax(v) : null }),
         link: g9T9Paid,
-        source: 'GSTR-9 Table 9 paid',
+        source: 'GSTR-9 Table 9 + 14 paid',
+        tieKey: 'gstr9c.9Q',
         sourceTitle: qSourceTitle,
       },
       { id: 'R', code: '9R', label: T9_LABEL.R, hint: '(Q − P)', mode: 'computed', heads: TAX_HEADS, shown: figs(W.t9.R, false) ?? {}, emphasis: 'diff', diffKey: 'gstr9c.9R' },

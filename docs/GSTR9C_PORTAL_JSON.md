@@ -101,3 +101,10 @@ macros with `olevba`, and compare `Export_JSON_Module` (keys, which rows are
 written), `Validate_Functions` (checks), `Variable_Initialize` (regexes, row ranges,
 `PARTB_RESTRICTED_FY`) and the `Master` sheet (codes) with `gstr9cJson.ts`. Then run
 `node scripts/verify-gstr9c-json.mjs`.
+
+## Checks against the GSTR-9 (27 Nov 2026)
+
+The portal compares the 9C with the GSTR-9 on upload; the offline utility does not. The app now
+refuses the file (rule `G9TIE`) when 5Q differs from the GSTR-9's 5N + 10 − 11, or 9Q, head by
+head, from GSTR-9 Table 9 paid (cash + ITC) plus Table 14 differential tax paid. 5R / 9R are
+always Q − P, so they follow. See item 8 of §6 in `GSTR9_9C_WORKINGS.md`.

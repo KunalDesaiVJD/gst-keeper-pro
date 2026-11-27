@@ -342,6 +342,12 @@ export function buildGstr9cPortalJson(input: Gstr9cJsonInput): Gstr9cJsonBuild {
   const P5 = sum(A5, v5.B, v5.C, v5.D, -v5.E, v5.F, -v5.G, -v5.H, -v5.I, v5.J, -v5.K, -v5.L, v5.M, v5.N, v5.O);
   const Q5 = amt('5', '5Q', W.t5.Q);
   const R5r = r2(Q5 - P5);
+  // The portal checks annul_turn_decl against the GSTR-9 (5N + 10 − 11) and refuses the file on a
+  // difference, and unrec_turnovr with it.
+  const g9Turnover = r2(W.defaults.t5Q);
+  if (Math.abs(Q5 - g9Turnover) >= 0.005) {
+    err('5', 'G9TIE', `5Q (annual turnover declared, ${Q5.toFixed(2)}) differs from the GSTR-9's 5N + 10 − 11 (${g9Turnover.toFixed(2)}). The portal refuses this: "annual turnover declared (annul_turn_decl) does not match GSTR-9", then "unreconciled turnover (unrec_turnovr) is incorrect". Reset 5Q to the GSTR-9 figure, or correct the GSTR-9 working.`, '5Q');
+  }
   tie('5', '5P', P5, W.t5.P);
   tie('5', '5R', R5r, W.t5.R);
   needsReason('6', '5R (un-reconciled turnover)', R5r, doc.t6Reasons);
@@ -389,6 +395,14 @@ export function buildGstr9cPortalJson(input: Gstr9cJsonInput): Gstr9cJsonBuild {
   const P9 = addHeads(...all9, ecom9, inter9, late9, pen9, oth9); // =SUM(E7:E26)
   const Q9 = heads('9', '9Q', W.t9.Q);
   const R9 = subHeads(Q9, P9);
+  // The portal checks tot_amt_paid head by head against the tax paid in the GSTR-9 (Table 9 + Table 14).
+  const g9Paid = headsFromTax(W.defaults.t9Q);
+  const HEAD_NAME = { cgst: 'Central tax', sgst: 'State/UT tax', igst: 'Integrated tax', cess: 'Cess' } as const;
+  (['cgst', 'sgst', 'igst', 'cess'] as const).forEach((h) => {
+    if (Math.abs(Q9[h] - g9Paid[h]) >= 0.005) {
+      err('9', 'G9TIE', `9Q ${HEAD_NAME[h]} (total amount paid, ${Q9[h].toFixed(2)}) differs from the tax paid in the GSTR-9, Table 9 + Table 14 (${g9Paid[h].toFixed(2)}). The portal refuses this: "total amount paid (tot_amt_paid) does not match the declaration in GSTR-9", then "unreconciled payment is incorrect". Reset 9Q to the GSTR-9 figure, or correct the GSTR-9 working.`, '9Q');
+    }
+  });
   tieHeads('9', '9P', P9, W.t9.P);
   tieHeads('9', '9R', R9, W.t9.R);
   needsReason('10', '9R (un-reconciled payment)', widest(R9), doc.t10Reasons);
