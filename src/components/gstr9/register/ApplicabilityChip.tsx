@@ -24,16 +24,20 @@ export const ApplicabilityChip: React.FC = () => {
   let tone: 'secondary' | 'warning' | 'info' | 'default';
   if (result.gstr9 === 'not_applicable') { text = '9/9C not applicable'; tone = 'secondary'; }
   else if (result.gstr9 === 'unknown') { text = 'Turnover not entered'; tone = 'warning'; }
-  else if (!result.file9) { text = 'Exempt — not filing'; tone = 'warning'; }
+  else if (!result.file9) { text = result.overridden9 ? 'Not required · override' : 'Exempt — not filing'; tone = 'warning'; }
   else {
     const g9 = result.gstr9 === 'required' ? 'GSTR-9' : 'GSTR-9 (client’s wish)';
     const g9c = result.gstr9c === 'required' ? ' + 9C' : result.file9c ? ' + 9C (client’s wish)' : ' · no 9C';
     text = g9 + g9c + (result.partYear ? ' · part year' : '');
+    if (result.overridden9 || result.overridden9c) text += ' · override';
     tone = result.gstr9 === 'required' ? 'default' : 'info';
   }
   const title = [
     result.notApplicable,
     result.partYear ? `Part year: ${result.partYear}; GSTR-9 covers only that part.` : '',
+    result.overridden9 || result.overridden9c
+      ? `Set by the superadmin over the turnover rule${entry?.override_by_name ? ` (${entry.override_by_name})` : ''}${entry?.override_reason ? `: ${entry.override_reason}` : ''}.`
+      : '',
     t !== null ? `Aggregate turnover FY ${financialYear}: ${crore(t)}.` : `No aggregate turnover typed for FY ${financialYear}.`,
     `GSTR-9 above ${croreText(th.gstr9)}, GSTR-9C above ${croreText(th.gstr9c)}; below, only if the client wishes.`,
     isStaff ? 'Change it on All clients.' : '',

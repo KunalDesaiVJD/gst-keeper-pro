@@ -47,6 +47,8 @@ export function useApplicability(client: ApplicabilityClient | null, financialYe
       turnover: entry?.aggregate_turnover ?? null,
       gstr9OptIn: !!entry?.gstr9_opt_in,
       gstr9cOptIn: !!entry?.gstr9c_opt_in,
+      gstr9Override: entry?.gstr9_override ?? null,
+      gstr9cOverride: entry?.gstr9c_override ?? null,
     })
     : null;
   return { entry, result, loading: q.isLoading || h.isLoading };

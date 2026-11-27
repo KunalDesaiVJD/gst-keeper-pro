@@ -78,7 +78,13 @@ export interface ApplicabilityInput {
   turnover: number | null;
   gstr9OptIn: boolean;
   gstr9cOptIn: boolean;
+  /** The superadmin's decision over the turnover rule (client_annual_turnover.gstr9_override); null = auto. */
+  gstr9Override?: Override | null;
+  gstr9cOverride?: Override | null;
 }
+
+/** The superadmin's override of the turnover rule for a return. */
+export type Override = 'required' | 'not_required';
 
 export interface Applicability {
   gstr9: Need;
@@ -92,6 +98,9 @@ export interface Applicability {
   partYear?: string;
   /** The part of the year the client was active (registration, cancellation, inactive-from). */
   period: ActivePeriod;
+  /** Set where the superadmin's override, not the turnover, decided the return. */
+  overridden9?: Override;
+  overridden9c?: Override;
   thresholds: Thresholds;
 }
 
@@ -151,15 +160,24 @@ export function applicability(i: ApplicabilityInput): Applicability {
     partYear = partYear ? `${partYear}; ${end}` : end;
   }
 
-  if (i.turnover === null || i.turnover === undefined || Number.isNaN(i.turnover)) {
+  const known = !(i.turnover === null || i.turnover === undefined || Number.isNaN(i.turnover));
+  const o9 = i.gstr9Override ?? undefined;
+  // 9C reconciles the GSTR-9 it accompanies: no GSTR-9, no 9C (the database refuses 9C Required with GSTR-9 Not required).
+  const o9c = o9 === 'not_required' && i.gstr9cOverride === 'required' ? undefined : i.gstr9cOverride ?? undefined;
+  if (!known && !o9 && !o9c) {
     return { gstr9: 'unknown', gstr9c: 'unknown', file9: false, file9c: false, thresholds, partYear, period };
   }
-  const gstr9: Need = i.turnover > thresholds.gstr9 ? 'required' : 'exempt';
-  const gstr9c: Need = i.turnover > thresholds.gstr9c ? 'required' : 'exempt';
-  const file9 = gstr9 === 'required' || i.gstr9OptIn;
-  // 9C reconciles the GSTR-9 it accompanies: only when GSTR-9 is filed.
-  const file9c = gstr9c === 'required' || (file9 && i.gstr9cOptIn);
-  return { gstr9, gstr9c, file9, file9c, thresholds, partYear, period };
+  // POSITION: the superadmin's override decides over the turnover rule; "Not required" is shown as exempt and not filed.
+  const byTurnover = (limit: number): Need => (!known ? 'unknown' : (i.turnover as number) > limit ? 'required' : 'exempt');
+  const gstr9: Need = o9 === 'required' ? 'required' : o9 === 'not_required' ? 'exempt' : byTurnover(thresholds.gstr9);
+  const gstr9c: Need = o9c === 'required' ? 'required' : o9c === 'not_required' || o9 === 'not_required' ? 'exempt' : byTurnover(thresholds.gstr9c);
+  const file9 = gstr9 === 'required' || (o9 !== 'not_required' && gstr9 === 'exempt' && i.gstr9OptIn);
+  const file9c = file9 && (gstr9c === 'required' || (o9c !== 'not_required' && gstr9c === 'exempt' && i.gstr9cOptIn));
+  return {
+    gstr9, gstr9c, file9, file9c, thresholds, partYear, period,
+    ...(o9 ? { overridden9: o9 } : {}),
+    ...(o9c || o9 === 'not_required' ? { overridden9c: o9c ?? 'not_required' } : {}),
+  };
 }
 
 const DAY = 86_400_000;
