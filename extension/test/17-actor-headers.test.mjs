@@ -90,7 +90,7 @@ const during = restCalls();
 ok(during.length >= 4, `requests made (${during.length})`);
 ok(during.every((c) => c.headers['x-gst-source'] === 'extension'), 'every request: x-gst-source extension');
 ok(during.every((c) => c.headers['x-gst-actor'] === GITA), 'every request: the app user who started the job');
-ok(during.every((c) => /^extension 0\.19\.0 [0-9a-f]{1,8}$/.test(c.headers['x-gst-request'] || '')), 'every request: a request id naming the version');
+ok(during.every((c) => /^extension 0\.19\.1 [0-9a-f]{1,8}$/.test(c.headers['x-gst-request'] || '')), 'every request: a request id naming the version');
 ok(during.every((c) => c.headers.apikey === ANON && c.headers.Authorization === 'Bearer ' + ANON), 'the key headers unchanged');
 ok(during.some((c) => c.method === 'DELETE') && during.some((c) => c.method === 'POST'), 'deletes and inserts both carry them');
 const upsertCall = during.find((c) => /resolution=merge-duplicates/.test(c.headers.Prefer || ''));
