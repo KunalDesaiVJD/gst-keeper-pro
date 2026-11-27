@@ -93,6 +93,8 @@ export interface ReportRunArgs {
  *    year's 2A or 2B vs GSTR-8A)
  *  - itc-three-way: a year's GSTR-8A, 2A and 2B side by side, every document
  *    with its reason and the final ITC judgment, under the year's final ITC
+ *  - gstr1-year-documents: a year of filed GSTR-1, one tab per sheet (section
+ *    summary, documents, month-wise, HSN, documents issued, nil)
  */
 export type ReportViewKind =
   | 'ledger-register'
@@ -107,7 +109,8 @@ export type ReportViewKind =
   | 'exceptions-list'
   | 'working-paper'
   | 'reason-reconciliation'
-  | 'itc-three-way';
+  | 'itc-three-way'
+  | 'gstr1-year-documents';
 
 /**
  * One extension job a report's Pull starts: a `mode`, the periods it walks and,
