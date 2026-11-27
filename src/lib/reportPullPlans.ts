@@ -20,6 +20,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { PullJob, PullPlan } from '@/lib/reportRegistry';
 import { fyMonthsForKey } from '@/utils/allClientsReports';
 import { istToday } from '@/lib/itcReco/dates';
+import { compareVersions } from '@/lib/extensionVersion';
 
 type Source = { mode: string; returnType: string; label: string };
 
@@ -196,23 +197,34 @@ export const planAllClientsGstr3b = async ({ periods }: { periods: string[] }): 
   return { jobs, note: `Each client needs its own CAPTCHA in the portal tab.${left}` };
 };
 
+/** The extension that reads GSTR-1 section by section (gstr1_full_pull). */
+export const GSTR1_FULL_PULL_VERSION = '0.19.1';
+
 /**
  * The full-year GSTR-1 documents report: each month of the FY (up to last
- * month) whose filed GSTR-1 JSON is not stored yet, in one gstr1_json_pull run
- * (the extension walks the months one after another, 0.18.7 and earlier). A
- * month still generating on the portal, failed or not filed is asked again.
- * With every month held, the months picked are pulled again.
+ * month) not held in full: no stored JSON, or a 0.19.1 pull whose record says
+ * a section came short. Extension 0.19.1 reads them all in one run
+ * (gstr1_full_pull: the portal's file when ready, else every section); an
+ * older extension gets 0.18.7's file pull, with a note to update. With every
+ * month complete, the months picked are pulled again.
  */
-export const planGstr1JsonYear = async ({ clientId, periods }: { clientId: string; periods: string[] }): Promise<PullPlan> => {
+export const planGstr1JsonYear = async ({ clientId, periods, extVersion }: { clientId: string; periods: string[]; extVersion?: string | null }): Promise<PullPlan> => {
   const months = fyMonthsUpTo(periods, 'last-month');
   if (!months.length) return { jobs: [], note: 'No GSTR-1 of that financial year can be filed yet.' };
-  const { data, error } = await supabase
-    .from('gst_filed_returns').select('period_month, full_json_pulled_at')
+  // Only the pull record out of each JSON (a year of JSON is tens of MB); the typed client cannot type a JSON path.
+  type G1Query = { eq: (c: string, v: string) => G1Query; in: (c: string, v: string[]) => PromiseLike<{ data: unknown[] | null; error: Error | null }> };
+  const table = supabase.from('gst_filed_returns') as unknown as { select: (cols: string) => G1Query };
+  const { data, error } = await table.select('period_month, full_json_pulled_at, gstk:full_json->_gstk')
     .eq('client_id', clientId).eq('return_type', 'GSTR1').in('period_month', months);
   if (error) throw error;
-  const have = new Set((data || []).filter((r) => r.full_json_pulled_at).map((r) => r.period_month));
+  const rows = (data || []) as { period_month: string; full_json_pulled_at: string | null; gstk: { complete?: boolean } | null }[];
+  const have = new Set(rows.filter((r) => r.full_json_pulled_at && (!r.gstk || r.gstk.complete !== false)).map((r) => r.period_month));
+  const full = !!extVersion && compareVersions(extVersion, GSTR1_FULL_PULL_VERSION) >= 0;
+  const mode = full ? 'gstr1_full_pull' : 'gstr1_json_pull';
+  const what = full ? 'GSTR-1, every section,' : 'Filed GSTR-1 JSON';
+  const update = full ? undefined : `Extension ${extVersion ?? '(not found)'} waits on the portal's file month by month; update to ${GSTR1_FULL_PULL_VERSION} or later to read every section in one run.`;
   const missing = months.filter((p) => !have.has(p));
-  if (missing.length) return { jobs: [{ mode: 'gstr1_json_pull', periods: missing, label: `Filed GSTR-1 JSON of ${ranges(missing)}` }] };
+  if (missing.length) return { jobs: [{ mode, periods: missing, label: `${what} of ${ranges(missing)}` }], ...(update ? { note: update } : {}) };
   const refresh = valid(periods);
-  return { jobs: [{ mode: 'gstr1_json_pull', periods: refresh, label: `Filed GSTR-1 JSON of ${ranges(refresh)}` }], note: 'Every month of the year is pulled; pulling the selected months again.' };
+  return { jobs: [{ mode, periods: refresh, label: `${what} of ${ranges(refresh)}` }], note: 'Every month of the year is complete; pulling the selected months again.' };
 };

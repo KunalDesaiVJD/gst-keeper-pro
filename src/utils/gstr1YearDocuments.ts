@@ -4,17 +4,17 @@
 // e-commerce tables 14 / 15, nil, HSN, documents issued) compiled into one
 // working paper with a Month column.
 //
-// Source: only the filed return as the portal gives it, the extension's
-// "Offline Download for GSTR-1" pull (gstr1_json_pull, extension 0.18.7 and
-// earlier; it walks a list of months in one run) stored in
-// gst_filed_returns.full_json. This app's own books draft is never mixed in:
+// Source: only the filed return as the portal gives it, stored in
+// gst_filed_returns.full_json: extension 0.19.1's gstr1_full_pull (the
+// portal's file when ready, else every section read from the portal's GSTR-1
+// view, with its record in full_json._gstk), or 0.18.7's gstr1_json_pull. This app's own books draft is never mixed in:
 // a month not pulled is listed as such, so the year shows what was filed.
 // The Pull plan (reportsCatalog) asks for each month of the FY still missing.
 import { supabase } from '@/integrations/supabase/client';
 import type { ReportTable, ReportSheet, ReportKpi, RowTone, RowKind } from './allClientsReports';
 import { fyMonthsForKey, formatMonthLabel } from './allClientsReports';
 import {
-  flattenGstr1, toDocLine, sectionInfo, OWN_SHEET, docKey, signOf, num, DOC_NATURE, NIL_SUPPLY,
+  flattenGstr1, toDocLine, sectionInfo, OWN_SHEET, docKey, signOf, num, DOC_NATURE, NIL_SUPPLY, pullRecordOf, shortfallOf,
   type DocLine, type SectionRow,
 } from '@/lib/gstr1Year/flatten';
 
@@ -41,7 +41,13 @@ const loadYear = async (clientId: string, months: string[]): Promise<{ client: C
 };
 
 const monthStatus = (m: MonthRead): { label: string; tone: RowTone } => {
-  if (m.json) return { label: 'Pulled', tone: 'good' };
+  if (m.json) {
+    // Extension 0.19.1 records how the month was read and whether all of it came.
+    const rec = pullRecordOf(m.json);
+    if (!rec) return { label: "Pulled (portal file)", tone: 'good' };
+    if (rec.complete) return { label: rec.source === 'file' ? 'Complete (portal file)' : 'Complete (read section by section)', tone: 'good' };
+    return { label: `Incomplete: ${shortfallOf(rec) || 'see the pull record'}. Pull again`, tone: 'warn' };
+  }
   if (/^PENDING/i.test(m.status)) return { label: 'Generating on the portal: Pull again in about 20 minutes', tone: 'warn' };
   if (/^PULL FAILED/i.test(m.status)) return { label: m.status.replace(/^PULL FAILED:\s*/i, 'Pull failed: '), tone: 'bad' };
   if (/NOT FILED|NOT FOUND/i.test(m.status)) return { label: 'Not filed / not found on the portal', tone: 'muted' };
@@ -135,6 +141,7 @@ export const buildGstr1YearDocumentsReport = async (clientId: string, anyMonthIn
   }
 
   const pulled = reads.filter((m) => m.json);
+  const incomplete = pulled.filter((m) => { const r = pullRecordOf(m.json); return !!r && !r.complete; });
   const notPulled = reads.filter((m) => !m.json);
   const head = `Client: ${client.name}   |   GSTIN: ${client.gstin || '—'}   |   Period: ${fyLabel}`;
 
@@ -181,7 +188,7 @@ export const buildGstr1YearDocumentsReport = async (clientId: string, anyMonthIn
   const sheets: ReportSheet[] = [
     {
       name: 'Month-wise', title: `Month-wise totals, ${fyLabel}`, headers: monthHeaders, rows: monthRows,
-      columnWidths: [12, 40, 12, 11, 9, 16, 14, 14, 14, 12, 15], rowTones: monthTones, rowKinds: monthKinds, toneColumn: 1,
+      columnWidths: [12, 56, 12, 11, 9, 16, 14, 14, 14, 12, 15], rowTones: monthTones, rowKinds: monthKinds, toneColumn: 1,
       notes: ['Credit notes are taken off and debit notes added; amendment tables count at their revised figures, as the portal shows them.'],
     },
   ];
@@ -216,16 +223,17 @@ export const buildGstr1YearDocumentsReport = async (clientId: string, anyMonthIn
 
   const totalTax = docTotAgg.igst + docTotAgg.cgst + docTotAgg.sgst + docTotAgg.cess;
   const kpis: ReportKpi[] = [
-    { label: 'Months pulled', value: `${pulled.length} / 12`, tone: notPulled.length ? 'warn' : 'good', note: notPulled.length ? `${notPulled.length} missing` : 'complete' },
+    { label: 'Months pulled', value: `${pulled.length} / 12`, tone: notPulled.length || incomplete.length ? 'warn' : 'good', note: notPulled.length ? `${notPulled.length} missing` : incomplete.length ? `${incomplete.length} incomplete` : 'complete' },
     { label: 'Documents', value: docTotAgg.docs.size },
     { label: 'Sections', value: new Set(sectionOrder.map((k) => k.split('§')[0])).size },
     { label: 'Taxable value (net)', value: round2(docTotAgg.taxable) },
     { label: 'Total tax (net)', value: round2(totalTax) },
   ];
 
-  const missingNote = notPulled.length
-    ? `Not pulled: ${notPulled.map((m) => formatMonthLabel(m.period)).join(', ')}. Use Pull: the extension opens each missing month's filed GSTR-1 on the portal and reads all of it.`
-    : 'Every month of the year is pulled from the portal.';
+  const incompleteNote = incomplete.length ? ` Incomplete: ${incomplete.map((m) => formatMonthLabel(m.period)).join(', ')} (see Month-wise); Pull reads them again.` : '';
+  const missingNote = (notPulled.length
+    ? `Not pulled: ${notPulled.map((m) => formatMonthLabel(m.period)).join(', ')}. Use Pull: the extension opens each missing month's filed GSTR-1 on the portal and reads every section.`
+    : 'Every month of the year is pulled from the portal.') + incompleteNote;
 
   return {
     title: `GSTR-1 Documents — Full Year (${fyLabel})`,

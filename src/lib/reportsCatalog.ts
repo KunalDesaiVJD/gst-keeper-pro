@@ -254,14 +254,14 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
   {
     key: 'gstr1-documents-full-year',
     title: 'GSTR-1 Documents — Full Year',
-    description: 'Every document of every section of the filed GSTR-1 for the whole financial year, in one list with a Month column: B2B, B2CL, B2CS, exports, credit and debit notes, every amendment table, advances, e-commerce, plus HSN, documents issued and nil supplies. Pull opens each missing month\'s filed GSTR-1 on the portal.',
+    description: 'Every document of every section of the filed GSTR-1 for the whole financial year, in one list with a Month column: B2B, B2CL, B2CS, exports, credit and debit notes, every amendment table, advances, e-commerce, plus HSN, documents issued and nil supplies. Pull (extension 0.19.1) reads every section of each missing or incomplete month in one run and checks it against the portal\'s own counts.',
     icon: FileStack,
     category: 'gstr1',
     status: 'extends-login',
     needs: 'client+month',
     viewKind: 'gstr1-year-documents',
     periodScope: 'fy',
-    pull: { mode: 'gstr1_json_pull', needsMonth: true, plan: ({ clientId, periods }) => planGstr1JsonYear({ clientId, periods }) },
+    pull: { mode: 'gstr1_full_pull', needsMonth: true, plan: ({ clientId, periods, extVersion }) => planGstr1JsonYear({ clientId, periods, extVersion }) },
     build: ({ clientId, month }) => buildGstr1YearDocumentsReport(clientId!, month),
   },
   {

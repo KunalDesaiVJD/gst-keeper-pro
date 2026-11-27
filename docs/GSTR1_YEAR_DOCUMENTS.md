@@ -6,15 +6,25 @@ one working paper, with a Month column.
 
 ## Where the figures come from
 
-- Only the portal's own "Offline Download for GSTR-1" of each month, pulled by the
-  extension's existing `gstr1_json_pull` mode (0.18.7 and earlier; one run walks
-  every month asked) and stored in `gst_filed_returns.full_json`.
-- The app's own books draft (`gstr1_data`) is never mixed in: a month not pulled is
-  shown as "Not pulled", "Generating on the portal", "Pull failed" or "Not filed".
-- **Pull** (`planGstr1JsonYear`, `src/lib/reportPullPlans.ts`) asks for each month
-  of the FY, up to last month, with no stored JSON; with all held, it pulls the
-  months picked again. A month still generating on the portal (large returns can
-  take about 20 minutes) is pulled again on the next click.
+- Only the filed return, stored in `gst_filed_returns.full_json`; the app's own books
+  draft (`gstr1_data`) is never mixed in.
+- **Pull** (`planGstr1JsonYear`, `src/lib/reportPullPlans.ts`) asks for every month of
+  the FY, up to last month, that is missing or incomplete, in one run:
+  - extension **0.19.1** or later: `gstr1_full_pull`. Per month: the GSTR-1 summary
+    (sections, record counts, customers); the portal's offline file if it is ready
+    (otherwise the request starts it); without the file, every section read from the
+    portal's GSTR-1 view, customer by customer for B2B / CDNR and their amendments,
+    state by state for B2CL, three tries a read. What was read is checked against the
+    summary's counts and saved with that record in `full_json._gstk`. A month left
+    incomplete is tried once more at the end of the run, waiting up to 3 minutes for
+    its file. A dropped session logs in again and resumes the same month.
+  - an older extension: 0.18.7's `gstr1_json_pull` (the offline file only, up to 90
+    seconds a month), with a note to update.
+- Month-wise shows each month as Complete (portal file / read section by section),
+  Incomplete (what is short, e.g. "B2B 40 of 42 (2 parties did not answer)"),
+  Generating, Pull failed, Not filed or Not pulled. Pull reads incomplete months again.
+- Not confirmed live (27 Nov 2026): the section addresses `api/gstr1/<section>`;
+  `_gstk.sections.<SEC>.api` records which answered and `.problem` what did not.
 
 ## What it shows
 

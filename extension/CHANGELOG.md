@@ -2,6 +2,18 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-11-27 — GSTR-1, every section of every month, in one run (v0.19.1)
+
+- **A new pull, `gstr1_full_pull`**, for the full-year GSTR-1 documents report's Pull. Seen live on 27 Nov 2026: 0.18.7's `gstr1_json_pull` waited up to 90 seconds a month for the portal's offline file and, when the file was still being prepared (most months, the first time: up to 20 minutes), saved nothing for that month, so a year took Pull after Pull.
+- **Per month, without waiting on the file:** the GSTR-1 summary (`api/gstr1/summary`) for which sections hold records, how many and with whom; the offline file asked for once (taken whole if ready, else the portal starts preparing it; another period's file is refused); without the file, every section the summary lists is read from the portal's GSTR-1 view (`api/gstr1/<section>`), B2B / CDNR and their amendments customer by customer, B2CL by state, nil, HSN and documents issued always. Each read is tried three times; the address that answers is kept for the rest of the run.
+- **Checked against the summary** section by section (documents read against `ttl_rec`, customers that never answered named) and saved with that record in `full_json._gstk` (source file or sections, complete or not, per section expected / read / address / problem), with the summary, ARN and filing date.
+- **A month left incomplete is tried once more at the end of the run**, when its file has had time: then the file is waited for up to 3 minutes before the sections are read again.
+- **A dropped session** (401 / 403, the login page) saves nothing half-read and goes to the login page without moving on, so the usual re-login (three at most) resumes the same month. A month with no summary is NOT FILED and the run moves on.
+- **Not confirmed live:** the section addresses (`api/gstr1/b2b?rtn_prd=&ctin=` and the like) follow GSTR-2A's confirmed `api/gstr2a/b2b?ctin=`; several names are tried per section and `_gstk` records which answered.
+- **Nothing else changes.** Every other job runs as in 0.19.0: the new mode adds a login branch, a dispatcher entry, a bounce entry, its own handler and a popup label.
+- GST Keeper asks for 0.19.1 only for this Pull (older extensions keep the 0.18.7 file pull); the minimum stays 0.16.0.
+- Test `test/24-gstr1-full-pull.test.mjs`; `test/17-actor-headers.test.mjs` now expects 0.19.1.
+
 ## 2026-11-27 — Vendor GSTIN lookup on Search Taxpayer (v0.19.0)
 
 - **A new pull, `gstin_search`**, for the Vendor GSTIN Risk report's Pull. The job carries the supplier GSTINs to look up (`job.gstins`, at most 500; the app sends at most 150 a Pull). After the client's usual login (the same login, CAPTCHA typed by a person, session identity check), it opens `services/auth/fowelcome` and, from that page, asks the portal's logged-in Search Taxpayer for each GSTIN: the taxpayer's details, then the return filing table (asked again with the job's FY when the plain ask brings none). One request at a time, 1.5 s apart.

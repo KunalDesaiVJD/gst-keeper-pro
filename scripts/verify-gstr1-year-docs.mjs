@@ -58,6 +58,10 @@ const ROWS = {
   '04/2025': { full_json: APRIL, full_json_pulled_at: '2025-06-01T05:00:00Z', status: 'FILED' },
   '05/2025': { full_json: MAY, full_json_pulled_at: '2025-06-02T05:00:00Z', status: 'FILED' },
   '06/2025': { full_json: null, full_json_pulled_at: null, status: 'PENDING: filed JSON still generating' },
+  '08/2025': { full_json: { fp: '082025', b2b: [{ ctin: '27AAAAA0000A1Z5', inv: [{ inum: 'AUG-1', idt: '01-08-2025', val: 118, itms: [{ num: 1, itm_det: { rt: 18, txval: 100, iamt: 18 } }] }] }],
+    _gstk: { v: '0.19.1', source: 'sections', complete: false, sections: { B2B: { expected: 2, read: 1, ok: false, failed: ['29BBBBB1111B1Z5'] }, HSN: { expected: 1, read: null, ok: true } } } },
+    full_json_pulled_at: '2025-09-02T05:00:00Z', status: 'Filed' },
+  '09/2025': { full_json: { fp: '092025', b2b: [], _gstk: { v: '0.19.1', source: 'sections', complete: true, sections: {} } }, full_json_pulled_at: '2025-10-02T05:00:00Z', status: 'Filed' },
 };
 
 const SUPABASE_STUB = `
@@ -143,19 +147,23 @@ const t = await M.buildGstr1YearDocumentsReport('c1', '09/2025');
 const H = (name) => t.headers.indexOf(name);
 check('one table for FY 2025-26', /FY 2025-26/.test(t.title));
 const months = new Set(t.rows.filter((r) => r[0] !== 'TOTAL').map((r) => r[0]));
-check('documents of April and May with a Month column', months.size === 2, [...months].join(','));
+check('documents of April, May and August with a Month column', months.size === 3, [...months].join(','));
 check('HSN, documents issued and nil are not in the documents list', !t.rows.some((r) => /^(HSN|DOC_ISSUE|NIL):/.test(String(r[H('Section')]))));
 const total = t.rows[t.rows.length - 1];
 // Net taxable: April b2b 3000 + b2ba 500 + b2cl 250000 + b2cla 250000 + b2cs 2000 + b2csa 100 + exp 5000 + expa 1000
 //   - CN-1 100 + DN-1 50 - CN-0 100 - CNU-1 1000 + CNU-0 (debit) 100 + at 10000 + ata 500 + txpd 4000 + txpda 100
 //   + supeco 3000 + 700 + ecom 400 + newtable 7; May 1000
-const want = 3000 + 500 + 250000 + 250000 + 2000 + 100 + 5000 + 1000 - 100 + 50 - 100 - 1000 + 100 + 10000 + 500 + 4000 + 100 + 3000 + 700 + 400 + 7 + 1000;
+const want = 100 + 3000 + 500 + 250000 + 250000 + 2000 + 100 + 5000 + 1000 - 100 + 50 - 100 - 1000 + 100 + 10000 + 500 + 4000 + 100 + 3000 + 700 + 400 + 7 + 1000;
 check('TOTAL taxable takes credit notes off', total[0] === 'TOTAL' && close(total[H('Taxable Value')], want), `${total[H('Taxable Value')]} vs ${want}`);
 check('summary lists every document section', t.summary.rows.length >= 20, t.summary.rows.length);
 const ms = t.extraSheets.find((s) => s.name === 'Month-wise');
 check('month-wise has 12 months and a TOTAL', ms.rows.length === 13);
 check('June shows generating, July not pulled', /Generating/.test(ms.rows[2][1]) && ms.rows[3][1] === 'Not pulled', `${ms.rows[2][1]} / ${ms.rows[3][1]}`);
-check('2 of 12 months pulled', /2 of 12/.test(ms.rows[12][1]));
+check('4 of 12 months pulled', /4 of 12/.test(ms.rows[12][1]), ms.rows[12][1]);
+check('an incomplete 0.19.1 month says what is short', /^Incomplete: B2B 1 of 2 \(1 party did not answer\)/.test(ms.rows[4][1]) && ms.rowTones[4] === 'warn', ms.rows[4][1]);
+check('a complete 0.19.1 month says how it was read', ms.rows[5][1] === 'Complete (read section by section)', ms.rows[5][1]);
+check('the pull record is not a section', !M.flattenGstr1(ROWS['08/2025'].full_json).some((r) => r.section === '_gstk'));
+check('the summary note names the incomplete month', t.summary.notes.some((n) => /Incomplete: Aug 2025/.test(n)), t.summary.notes);
 const hsn = t.extraSheets.find((s) => s.name.startsWith('HSN'));
 check('HSN sheet: 2 lines and TOTAL 4000', hsn && hsn.rows.length === 3 && close(hsn.rows[2][7], 4000));
 const di = t.extraSheets.find((s) => s.name.startsWith('Documents issued'));

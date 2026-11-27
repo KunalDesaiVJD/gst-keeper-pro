@@ -28,12 +28,14 @@
     liabilityledger: 'Reading the liability ledger', cashledger: 'Reading the cash ledger',
     taxpayerprofile: 'Reading the taxpayer profile', challans: 'Reading challans',
     gstin_search: 'Looking up vendor GSTINs',
+    gstr1_full_pull: 'Reading filed GSTR-1, every section',
   };
   const MODES = {
     notices_bundle: 'Notices & orders, refunds and DRC-03', notices: 'Notices & orders', refunds: 'Refunds',
     drc03: 'DRC-03', taxpayerprofile: 'Taxpayer profile', challans: 'Challans', filing: 'Filing status',
     gstr9_8a_pull: 'GSTR-9 Table 8A documents',
     gstin_search: 'Vendor GSTIN lookups',
+    gstr1_full_pull: 'GSTR-1, every section (full year)',
   };
 
   const cmpVer = (a, b) => {
