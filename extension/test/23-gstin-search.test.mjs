@@ -214,7 +214,7 @@ ok(Array.isArray(a.filings) && a.filings.length === 2 && a.filings[0].rtntype ==
   'ok row: the filing table, dof as ISO', a.filings);
 ok(a.payload && a.payload.details && a.payload.details.url === '/services/auth/api/search/tp' && a.payload.details.body.lgnm === TP1.lgnm && a.payload.returns.length >= 1,
   'ok row: the portal\'s answers kept in payload, with the address that gave them', a.payload);
-ok(a.looked_up_by === GITA && a.via_client_id === 'c1' && a.extension_version === '0.19.0' && a.source === 'gst_portal_search_taxpayer' && !('looked_up_at' in a),
+ok(a.looked_up_by === GITA && a.via_client_id === 'c1' && a.extension_version === JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8')).version && a.source === 'gst_portal_search_taxpayer' && !('looked_up_at' in a),
   'ok row: who asked, whose login, the version; the time is the database\'s', a);
 const b = r[1] || {};
 ok(b.status === 'not_found' && /No records found/.test(b.error) && b.legal_name === undefined && b.payload.details.body.errorCode === 'SWEB_9035', 'not found: status not_found, the portal\'s words', b);
