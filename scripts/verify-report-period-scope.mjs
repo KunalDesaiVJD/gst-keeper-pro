@@ -356,9 +356,9 @@ await section('catalog', async (g) => {
     'gstr2a-vs-gstr8a-reco', 'gstr2b-vs-gstr8a-reco', 'gstr8a-vs-gstr2a-vs-gstr2b-reco', 'vendor-gstin-risk',
     'credit-ledger-transaction-detail', 'liability-ledger', 'cash-ledger', 'credit-and-liability-statement',
     'gstr1-documents-full-year'];
-  check(g, `the thirteen whole-year reports: ${expected.join(', ')}`, same([...fy].sort(), [...expected].sort()), JSON.stringify(fy));
+  check(g, `the fourteen whole-year reports: ${expected.join(', ')}`, same([...fy].sort(), [...expected].sort()), JSON.stringify(fy));
   const pulls = M.REPORTS_CATALOG.filter((r) => r.periodScope === 'fy' && r.pull);
-  check(g, 'their Pull still asks for the months picked (needsMonth unchanged)', pulls.length === 11 && pulls.every((r) => r.pull.needsMonth === true), JSON.stringify(pulls.map((r) => [r.key, r.pull.needsMonth])));
+  check(g, 'their Pull still asks for the months picked (needsMonth unchanged)', pulls.length === 12 && pulls.every((r) => r.pull.needsMonth === true), JSON.stringify(pulls.map((r) => [r.key, r.pull.needsMonth])));
 });
 
 // ── Report ──────────────────────────────────────────────────────────────────
