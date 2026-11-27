@@ -41,7 +41,14 @@ Notification 15/2025-CT from FY 2024-25 onwards), GSTR-9C above ₹5 crore
 prepared only if the client wishes — chosen per return in the register
 (`gstr9_opt_in`, `gstr9c_opt_in`, with a note); 9C by choice needs GSTR-9 to
 be filed. Composition (GSTR-4), tax deductors (GSTR-7), ISDs and clients not
-registered during the year are not applicable. Aggregate turnover is the
+registered during the year are not applicable. The superadmin may override
+a client's year to Required or Not required for GSTR-9 and 9C each, whatever
+the turnover says (Override column; `gstr9_override`, `gstr9c_override`, with
+a reason, who and when), only through `annual_return_set_applicability_override`
+(a trigger refuses every other write of those columns; 9C Required with GSTR-9
+Not required is refused; Auto clears it; a registration that files no GSTR-9
+stays Not applicable; 20261127120000). Others see the marker but cannot change
+it. Aggregate turnover is the
 PAN's, so GSTINs of one PAN are flagged when their figures differ and a
 figure typed for one is offered to the PAN's blank GSTINs. The
 **Sign-off** column shows where each working stands — Not started →
