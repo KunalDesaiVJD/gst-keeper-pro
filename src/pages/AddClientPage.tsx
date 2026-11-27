@@ -53,6 +53,7 @@ const AddClientPage: React.FC = () => {
     cancellationDate: '', // Optional — labeled "GSTR 10 Date" in UI
     registrationCancellationDate: '', // Optional — actual registration cancellation date
     inactiveAtHand: false, // Optional — hides client from Filing Status when true
+    inactiveFrom: '',
     einvoiceApplicable: false, // E-invoice client (IRN on B2B invoices / notes / exports)
     einvoiceExemption: '', // EINVOICE_EXEMPTIONS value, '' = none
     gstUserId: '', // GST Portal User ID
@@ -243,6 +244,7 @@ const AddClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          inactive_from: formData.inactiveAtHand ? (formData.inactiveFrom || null) : null,
           returns_filing: services.returns,
           annual_return_assigned: services.annualReturn,
           notices_handled: services.notices,
@@ -778,6 +780,20 @@ const AddClientPage: React.FC = () => {
                     </p>
                   </div>
                 </label>
+                {formData.inactiveAtHand && (
+                  <div className="space-y-1.5 pt-1">
+                    <Label htmlFor="inactiveFrom">Inactive from</Label>
+                    <Input
+                      id="inactiveFrom"
+                      type="date"
+                      value={formData.inactiveFrom}
+                      onChange={(e) => setFormData(prev => ({ ...prev, inactiveFrom: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      The first day the client is inactive. GSTR-9 / 9C of that year can still be prepared, covering only the months before it.
+                    </p>
+                  </div>
+                )}
               </div>
 
               <EinvoiceClientFields

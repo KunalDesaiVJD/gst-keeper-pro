@@ -317,6 +317,7 @@ function cover(c: Ctx): WorkingPaper {
   t.data('FIRM', FIRM_NAME);
   t.data('PARTY NAME', meta.clientName);
   t.data('YEAR', meta.financialYear);
+  if (meta.period) t.data('PERIOD COVERED', meta.period);
   t.data('GSTIN', meta.gstin);
   t.data('ADDRESS', '');
   t.data('STATUS', c.status);
@@ -825,7 +826,7 @@ function portalData(c: Ctx): WorkingPaper {
   const mm = p.table([[lbl('MONTH'), 'SOURCE', 'ARN', 'FILED ON', 'STATUS', 'FETCHED ON']], { keyCols: 1 });
   FY_MONTHS.forEach((k) => {
     const meta3b = P.monthMeta[k];
-    mm.data(lbl(monthTitle(k, meta.financialYear)), meta3b?.source ? PORTAL_SOURCE_LABEL[meta3b.source] ?? meta3b.source : 'Not fetched', meta3b?.arn ?? '', fmtDate(meta3b?.filedDate), meta3b?.status ?? '', fmtDateTime(meta3b?.fetchedAt));
+    mm.data(lbl(monthTitle(k, meta.financialYear)), meta3b?.source ? PORTAL_SOURCE_LABEL[meta3b.source] ?? meta3b.source : w.activeMonths.includes(k) ? 'Not fetched' : 'Not active', meta3b?.arn ?? '', fmtDate(meta3b?.filedDate), meta3b?.status ?? '', fmtDateTime(meta3b?.fetchedAt));
   });
 
   const field = (k: keyof PortalMonth) => MONTH_FIELDS.find((f) => f.key === k);

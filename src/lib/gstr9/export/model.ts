@@ -19,6 +19,8 @@ export interface ExportMeta {
   financialYear: string;
   /** The sign-off stage in words (statusText): "Prepared by … on …", "Locked by … on …" — printed in headers and footers when given. */
   status?: string;
+  /** A part-year working (client deactivated or cancelled in the year): "01/04/2025 to 14/09/2025 (inactive from 15/09/2025)". */
+  period?: string;
 }
 
 /** Everything the working papers are built from — all of it as saved (ExportMenu flushes first). */

@@ -63,10 +63,10 @@ const MONTH_WORD: Record<string, string> = {
 
 const QUARTERS: Array<(typeof FY_MONTHS)[number][]> = [['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['oct', 'nov', 'dec'], ['jan', 'feb', 'mar']];
 
-/** Months whose as-filed GSTR-3B is not in the working (a quarterly 3B covers its quarter). */
+/** Active months whose as-filed GSTR-3B is not in the working (a quarterly 3B covers its quarter; a part-year working asks only for its active months). */
 const missing3B = (w: Workings): string[] => {
   const qEnds = new Set([...w.quarterly.out, ...w.quarterly.itc]);
-  return FY_MONTHS.filter((m) => !w.monthsPresent[m]?.any && !QUARTERS.some((q) => q.includes(m) && qEnds.has(q[2])));
+  return FY_MONTHS.filter((m) => (w.activeMonths ?? FY_MONTHS).includes(m) && !w.monthsPresent[m]?.any && !QUARTERS.some((q) => q.includes(m) && qEnds.has(q[2])));
 };
 
 /** 31 December after the FY ends (s.44 due date of GSTR-9 / 9C), as yyyy-mm-dd; '2025-26' → '2026-12-31'. */

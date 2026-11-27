@@ -65,6 +65,8 @@ interface MonthRow {
   usable: boolean;
   applied: boolean;
   typed: number;
+  /** After the client's active period (part-year working). */
+  notActive?: boolean;
 }
 
 /** Working-side state of one month: applied, waiting to be applied, or its own source (typed …). */
@@ -81,12 +83,29 @@ const InWorking: React.FC<{ r: MonthRow }> = ({ r }) => (
   </span>
 );
 
+/** A month after the client's active period (part-year working). */
+const NotActive: React.FC = () => (
+  <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground" title="After the client's active period: not pulled or asked for">Not active</Badge>
+);
+
 export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
-  const { client, financialYear, docs, workings, update, readOnly, canEditSource } = useWorkspace();
+  const { client, financialYear, docs, workings, update, readOnly, canEditSource, activeSpan } = useWorkspace();
   // Typing over a portal figure is the superadmin's alone (sourceLock.ts).
   const typeIt = canEditSource ? 'type the figures below' : 'ask a superadmin to type the figures';
   const portal = docs.portal;
   const periods = useMemo(() => periodsForFY(financialYear), [financialYear]);
+  // A part-year working (client inactive or cancelled during the year) pulls only its active months; a
+  // quarterly (QRMP) client also the quarter-end month of a quarter that has an active month.
+  const pullMonths = useMemo(() => {
+    const act = activeSpan.months;
+    const qEnd = client.registration_type === 'IFF'
+      ? ([['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['oct', 'nov', 'dec'], ['jan', 'feb', 'mar']] as MonthKey[][]).filter((q) => q.some((m) => act.includes(m))).map((q) => q[2])
+      : [];
+    return FY_MONTHS.filter((m) => act.includes(m) || qEnd.includes(m));
+  }, [activeSpan.months, client.registration_type]);
+  const pullPeriods = useMemo(() => pullMonths.map((m) => periods[FY_MONTHS.indexOf(m)]), [pullMonths, periods]);
+  const nPull = pullPeriods.length;
+  const monthsWord = nPull === 12 ? 'all 12 months' : `the ${nPull} active month${nPull === 1 ? '' : 's'}`;
 
   const [rows, setRows] = useState<AsFiledReturn[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -143,7 +162,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
     const applied =
       usable && meta?.source === 'as_filed_3b' && !newerThanApplied(row?.updatedAt, meta) &&
       !diffPortalImport(portal, { months: { [m]: parseGstr3bSummary(row!.summary, row!.period) } as PortalDoc['months'] }, () => '').some((c) => !c.manual);
-    return { m, period: periods[idx], row, meta, usable, applied, typed: typedCount(portal, `months.${m}.`) };
+    return { m, period: periods[idx], row, meta, usable, applied, typed: typedCount(portal, `months.${m}.`), notActive: !pullMonths.includes(m) };
   });
   const usableCount = monthRows.filter((r) => r.usable).length;
   const pendingCount = monthRows.filter((r) => r.usable && !r.applied).length;
@@ -167,8 +186,9 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       return;
     }
     const before = new Map(rows.map((r) => [r.period, `${r.updatedAt ?? ''}|${r.status ?? ''}`]));
-    bridge.start({ mode: 'gstr3b_pull', period_month: periods[0], period_months: periods }, (ok, err) => {
-      if (ok) toast.success('A GST portal tab is opening — type the CAPTCHA there once; it then reads all 12 months one after another.');
+    if (!nPull) { toast.info('The client was not active in any month of this year; there is nothing to pull.'); return; }
+    bridge.start({ mode: 'gstr3b_pull', period_month: pullPeriods[0], period_months: pullPeriods }, (ok, err) => {
+      if (ok) toast.success(`A GST portal tab is opening — type the CAPTCHA there once; it then reads ${monthsWord} one after another.`);
       else {
         stopPoll();
         toast.error(`Could not start the pull: ${err || 'the extension did not answer'}`);
@@ -187,14 +207,14 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
       }
       // "Stop waiting" (or a new pull) while this read was in flight: drop it.
       if (timer.current !== run) return;
-      const fresh = list ? list.filter((r) => before.get(r.period) !== `${r.updatedAt ?? ''}|${r.status ?? ''}`).length : 0;
+      const fresh = list ? list.filter((r) => pullPeriods.includes(r.period) && before.get(r.period) !== `${r.updatedAt ?? ''}|${r.status ?? ''}`).length : 0;
       if (list) setRows(list);
       setPolling({ tries, fresh });
-      const done = fresh >= periods.length;
+      const done = fresh >= pullPeriods.length;
       if (done || tries >= POLL_MAX) {
         stopPoll();
         if (fresh > 0 && list) {
-          toast.success(done ? 'As-filed GSTR-3B received for all 12 months.' : `As-filed GSTR-3B received for ${fresh} of 12 months — the rest may not be filed, or the pull stopped early.`);
+          toast.success(done ? `As-filed GSTR-3B received for ${monthsWord}.` : `As-filed GSTR-3B received for ${fresh} of ${nPull} months — the rest may not be filed, or the pull stopped early.`);
           openPreview(list);
         } else {
           toast.warning(`No GSTR-3B arrived after 6 minutes. Check the portal tab; you can also ${typeIt}.`);
@@ -287,7 +307,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         !readOnly && (
           <>
             <Button size="sm" onClick={pull} disabled={!!polling}>
-              <RefreshCw className={cn('mr-1 h-3.5 w-3.5', polling && 'animate-spin')} /> Pull all 12 months from portal
+              <RefreshCw className={cn('mr-1 h-3.5 w-3.5', polling && 'animate-spin')} /> Pull {monthsWord} from portal
             </Button>
             <Button size="sm" variant={pendingCount ? 'default' : 'outline'} onClick={() => openPreview(rows)} disabled={!usableCount}
               title={usableCount ? undefined : 'Nothing pulled yet'}>
@@ -301,12 +321,17 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
         <Note tone="info" className="items-center">
           <span className="inline-flex flex-wrap items-center gap-2">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Waiting for the portal — type the CAPTCHA in the portal tab. {polling.fresh}/12 months received; checking every 10 s ({polling.tries}/{POLL_MAX}).
+            Waiting for the portal — type the CAPTCHA in the portal tab. {polling.fresh}/{nPull} months received; checking every 10 s ({polling.tries}/{POLL_MAX}).
             <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={stopPoll}>Stop waiting</Button>
           </span>
         </Note>
       )}
       {loadError && <Note tone="warn">Could not read the pulled GSTR-3B: {loadError}</Note>}
+      {activeSpan.endReason && (
+        <Note tone="info">
+          Part-year working: {activeSpan.label}. Only the active months are pulled and asked for; the months after are marked Not active.
+        </Note>
+      )}
       {pendingCount > 0 && !polling && !readOnly && (
         <Note tone="info">
           {pendingCount} month{pendingCount === 1 ? ' has' : 's have'} as-filed GSTR-3B from the portal that {pendingCount === 1 ? 'is' : 'are'} not in the working yet — use <span className="font-medium">Apply as-filed GSTR-3B</span> to review and bring {pendingCount === 1 ? 'it' : 'them'} in.
@@ -336,7 +361,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
                     <td className="border-b border-r px-2 py-1 font-mono text-[11px]">{r.row?.arn || <span className="text-muted-foreground">—</span>}</td>
                     <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtDate(r.row?.filedDate) || <span className="text-muted-foreground">—</span>}</td>
                     <td className="border-b border-r px-2 py-1 tabular-nums whitespace-nowrap">{fmtWhen(r.row?.updatedAt) || <span className="text-muted-foreground">—</span>}</td>
-                    <td className="border-b px-2 py-1"><InWorking r={r} /></td>
+                    <td className="border-b px-2 py-1">{r.notActive && !r.usable ? <NotActive /> : <InWorking r={r} />}</td>
                   </tr>
                 ))}
               </tbody>
@@ -347,7 +372,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
             {monthRows.map((r) => (
               <li
                 key={r.m}
-                className="min-w-0 space-y-1 rounded-md border bg-card px-1.5 py-1"
+                className={cn('min-w-0 space-y-1 rounded-md border px-1.5 py-1', r.notActive && !r.usable ? 'border-dashed bg-muted/40 text-muted-foreground' : 'bg-card')}
                 title={[
                   r.row?.arn && `ARN ${r.row.arn}`,
                   r.row?.filedDate && `filed ${fmtDate(r.row.filedDate)}`,
@@ -356,7 +381,7 @@ export const Gstr3bSection: React.FC<{ bridge: PullBridge }> = ({ bridge }) => {
               >
                 <div className="truncate text-[11px] font-semibold">{monthTitle(r.m, financialYear)}</div>
                 <div className="flex flex-wrap gap-0.5"><PortalStatus row={r.row} /></div>
-                <InWorking r={r} />
+                {r.notActive && !r.usable ? <NotActive /> : <InWorking r={r} />}
               </li>
             ))}
           </ul>

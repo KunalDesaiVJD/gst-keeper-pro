@@ -614,7 +614,7 @@ function renderCover(st: St, p: WorkingPaper): void {
   setFont(doc, 15, 'normal', INK);
   doc.text('GSTR-9 & GSTR-9C working papers', M + 8, 72.5);
   setFont(doc, 9.5, 'normal', GREY);
-  doc.text(pdfText(`Financial year ${set.meta.financialYear}`), M + 8, 80);
+  doc.text(pdfText(`Financial year ${set.meta.financialYear}${set.meta.period ? ` · Period ${set.meta.period}` : ''}`), M + 8, 80);
   st.y = 96;
   para(st, set.meta.clientName || '—', 15, 'bold', INK);
   para(st, `GSTIN ${set.meta.gstin || '—'}`, 10, 'normal', GREY);
