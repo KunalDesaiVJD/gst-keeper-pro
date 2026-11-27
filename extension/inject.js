@@ -76,3 +76,88 @@
     }
   } catch (e) { /* ignore */ }
 })();
+
+// 0.19.2: the vendor GSTIN lookup (mode gstin_search) — keep a copy of what
+// the portal's own Search Taxpayer page asks and gets back (address, method,
+// request body and headers, status, the answer), so the extension reads the
+// JSON the page itself loaded and fits its mapping to the request the page
+// really makes, instead of guessing API addresses (the guessed ones were
+// refused: "Request Rejected", HTTP 403). Read-only: the requests are the
+// page's own; we only copy them. services.gst.gov.in only; kept in
+// sessionStorage under '__gstkGS', newest last, capped.
+(() => {
+  try { if (location.hostname !== 'services.gst.gov.in') return; } catch (e) { return; }
+  const KEY = '__gstkGS';
+  const WANT = /search|taxpayer|returndetails|goodservice|filingstatus/i;
+  const keep = (method, url, status, reqBody, reqHeaders, text) => {
+    try {
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+      const isJson = !!json && typeof json === 'object';
+      const entry = {
+        at: Date.now(), method: String(method || 'GET').toUpperCase(), url: String(url || ''), status: status || 0,
+        reqBody: typeof reqBody === 'string' ? reqBody.slice(0, 4000) : null, reqHeaders: reqHeaders || {},
+        json: isJson ? json : null, text: isJson ? null : String(text == null ? '' : text).slice(0, 3000),
+      };
+      let list = [];
+      try { list = JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch (e) { list = []; }
+      if (!Array.isArray(list)) list = [];
+      list.push(entry);
+      while (list.length > 30) list.shift();
+      let s = JSON.stringify(list);
+      while (s.length > 2000000 && list.length > 1) { list.shift(); s = JSON.stringify(list); }
+      sessionStorage.setItem(KEY, s);
+    } catch (e) { /* never disturb the page */ }
+  };
+  try {
+    const open = XMLHttpRequest.prototype.open;
+    const send = XMLHttpRequest.prototype.send;
+    const setHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try { this.__gstkGs = { method, url, headers: {} }; } catch (e) { /* ignore */ }
+      return open.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.setRequestHeader = function (k, v) {
+      try { if (this.__gstkGs) this.__gstkGs.headers[String(k)] = String(v); } catch (e) { /* ignore */ }
+      return setHeader.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function (body) {
+      try {
+        const m = this.__gstkGs;
+        if (m && WANT.test(String(m.url || ''))) {
+          this.addEventListener('load', () => {
+            try {
+              const t = this.responseType === '' || this.responseType === 'text' ? this.responseText
+                : this.responseType === 'json' ? JSON.stringify(this.response) : null;
+              keep(m.method, this.responseURL || m.url, this.status, typeof body === 'string' ? body : null, m.headers, t);
+            } catch (e) { /* ignore */ }
+          });
+        }
+      } catch (e) { /* ignore */ }
+      return send.apply(this, arguments);
+    };
+  } catch (e) { /* ignore */ }
+  try {
+    const f = window.fetch;
+    if (typeof f === 'function') {
+      window.fetch = function (input, init) {
+        const p = f.apply(this, arguments);
+        try {
+          const url = typeof input === 'string' ? input : (input && input.url) || '';
+          if (WANT.test(url)) {
+            const method = (init && init.method) || (input && typeof input === 'object' && input.method) || 'GET';
+            const headers = {};
+            try {
+              const h = init && init.headers;
+              if (h && typeof h.forEach === 'function') h.forEach((v, k) => { headers[k] = v; });
+              else if (h && typeof h === 'object') for (const k of Object.keys(h)) headers[k] = String(h[k]);
+            } catch (e) { /* ignore */ }
+            const body = init && typeof init.body === 'string' ? init.body : null;
+            p.then((r) => r.clone().text().then((t) => keep(method, r.url || url, r.status, body, headers, t))).catch(() => {});
+          }
+        } catch (e) { /* ignore */ }
+        return p;
+      };
+    }
+  } catch (e) { /* ignore */ }
+})();

@@ -23,14 +23,17 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
   - **GSTR-9 Table 8A document details** (`gstr9_8a_pull`, v0.18.0) — presses
     "Download Table 8A document details" on the year's GSTR-9 dashboard and saves
     the portal's file as it came as `GSTR9_8A`; GST Keeper's 8A reports read it.
-- For the **Vendor GSTIN Risk** report (`gstin_search`, v0.19.0): after the client's
-  login, looks up each supplier GSTIN the report's Pull sends (`job.gstins`) on the
-  portal's logged-in Search Taxpayer (registration details and the return filing
-  table), paced 1.5 s apart, and writes one `vendor_gstin_lookups` row per GSTIN
-  (`ok` / `not_found` / `error`, the portal's answer in `payload`). Never the public
-  search, which needs a CAPTCHA; a CAPTCHA asked for, a dropped session, no
-  Search Taxpayer address answering, or three errors in a row stops the job. The
-  endpoints are not confirmed live yet (see `docs/VENDOR_GSTIN_RISK.md`).
+- For the **Vendor GSTIN Risk** report (`gstin_search`, v0.19.0; v0.19.2 reads the
+  portal's own Search Taxpayer page): after the client's login, opens Search Taxpayer >
+  Search by GSTIN/UIN from the dashboard menu, types each supplier GSTIN the report's
+  Pull sends (`job.gstins`), presses Search and Show Filing Table, and writes one
+  `vendor_gstin_lookups` row per GSTIN (`ok` / `not_found` / `error`) from the JSON the
+  page's own requests returned (copied by `inject.js`) and the rendered labels, with
+  the source of each column in `payload`. Paced 2 to 3 s apart. A refused request is
+  never taken for a dropped session; a real logout logs in again (twice a run); a
+  CAPTCHA on the page is waited for a person (3 minutes), never filled; 45 s a GSTIN
+  with one retry; only 5 failures in a row stop the run. The page's selectors are
+  not confirmed live yet (see `docs/VENDOR_GSTIN_RISK.md`).
 - *(GSTR-2B pull is the next addition — it needs file-download handling.)*
 
 ## Install it once per browser (free, ~1 minute)

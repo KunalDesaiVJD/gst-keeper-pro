@@ -1,4 +1,4 @@
-// The Vendor GSTIN Risk report's Pull (extension 0.19.0, mode gstin_search):
+// The Vendor GSTIN Risk report's Pull (extension 0.19.2, mode gstin_search):
 // which supplier GSTINs of the client to look up on the portal's logged-in
 // Search Taxpayer. docs/VENDOR_GSTIN_RISK.md, "Search Taxpayer lookup".
 //
@@ -13,7 +13,7 @@
 // first; with none missing, all of them are looked up again (a refresh),
 // the oldest first. At most MAX_PER_PULL per click; the next click takes the
 // rest. Each lookup is one row of vendor_gstin_lookups, written by the
-// extension. The plan says "needs extension 0.19.0" (and starts nothing) only
+// extension. The plan says "needs extension 0.19.2" (and starts nothing) only
 // when it is given an older extension's version.
 import { supabase } from '@/integrations/supabase/client';
 import type { PullJob, PullPlan } from '@/lib/reportRegistry';
@@ -22,11 +22,11 @@ import { compareVersions } from '@/lib/extensionVersion';
 import { checkGstin, normGstin } from '@/lib/vendorRisk/gstin';
 
 /** The extension that runs Search Taxpayer lookups (mode gstin_search). */
-export const GSTIN_SEARCH_VERSION = '0.19.0';
+export const GSTIN_SEARCH_VERSION = '0.19.2';
 export const GSTIN_SEARCH_MODE = 'gstin_search';
 /** A lookup newer than this counts as fresh. */
 export const LOOKUP_FRESH_DAYS = 30;
-/** GSTINs per Pull (about 3 paced portal requests each, so ~10 minutes). */
+/** GSTINs per Pull (0.19.2: each looked up on the portal's own Search Taxpayer page, about 10 to 15 seconds each). */
 export const MAX_PER_PULL = 150;
 
 const PAGE = 1000;
@@ -95,7 +95,8 @@ const fyMonthsOf = (periods: string[]): string[] =>
  * leaves it out is not gated.
  */
 export const planVendorGstinSearch = async (args: { clientId: string; periods: string[]; extVersion?: string | null }): Promise<PullPlan> => {
-  // Only a 0.19.0+ extension knows the mode (an older one would run its ledger chain instead).
+  // Only a 0.19.0+ extension knows the mode (an older one would run its ledger chain instead);
+  // 0.19.2 is asked for: 0.19.0 / 0.19.1 asked guessed addresses the portal refuses.
   if (args.extVersion !== undefined && (!args.extVersion || compareVersions(args.extVersion, GSTIN_SEARCH_VERSION) < 0)) {
     return {
       jobs: [],
