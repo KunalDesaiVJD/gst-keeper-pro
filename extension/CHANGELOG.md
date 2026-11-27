@@ -2,6 +2,16 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-11-27 — Vendor GSTIN lookup on Search Taxpayer (v0.19.0)
+
+- **A new pull, `gstin_search`**, for the Vendor GSTIN Risk report's Pull. The job carries the supplier GSTINs to look up (`job.gstins`, at most 500; the app sends at most 150 a Pull). After the client's usual login (the same login, CAPTCHA typed by a person, session identity check), it opens `services/auth/fowelcome` and, from that page, asks the portal's logged-in Search Taxpayer for each GSTIN: the taxpayer's details, then the return filing table (asked again with the job's FY when the plain ask brings none). One request at a time, 1.5 s apart.
+- **One `vendor_gstin_lookups` row per GSTIN** (`saveVendorGstinLookup`, a plain insert through the usual `/rest/v1` path with `x-gst-source` / `x-gst-actor`): `ok` with the portal's fields (`lgnm`, `tradeNam`, `sts`, `rgdt`, `cxdt` as ISO dates, `ctb`, `dty`, `stj`, `ctj`, `pradr`, `nba`, `einvoiceStatus`, `aggreTurnOver` / `aggreTurnOverFY`) and the filing table (`rtntype`, `fy`, `taxp`, `dof` as ISO, `status`, `mof`); `not_found` when the portal says there is no such GSTIN; `error` otherwise. `looked_up_by` is the app user who pressed Pull, `via_client_id` the client whose login was used, `payload` the portal's answers as they came with the address that gave each.
+- **Stops, never loops:** a dropped session (401 / 403, the login page), a CAPTCHA asked for (never filled: the public search, which needs one, is never called), no Search Taxpayer address answering, three failed lookups in a row, or two failed saves. The banner counts what was found, not found, failed and not reached; Pull again takes the rest. A reload resumes after the last saved GSTIN.
+- **Not confirmed live:** the Search Taxpayer addresses (`services/auth/api/search/tp`, `.../search/taxpayerDetails`, `.../search/taxpayerReturnDetails`) are the likely ones, tried in order; the first that answers is kept for the job. The rows' `payload` shows what the portal sent, for fitting once seen live.
+- **Nothing else changes.** Every other job runs as in 0.18.7: the new mode adds a login branch, a dispatcher entry, its own handler, a database call, a popup label and, in `startSectionPull`, a `gstins` field set only for this mode.
+- GST Keeper asks for 0.19.0 only for this Pull; the minimum stays 0.16.0.
+- Test `test/23-gstin-search.test.mjs`; `test/17-actor-headers.test.mjs` now expects 0.19.0. Migration `20261127140000_vendor_gstin_risk.sql` must be live first.
+
 ## 2026-11-20 — GST Receivable Reco: ITC utilised by the return's tax period, every ledger page (v0.18.7)
 
 - ITC utilised was the "Other than reverse charge" debits dated in the reco month. A return filed late, or in the same month, posts its set-off in another month, so the wrong return's set-off was taken: SUNRISE RENTAL SERVICES, Oct-26 reco, took Aug-26's (filed 30/10/2026, CGST/SGST 4,982) instead of Sep-26's (filed 04/11/2026, 7,394). Now each ledger row's Tax Period is read, and ITC utilised is the set-off debit whose Tax Period is the month before the reco month, whatever its date. DRC-03 / other debits stay those dated in the reco month.

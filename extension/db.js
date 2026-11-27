@@ -45,6 +45,8 @@
     noticesNeedingDetail: (clientId) => call('noticesNeedingDetail', clientId),
     replaceDrc03Filings: (clientId, rows, pullTs, opts) => call('replaceDrc03Filings', clientId, rows, pullTs, opts),
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
+    // 0.19.0: one vendor GSTIN lookup (Search Taxpayer), one vendor_gstin_lookups row.
+    saveVendorGstinLookup: (row) => call('saveVendorGstinLookup', row),
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     upsertFiledReturn: (clientId, period, returnType, patchObj) => call('upsertFiledReturn', clientId, period, returnType, patchObj),

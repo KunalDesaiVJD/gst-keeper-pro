@@ -31,6 +31,7 @@ import { WorkingPaperView } from './views/WorkingPaperView';
 import { Gstr1YearDocumentsView } from './views/Gstr1YearDocumentsView';
 import { ReasonReconciliationView } from './views/ReasonReconciliationView';
 import { ItcThreeWayView } from './views/ItcThreeWayView';
+import { VendorRiskView } from './views/VendorRiskView';
 
 export interface ReportPreviewDialogProps {
   open: boolean;
@@ -95,6 +96,8 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
       return <ReasonReconciliationView table={table} report={report} />;
     case 'itc-three-way':
       return <ItcThreeWayView table={table} report={report} />;
+    case 'vendor-risk':
+      return <VendorRiskView table={table} report={report} />;
     case 'gstr1-year-documents':
       return <Gstr1YearDocumentsView table={table} report={report} />;
   }

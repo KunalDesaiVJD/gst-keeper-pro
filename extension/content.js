@@ -461,6 +461,8 @@
     else if (job.step === 'gstr3b_pull') await handleGstr3bPull(job, cur, progress);
     else if (job.step === 'gstr9_pull') await handleGstr9Pull(job, cur, progress);
     else if (job.step === 'gstr9_8a_pull') await handleGstr9EightAPull(job, cur, progress);
+    // 0.19.0: vendor GSTINs on Search Taxpayer (the Vendor GSTIN Risk report's Pull).
+    else if (job.step === 'gstin_search') await handleGstinSearch(job, cur, progress);
     else if (job.step === 'gstr1_pull') await handleGstr1Pull(job, cur, progress);
     else if (job.step === 'gstr2a_pull') await handleGstr2aPull(job, cur, progress);
     else if (job.step === 'creditledgertxn') await handleCreditLedgerTxnOnly(job, cur, progress);
@@ -1009,6 +1011,13 @@
         job.step = stepFor2a2b(job);
         await setJob(job);
         location.href = 'https://return.gst.gov.in/returns/auth/dashboard';
+      } else if (job.mode === 'gstin_search') {
+        // 0.19.0: the Vendor GSTIN Risk report's Pull. The lookups run from a
+        // logged-in services.gst.gov.in page (see handleGstinSearch).
+        banner('Logged in: looking up vendor GSTINs on Search Taxpayer…' + progress);
+        job.step = 'gstin_search';
+        await setJob(job);
+        location.href = 'https://services.gst.gov.in/services/auth/fowelcome';
       } else if (job.mode === 'login') {
         // Simple login from the Clients → Credentials "Login" button: log in and
         // stop on the portal, no return/ledger navigation.
@@ -7421,6 +7430,328 @@
       cess: (r.cess && r.cess.tx) || 0,
       balance: r.tot_rng_bal || 0,
     }));
+  }
+
+  // ── 0.19.0: Search Taxpayer for vendor GSTINs (mode gstin_search) ─────────
+  // The Vendor GSTIN Risk report's Pull. After the usual login for the client
+  // picked (whose session only carries the lookups), every GSTIN of job.gstins
+  // is looked up with the portal's logged-in Search Taxpayer services, from
+  // this page (same origin, the session's own cookies), one request at a time
+  // and paced, and each answer is saved as one row of vendor_gstin_lookups:
+  // ok (the taxpayer), not_found (the portal says no such GSTIN) or error.
+  // The public search (services/api/search/taxpayerDetails) needs a CAPTCHA:
+  // it is never called, and a CAPTCHA asked for here stops the job (GST Keeper
+  // never solves one). A dropped session stops it too, as do three errors in a
+  // row; nothing is retried in a loop. Everything here is new and used only by
+  // this mode: no other job reaches it.
+  // NOT CONFIRMED LIVE (27 Nov 2026): the endpoints below are the likely ones,
+  // tried in order; the first that answers for a GSTIN is kept for the rest of
+  // the job. Each row's payload keeps the portal's answer as it came (and the
+  // address that gave it) so the app can be fitted to it once seen live.
+  function gsEndpoints() {
+    return {
+      details: [
+        { method: 'POST', url: 'https://services.gst.gov.in/services/auth/api/search/tp', body: (g) => ({ gstin: g }) }, // not confirmed live
+        { method: 'POST', url: 'https://services.gst.gov.in/services/auth/api/search/taxpayerDetails', body: (g) => ({ gstin: g }) }, // not confirmed live
+        { method: 'GET', url: 'https://services.gst.gov.in/services/auth/api/search/tp?gstin=', query: true }, // not confirmed live
+      ],
+      returns: [
+        { method: 'POST', url: 'https://services.gst.gov.in/services/auth/api/search/taxpayerReturnDetails', body: (g, fy) => (fy ? { gstin: g, fy } : { gstin: g }) }, // not confirmed live
+        { method: 'GET', url: 'https://services.gst.gov.in/services/auth/api/search/taxpayerReturnDetails?gstin=', query: true }, // not confirmed live
+      ],
+    };
+  }
+  // A function, not consts: the dispatcher above runs before a const declared
+  // down here is initialised (see the note at the top of this file).
+  function gsConf() {
+    return {
+      paceMs: 1500,          // between two portal requests
+      maxGstins: 500,        // per job; the app asks for fewer
+      maxErrorsInRow: 3,
+      gstinRe: /^[0-9]{2}[0-9A-Z]{13}$/,
+      uuidRe: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    };
+  }
+
+  // One request to the portal, sorted into what it means for the job:
+  //   ok          JSON with a taxpayer (details) or a filing table (returns)
+  //   not_found   JSON saying there is no such GSTIN
+  //   expired     the session is gone (401 / 403, sent to the login page)
+  //   captcha     the portal asks for a CAPTCHA
+  //   noendpoint  this address does not serve the search (404 / 405 / a page)
+  //   bad         an answer not understood (kept in the payload)
+  //   neterr      no answer (network, timeout)
+  async function gsAsk(ep, gstin, fy, want) {
+    const target = ep.query ? ep.url + encodeURIComponent(gstin) + (fy ? '&fy=' + encodeURIComponent(fy) : '') : ep.url;
+    const shown = target.replace(/^https:\/\/services\.gst\.gov\.in/, '');
+    let r = null;
+    try {
+      r = await withTimeout(fetch(target, ep.method === 'POST'
+        ? { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*' }, body: JSON.stringify(ep.body(gstin, fy)) }
+        : { method: 'GET', credentials: 'include', headers: { Accept: 'application/json, text/plain, */*' } }), 20000, 'search taxpayer');
+    } catch (e) {
+      return { kind: 'neterr', url: shown, status: null, message: (e && e.message) || 'no answer' };
+    }
+    const status = r.status;
+    let text = '';
+    try { text = await r.text(); } catch (e) { text = ''; }
+    let j = null;
+    try { j = text ? JSON.parse(text) : null; } catch (e) { j = null; }
+    const finalUrl = String(r.url || '');
+    if (status === 401 || status === 403 || (r.redirected && /services\/login|accessdenied|sessionexpired/i.test(finalUrl))) {
+      return { kind: 'expired', url: shown, status, message: 'the portal session ended (HTTP ' + status + ')', body: j || text.slice(0, 2000) };
+    }
+    if (!j || typeof j !== 'object') {
+      if (/captcha/i.test(text)) return { kind: 'captcha', url: shown, status, message: 'the portal asked for a CAPTCHA', body: text.slice(0, 2000) };
+      if (/<html/i.test(text) && /services\/login|log ?in to|session (has )?expired/i.test(text)) return { kind: 'expired', url: shown, status, message: 'the portal answered with its login page', body: text.slice(0, 2000) };
+      if (status === 404 || status === 405 || /<html/i.test(text) || !text) return { kind: 'noendpoint', url: shown, status, message: 'HTTP ' + status + (text ? ', not JSON' : ', empty'), body: text.slice(0, 2000) };
+      return { kind: 'bad', url: shown, status, message: 'HTTP ' + status + ', not JSON', body: text.slice(0, 2000) };
+    }
+    const words = oneLine([j.errorCode, j.error_cd, j.errCode, j.message, j.msg, j.error && (j.error.message || j.error.error_cd || j.error), j.errorMessage]
+      .filter((x) => x != null && typeof x !== 'object').join(' '));
+    if (/captcha/i.test(words)) return { kind: 'captcha', url: shown, status, message: 'the portal asked for a CAPTCHA (' + words.slice(0, 160) + ')', body: j };
+    if (/session.*(expired|invalid|timed? ?out)|log ?in again|not logged in|unauthori[sz]ed/i.test(words)) return { kind: 'expired', url: shown, status, message: 'the portal session ended (' + words.slice(0, 160) + ')', body: j };
+    if (want === 'details') {
+      const tp = gsTaxpayer(j);
+      if (tp) return { kind: 'ok', url: shown, status, body: j, tp };
+    } else {
+      const rows = gsFilings(j);
+      if (rows) return { kind: 'ok', url: shown, status, body: j, filings: rows };
+    }
+    // The portal's words for an unknown or invalid GSTIN (not confirmed live:
+    // the codes the public search is known to use, and the usual wording).
+    // A server's own "Not Found" for an address it does not serve (a 404 with
+    // no word about a GSTIN) is not an answer about the GSTIN.
+    const aboutGstin = status < 400 || /gstin|taxpayer|record|detail|uin/i.test(words);
+    if (aboutGstin && /no (such )?(record|data|taxpayer|details?)|not found|does not exist|invalid gstin|gstin.{0,40}(is )?invalid|not a valid|not registered|SWEB_9035|SWEB_9022|FO8000|RET191\d*/i.test(words)) {
+      return { kind: 'not_found', url: shown, status, message: words.slice(0, 300) || 'no such GSTIN', body: j };
+    }
+    if (status === 404 || status === 405) return { kind: 'noendpoint', url: shown, status, message: 'HTTP ' + status + (words ? ' (' + words.slice(0, 160) + ')' : ''), body: j };
+    return { kind: 'bad', url: shown, status, message: 'HTTP ' + status + ', an answer not understood' + (words ? ' (' + words.slice(0, 160) + ')' : ''), body: j };
+  }
+
+  // The taxpayer object in a Search Taxpayer answer: the answer itself, or its
+  // data / taxpayerInfo / result wrapper (a JSON string there is read too).
+  function gsTaxpayer(j) {
+    const looks = (o) => o && typeof o === 'object' && !Array.isArray(o) && (o.lgnm != null || o.tradeNam != null || (o.sts != null && (o.gstin != null || o.rgdt != null)));
+    const seen = [j];
+    for (let i = 0; i < seen.length && i < 30; i++) {
+      let o = seen[i];
+      if (typeof o === 'string' && /^\s*\{/.test(o)) { try { o = JSON.parse(o); } catch (e) { continue; } }
+      if (looks(o)) return o;
+      if (o && typeof o === 'object' && !Array.isArray(o)) {
+        for (const k of ['data', 'taxpayerInfo', 'taxpayerDetails', 'result', 'tpDetails', 'details']) if (o[k] != null) seen.push(o[k]);
+      }
+    }
+    return null;
+  }
+  // The filing table: every object carrying rtntype, from filingStatus ([[...]]
+  // per return type) or any array the answer holds. Null when none is there.
+  function gsFilings(j) {
+    const out = [];
+    const walk = (n, depth) => {
+      if (!n || depth > 6) return;
+      if (typeof n === 'string' && /^\s*[[{]/.test(n)) { try { walk(JSON.parse(n), depth + 1); } catch (e) { /* not JSON */ } return; }
+      if (Array.isArray(n)) { for (const x of n) walk(x, depth + 1); return; }
+      if (typeof n !== 'object') return;
+      if (n.rtntype != null || n.rtnType != null) {
+        out.push({
+          rtntype: gsStr(n.rtntype != null ? n.rtntype : n.rtnType),
+          fy: gsStr(n.fy),
+          taxp: gsStr(n.taxp),
+          dof: gsDate(n.dof) || gsStr(n.dof),
+          status: gsStr(n.status),
+          mof: gsStr(n.mof),
+        });
+        return;
+      }
+      for (const k of Object.keys(n)) walk(n[k], depth + 1);
+    };
+    walk(j, 0);
+    if (out.length) return out;
+    // An answer that holds a filing list, empty (a GSTIN that filed nothing yet).
+    const holder = j && typeof j === 'object' && (j.filingStatus || (j.data && j.data.filingStatus));
+    return Array.isArray(holder) ? [] : null;
+  }
+  function gsStr(v) {
+    if (v == null) return null;
+    const s = oneLine(String(v));
+    return s && !/^(na|n\/a|null|undefined|-+)$/i.test(s) ? s : null;
+  }
+  // dd/mm/yyyy (or dd-mm-yyyy, or ISO) to an ISO date; an impossible day is null.
+  function gsDate(v) {
+    const t = String(v == null ? '' : v).trim().slice(0, 10);
+    let m = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    let dd, mm, yyyy;
+    if (m) { dd = +m[1]; mm = +m[2]; yyyy = +m[3]; }
+    else if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/))) { dd = +m[3]; mm = +m[2]; yyyy = +m[1]; }
+    else return null;
+    if (yyyy < 1900 || yyyy > 2100) return null;
+    const d = new Date(Date.UTC(yyyy, mm - 1, dd));
+    if (d.getUTCFullYear() !== yyyy || d.getUTCMonth() !== mm - 1 || d.getUTCDate() !== dd) return null;
+    return yyyy + '-' + String(mm).padStart(2, '0') + '-' + String(dd).padStart(2, '0');
+  }
+  function gsAddress(p) {
+    if (!p) return null;
+    if (typeof p === 'string') return gsStr(p);
+    if (typeof p !== 'object') return null;
+    if (gsStr(p.adr)) return gsStr(p.adr);
+    const a = p.addr && typeof p.addr === 'object' ? p.addr : p;
+    const parts = ['bno', 'bnm', 'flno', 'st', 'loc', 'city', 'dst', 'stcd', 'pncd'].map((k) => gsStr(a[k])).filter(Boolean);
+    return parts.length ? parts.join(', ') : null;
+  }
+  // The row of vendor_gstin_lookups for one answer.
+  function gsRow(job, cur, gstin, status, error, tp, filings, payload) {
+    const actor = typeof job.actorId === 'string' && gsConf().uuidRe.test(job.actorId) ? job.actorId : null;
+    const row = {
+      gstin, status, error: error || null, extension_version: EXT_VERSION,
+      looked_up_by: actor, via_client_id: (cur && cur.clientId) || null,
+      filings: filings || null, payload: payload || null,
+    };
+    if (tp) {
+      const nba = Array.isArray(tp.nba) ? tp.nba.map(gsStr).filter(Boolean) : (gsStr(tp.nba) ? [gsStr(tp.nba)] : null);
+      const slab = gsStr(tp.aggreTurnOver != null ? tp.aggreTurnOver : tp.aggreTurnover);
+      const slabFy = gsStr(tp.aggreTurnOverFY != null ? tp.aggreTurnOverFY : tp.aggreTurnoverFY);
+      const einv = tp.einvoiceStatus != null ? tp.einvoiceStatus : tp.einvStatus;
+      Object.assign(row, {
+        legal_name: gsStr(tp.lgnm),
+        trade_name: gsStr(tp.tradeNam != null ? tp.tradeNam : tp.tradeName),
+        reg_status: gsStr(tp.sts),
+        reg_date: gsDate(tp.rgdt),
+        cancel_date: gsDate(tp.cxdt),
+        // not confirmed live: the key the portal names the cancellation reason by
+        cancel_reason: gsStr(tp.cxRsn != null ? tp.cxRsn : tp.cancelReason != null ? tp.cancelReason : tp.cnclRsn),
+        taxpayer_type: gsStr(tp.dty),
+        constitution: gsStr(tp.ctb),
+        state_jurisdiction: gsStr(tp.stj),
+        centre_jurisdiction: gsStr(tp.ctj),
+        address: gsAddress(tp.pradr),
+        nature_of_business: nba && nba.length ? nba : null,
+        ato_slab: slab ? slab + (slabFy ? ' (FY ' + slabFy + ')' : '') : null,
+        einvoice_status: einv == null ? null : gsStr(typeof einv === 'boolean' ? (einv ? 'Yes' : 'No') : einv),
+      });
+    }
+    return row;
+  }
+  // The FYs of the job's periods, newest first, as the portal's filing table
+  // may want them ("2025-26"; not confirmed live). Two at most.
+  function gsFys(job) {
+    const out = [];
+    for (const p of job.periods || []) {
+      const m = String(p || '').match(/^(\d{2})\/(\d{4})$/);
+      if (!m) continue;
+      const start = +m[1] >= 4 ? +m[2] : +m[2] - 1;
+      const fy = start + '-' + String((start + 1) % 100).padStart(2, '0');
+      if (!out.includes(fy)) out.push(fy);
+    }
+    return out.sort().reverse().slice(0, 2);
+  }
+
+  async function handleGstinSearch(job, cur, progress) {
+    const { paceMs: GS_PACE_MS, maxGstins: GS_MAX_GSTINS, maxErrorsInRow: GS_MAX_ERRORS_IN_ROW, gstinRe: GS_GSTIN_RE } = gsConf();
+    const gs = job.gs || (job.gs = { idx: 0, ok: 0, not_found: 0, error: 0, errorsInRow: 0, saveFails: 0, detailsEp: null, returnsEp: null, stopped: null });
+    const list = (Array.isArray(job.gstins) ? job.gstins : [])
+      .map((g) => String(g || '').trim().toUpperCase()).filter((g) => GS_GSTIN_RE.test(g));
+    const gstins = [...new Set(list)].slice(0, GS_MAX_GSTINS);
+    const finish = async (why, color) => {
+      const left = Math.max(0, gstins.length - gs.idx);
+      const counts = gs.ok + ' found, ' + gs.not_found + ' not found, ' + gs.error + ' failed';
+      gs.stopped = why || null;
+      banner('Vendor GSTIN lookup ' + (why ? 'stopped: ' + why + '. ' : 'done: ') + counts
+        + (left && why ? '; ' + left + ' not looked up (Pull again for them)' : '')
+        + '. You can close this tab.', color || (why ? '#d97706' : '#16a34a'));
+      try { await GSTKdb.logClientSync(cur.clientId, 'gstin_search', why ? 'failed' : 'success', 'Vendor GSTIN lookup: ' + counts + (why ? '; stopped: ' + why : '') + ' [ext ' + EXT_VERSION + ']'); } catch (e) { /* diagnostic only */ }
+      await clearJob();
+    };
+    // The page this runs from must be a logged-in services.gst.gov.in page.
+    // Sent to the login or error page instead: the session is gone; stop.
+    if (/services\/error|accessdenied|services\/login/.test(url)) {
+      await finish('the portal session ended (sent to ' + location.pathname + ')', '#dc2626');
+      return;
+    }
+    if (!/(^|\.)services\.gst\.gov\.in$/.test(location.hostname) || !/\/auth\//.test(url)) {
+      await setJob(job);
+      location.href = 'https://services.gst.gov.in/services/auth/fowelcome';
+      return;
+    }
+    if (!gstins.length) { await finish('no valid GSTIN was given to look up', '#dc2626'); return; }
+    const EP = gsEndpoints();
+    const fys = gsFys(job);
+    // Asks each address in turn (the one that answered before, first) and
+    // returns the first answer that means something, with what was tried.
+    const askAll = async (kind, gstin, fy) => {
+      const list2 = EP[kind];
+      const known = kind === 'details' ? gs.detailsEp : gs.returnsEp;
+      const order = known != null && list2[known] ? [known, ...list2.map((_, i) => i).filter((i) => i !== known)] : list2.map((_, i) => i);
+      const tried = [];
+      let first = true;
+      for (const i of order) {
+        if (!first) await sleep(GS_PACE_MS);
+        first = false;
+        const a = await gsAsk(list2[i], gstin, fy, kind);
+        tried.push({ url: a.url, status: a.status, kind: a.kind, message: a.message || null, body: a.kind === 'ok' || a.kind === 'not_found' || a.kind === 'bad' ? a.body : (a.body || null) });
+        if (a.kind === 'ok' || a.kind === 'not_found') {
+          if (kind === 'details') gs.detailsEp = i; else gs.returnsEp = i;
+          return { a, tried };
+        }
+        if (a.kind === 'expired' || a.kind === 'captcha' || a.kind === 'neterr') return { a, tried };
+      }
+      // Nothing answered: the last answer that said something (bad before noendpoint).
+      const bad = tried.find((t) => t.kind === 'bad');
+      return { a: bad ? { kind: 'bad', message: bad.message } : { kind: 'noendpoint', message: 'no Search Taxpayer address answered (' + tried.map((t) => t.url + ' ' + (t.status || '?')).join('; ') + ')' }, tried };
+    };
+    const save = async (row) => {
+      try { await GSTKdb.saveVendorGstinLookup(row); gs.saveFails = 0; return true; }
+      catch (e) { gs.saveFails++; gs.lastSaveError = (e && e.message) || 'save failed'; return false; }
+    };
+
+    while (gs.idx < gstins.length) {
+      const gstin = gstins[gs.idx];
+      banner('Looking up vendor GSTIN ' + (gs.idx + 1) + ' of ' + gstins.length + ' (' + gstin + ') on Search Taxpayer…' + progress);
+      if (gs.idx > 0 || gs.asked) await sleep(GS_PACE_MS);
+      gs.asked = true;
+      const d = await askAll('details', gstin, null);
+      let stop = null;
+      let row;
+      if (d.a.kind === 'ok') {
+        // The filing table: best-effort; a failure leaves filings empty (null)
+        // and is kept in the payload. Asked by FY only when the plain ask
+        // brings no table.
+        const payload = { details: { url: d.a.url, status: d.a.status, body: d.a.body }, returns: [] };
+        let filings = null;
+        await sleep(GS_PACE_MS);
+        let rr = await askAll('returns', gstin, null);
+        payload.returns.push(...rr.tried);
+        if (rr.a.kind === 'ok') filings = rr.a.filings;
+        if (rr.a.kind === 'expired' || rr.a.kind === 'captcha') stop = rr.a;
+        for (const fy of fys) {
+          if (stop || (filings && filings.length) || gs.returnsEp == null) break;
+          await sleep(GS_PACE_MS);
+          rr = await askAll('returns', gstin, fy);
+          payload.returns.push(...rr.tried.map((t) => ({ ...t, fy })));
+          if (rr.a.kind === 'ok' && rr.a.filings.length) filings = (filings || []).concat(rr.a.filings);
+          if (rr.a.kind === 'expired' || rr.a.kind === 'captcha') stop = rr.a;
+        }
+        row = gsRow(job, cur, gstin, 'ok', null, d.a.tp, filings, payload);
+      } else if (d.a.kind === 'not_found') {
+        row = gsRow(job, cur, gstin, 'not_found', d.a.message || null, null, null, { details: { url: d.a.url, status: d.a.status, body: d.a.body } });
+      } else {
+        row = gsRow(job, cur, gstin, 'error', d.a.message || d.a.kind, null, null, { details: d.tried });
+        if (d.a.kind === 'expired' || d.a.kind === 'captcha' || d.a.kind === 'noendpoint') stop = d.a;
+      }
+      const saved = await save(row);
+      if (row.status === 'error') { gs.error++; gs.errorsInRow++; }
+      else { gs[row.status]++; gs.errorsInRow = 0; }
+      gs.idx++;
+      gs.results = (gs.results || []).concat([{ gstin, status: row.status }]).slice(-GS_MAX_GSTINS);
+      await setJob(job);
+      if (!saved && gs.saveFails >= 2) { await finish('GST Keeper did not take the lookups (' + gs.lastSaveError + ')', '#dc2626'); return; }
+      if (stop && stop.kind === 'captcha') { await finish('the portal asked for a CAPTCHA on Search Taxpayer; GST Keeper never fills one', '#dc2626'); return; }
+      if (stop && stop.kind === 'expired') { await finish(stop.message || 'the portal session ended', '#dc2626'); return; }
+      if (stop && stop.kind === 'noendpoint' && gs.detailsEp == null) { await finish(stop.message, '#dc2626'); return; }
+      if (gs.errorsInRow >= GS_MAX_ERRORS_IN_ROW) { await finish(GS_MAX_ERRORS_IN_ROW + ' lookups failed in a row (last: ' + (row.error || 'error') + ')', '#dc2626'); return; }
+    }
+    await finish(null);
   }
 
   // --- mapping helpers (mirror the agent) ---

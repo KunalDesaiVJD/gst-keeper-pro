@@ -11504,8 +11504,155 @@ export type Database = {
         }
         Relationships: []
       }
+      vendor_gstin_lookups: {
+        Row: {
+          id: string
+          gstin: string
+          looked_up_at: string
+          looked_up_by: string | null
+          via_client_id: string | null
+          status: string
+          error: string | null
+          source: string
+          extension_version: string | null
+          legal_name: string | null
+          trade_name: string | null
+          reg_status: string | null
+          reg_date: string | null
+          cancel_date: string | null
+          cancel_reason: string | null
+          taxpayer_type: string | null
+          constitution: string | null
+          state_jurisdiction: string | null
+          centre_jurisdiction: string | null
+          address: string | null
+          nature_of_business: string[] | null
+          ato_slab: string | null
+          einvoice_status: string | null
+          filings: Json | null
+          payload: Json | null
+        }
+        Insert: {
+          id?: string
+          gstin: string
+          looked_up_at?: string
+          looked_up_by?: string | null
+          via_client_id?: string | null
+          status: string
+          error?: string | null
+          source?: string
+          extension_version?: string | null
+          legal_name?: string | null
+          trade_name?: string | null
+          reg_status?: string | null
+          reg_date?: string | null
+          cancel_date?: string | null
+          cancel_reason?: string | null
+          taxpayer_type?: string | null
+          constitution?: string | null
+          state_jurisdiction?: string | null
+          centre_jurisdiction?: string | null
+          address?: string | null
+          nature_of_business?: string[] | null
+          ato_slab?: string | null
+          einvoice_status?: string | null
+          filings?: Json | null
+          payload?: Json | null
+        }
+        Update: {
+          id?: string
+          gstin?: string
+          looked_up_at?: string
+          looked_up_by?: string | null
+          via_client_id?: string | null
+          status?: string
+          error?: string | null
+          source?: string
+          extension_version?: string | null
+          legal_name?: string | null
+          trade_name?: string | null
+          reg_status?: string | null
+          reg_date?: string | null
+          cancel_date?: string | null
+          cancel_reason?: string | null
+          taxpayer_type?: string | null
+          constitution?: string | null
+          state_jurisdiction?: string | null
+          centre_jurisdiction?: string | null
+          address?: string | null
+          nature_of_business?: string[] | null
+          ato_slab?: string | null
+          einvoice_status?: string | null
+          filings?: Json | null
+          payload?: Json | null
+        }
+        Relationships: []
+      }
+      vendor_master_entries: {
+        Row: {
+          id: string
+          client_id: string
+          gstin: string
+          vendor_name: string | null
+          vendor_code: string | null
+          uploaded_at: string
+          uploaded_by: string | null
+          file_name: string | null
+        }
+        Insert: {
+          id?: string
+          client_id: string
+          gstin: string
+          vendor_name?: string | null
+          vendor_code?: string | null
+          uploaded_at?: string
+          uploaded_by?: string | null
+          file_name?: string | null
+        }
+        Update: {
+          id?: string
+          client_id?: string
+          gstin?: string
+          vendor_name?: string | null
+          vendor_code?: string | null
+          uploaded_at?: string
+          uploaded_by?: string | null
+          file_name?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
+      vendor_gstin_latest: {
+        Row: {
+          id: string | null
+          gstin: string | null
+          looked_up_at: string | null
+          looked_up_by: string | null
+          via_client_id: string | null
+          status: string | null
+          error: string | null
+          source: string | null
+          extension_version: string | null
+          legal_name: string | null
+          trade_name: string | null
+          reg_status: string | null
+          reg_date: string | null
+          cancel_date: string | null
+          cancel_reason: string | null
+          taxpayer_type: string | null
+          constitution: string | null
+          state_jurisdiction: string | null
+          centre_jurisdiction: string | null
+          address: string | null
+          nature_of_business: string[] | null
+          ato_slab: string | null
+          einvoice_status: string | null
+          filings: Json | null
+          payload: Json | null
+        }
+        Relationships: []
+      }
       gst_change_history: {
         Row: {
           actor_basis: string | null

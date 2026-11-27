@@ -93,6 +93,8 @@ export interface ReportRunArgs {
  *    year's 2A or 2B vs GSTR-8A)
  *  - itc-three-way: a year's GSTR-8A, 2A and 2B side by side, every document
  *    with its reason and the final ITC judgment, under the year's final ITC
+ *  - vendor-risk: one row per supplier GSTIN with its risk band, under the
+ *    count per band, with the management summary and the action lists as tabs
  *  - gstr1-year-documents: a year of filed GSTR-1, one tab per sheet (section
  *    summary, documents, month-wise, HSN, documents issued, nil)
  */
@@ -110,6 +112,7 @@ export type ReportViewKind =
   | 'working-paper'
   | 'reason-reconciliation'
   | 'itc-three-way'
+  | 'vendor-risk'
   | 'gstr1-year-documents';
 
 /**
@@ -127,6 +130,8 @@ export interface PullJob {
   clientIds?: string[];
   /** Words for what the job fetches, when the planner has them. */
   label?: string;
+  /** The GSTINs to look up (mode gstin_search, extension 0.19.0: the Vendor GSTIN Risk report). */
+  gstins?: string[];
 }
 /** What a report's Pull fetches: jobs[0] starts now; the rest on the next click (the extension runs one job at a time). */
 export interface PullPlan { jobs: PullJob[]; note?: string }

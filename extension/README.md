@@ -23,6 +23,14 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
   - **GSTR-9 Table 8A document details** (`gstr9_8a_pull`, v0.18.0) — presses
     "Download Table 8A document details" on the year's GSTR-9 dashboard and saves
     the portal's file as it came as `GSTR9_8A`; GST Keeper's 8A reports read it.
+- For the **Vendor GSTIN Risk** report (`gstin_search`, v0.19.0): after the client's
+  login, looks up each supplier GSTIN the report's Pull sends (`job.gstins`) on the
+  portal's logged-in Search Taxpayer (registration details and the return filing
+  table), paced 1.5 s apart, and writes one `vendor_gstin_lookups` row per GSTIN
+  (`ok` / `not_found` / `error`, the portal's answer in `payload`). Never the public
+  search, which needs a CAPTCHA; a CAPTCHA asked for, a dropped session, no
+  Search Taxpayer address answering, or three errors in a row stops the job. The
+  endpoints are not confirmed live yet (see `docs/VENDOR_GSTIN_RISK.md`).
 - *(GSTR-2B pull is the next addition — it needs file-download handling.)*
 
 ## Install it once per browser (free, ~1 minute)
