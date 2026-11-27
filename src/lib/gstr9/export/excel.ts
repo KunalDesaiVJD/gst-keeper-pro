@@ -191,7 +191,7 @@ function headerBlock(s: SheetState, set: PaperSet): void {
   put(1, set.firm, { bold: true, size: 12, color: { argb: NAVY } }, 16);
   put(2, set.meta.clientName || '—', { bold: true, size: 10 }, 13.5);
   put(3, `GSTIN: ${set.meta.gstin || '—'}`, {});
-  put(4, `Financial year: ${set.meta.financialYear}`, {});
+  put(4, `Financial year: ${set.meta.financialYear}${set.meta.period ? ` · Period: ${set.meta.period}` : ''}`, {});
   put(5, `WP ref ${paper.ref} — ${paper.title}`, { bold: true, size: 12, color: { argb: NAVY } }, 17);
   put(6, `${set.preparedLine}     ${set.verifiedLine}`, {});
   put(7, set.reviewedLine, {});

@@ -73,7 +73,10 @@ export const ExportMenu: React.FC<{ only?: ExportKind[]; size?: 'sm' | 'default'
       // A client login's papers leave out the sign-off notes and the allotment (docs/GSTR9_9C_WORKINGS.md §6).
       const audience: WorkingPapersInput['audience'] = isStaff ? 'staff' : 'client';
       const sheets = ws.signoffState.sheets;
-      const meta = { clientName: client.name, gstin: client.gstin, financialYear, status: statusText(period, { forClient: !isStaff, sheets }) };
+      const meta = {
+        clientName: client.name, gstin: client.gstin, financialYear, status: statusText(period, { forClient: !isStaff, sheets }),
+        ...(ws.activeSpan.partial ? { period: ws.activeSpan.label } : {}),
+      };
       let file: string;
       if (working) {
         const changeLog = await loadFullChangeLog(client.id, financialYear);

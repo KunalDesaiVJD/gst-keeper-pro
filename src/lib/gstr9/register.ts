@@ -3,7 +3,7 @@
 // (client_annual_turnover), and its working's allotment and sign-off.
 
 import { supabase } from '@/integrations/supabase/client';
-import type { SchemeChange } from './applicability';
+import type { Override, SchemeChange } from './applicability';
 import { toSignoffState, type SignoffChanges, type SignoffPeriod, type SignoffState } from './signoffFlow';
 import { PERIOD_COLUMNS, type SignoffRow } from './store';
 
@@ -17,6 +17,7 @@ export interface RegisterClient {
   cancellation_date: string | null;
   registration_cancellation_date: string | null;
   inactive_at_hand: boolean | null;
+  inactive_from: string | null;
 }
 
 export interface TurnoverEntry {
@@ -26,7 +27,16 @@ export interface TurnoverEntry {
   applicability_note: string | null;
   updated_by_name: string | null;
   updated_at: string | null;
+  /** The superadmin's override over the turnover rule; null = auto. */
+  gstr9_override: Override | null;
+  gstr9c_override: Override | null;
+  override_reason: string | null;
+  override_by_name: string | null;
+  override_at: string | null;
 }
+
+const TURNOVER_COLUMNS =
+  'aggregate_turnover, gstr9_opt_in, gstr9c_opt_in, applicability_note, updated_by_name, updated_at, gstr9_override, gstr9c_override, override_reason, override_by_name, override_at';
 
 export interface RegisterData {
   clients: RegisterClient[];
@@ -47,7 +57,7 @@ export async function loadSchemeHistory(clientId: string): Promise<SchemeChange[
 }
 
 const CLIENT_COLUMNS =
-  'id, name, gstin, registration_type, regular_sub_type, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand';
+  'id, name, gstin, registration_type, regular_sub_type, registration_date, cancellation_date, registration_cancellation_date, inactive_at_hand, inactive_from';
 
 /** PostgREST returns at most 1000 rows a request; read every page. */
 async function allRows<T>(page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
@@ -75,9 +85,9 @@ export async function loadRegister(financialYear: string): Promise<RegisterData>
     allRows<TurnoverEntry & { client_id: string }>((a, b) =>
       supabase
         .from('client_annual_turnover')
-        .select('client_id, aggregate_turnover, gstr9_opt_in, gstr9c_opt_in, applicability_note, updated_by_name, updated_at')
+        .select(`client_id, ${TURNOVER_COLUMNS}`)
         .eq('financial_year', financialYear)
-        .range(a, b),
+        .range(a, b) as unknown as PromiseLike<{ data: (TurnoverEntry & { client_id: string })[] | null; error: { message: string } | null }>,
     ),
     allRows<{ client_id: string | null; last_saved_at: string | null; sheets: number | null }>((a, b) =>
       supabase.from('annual_return_activity').select('client_id, last_saved_at, sheets').eq('financial_year', financialYear).range(a, b),
@@ -153,10 +163,31 @@ export async function saveTurnover(financialYear: string, patches: TurnoverPatch
 export async function loadTurnoverEntry(clientId: string, financialYear: string): Promise<TurnoverEntry | null> {
   const { data, error } = await supabase
     .from('client_annual_turnover')
-    .select('aggregate_turnover, gstr9_opt_in, gstr9c_opt_in, applicability_note, updated_by_name, updated_at')
+    .select(TURNOVER_COLUMNS)
     .eq('client_id', clientId)
     .eq('financial_year', financialYear)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data;
+  return data as TurnoverEntry | null;
+}
+
+export type OverridePatch = Pick<TurnoverEntry, 'gstr9_override' | 'gstr9c_override' | 'override_reason' | 'override_by_name' | 'override_at'>;
+
+/**
+ * The superadmin sets (or, with both null, clears) a client's GSTR-9 / 9C
+ * applicability for the year over the turnover rule. The database checks the
+ * actor is the superadmin and refuses any other write of these columns
+ * (20261127120000).
+ */
+export async function setApplicabilityOverride(
+  clientId: string, financialYear: string, actorId: string,
+  gstr9: Override | null, gstr9c: Override | null, reason: string,
+): Promise<OverridePatch> {
+  const { data, error } = await (supabase.rpc as unknown as (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>)(
+    'annual_return_set_applicability_override',
+    { p_client_id: clientId, p_financial_year: financialYear, p_actor_id: actorId, p_gstr9: gstr9, p_gstr9c: gstr9c, p_reason: reason },
+  );
+  if (error) throw new Error(error.message.replace(/^ANNUAL_RETURN_OVERRIDE_[A-Z0-9_]+:\s*/, ''));
+  const row = (Array.isArray(data) ? data[0] : data) as OverridePatch | undefined;
+  return row ?? { gstr9_override: gstr9, gstr9c_override: gstr9c, override_reason: reason || null, override_by_name: null, override_at: null };
 }

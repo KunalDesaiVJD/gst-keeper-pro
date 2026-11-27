@@ -95,6 +95,8 @@ export interface ReportRunArgs {
  *    with its reason and the final ITC judgment, under the year's final ITC
  *  - vendor-risk: one row per supplier GSTIN with its risk band, under the
  *    count per band, with the management summary and the action lists as tabs
+ *  - gstr1-year-documents: a year of filed GSTR-1, one tab per sheet (section
+ *    summary, documents, month-wise, HSN, documents issued, nil)
  */
 export type ReportViewKind =
   | 'ledger-register'
@@ -110,7 +112,8 @@ export type ReportViewKind =
   | 'working-paper'
   | 'reason-reconciliation'
   | 'itc-three-way'
-  | 'vendor-risk';
+  | 'vendor-risk'
+  | 'gstr1-year-documents';
 
 /**
  * One extension job a report's Pull starts: a `mode`, the periods it walks and,

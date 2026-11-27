@@ -52,6 +52,7 @@ interface ClientData {
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
   inactive_at_hand?: boolean | null;
+  inactive_from?: string | null;
   liberal_2b_reconciliation?: boolean | null;
 }
 
@@ -92,6 +93,7 @@ const EditClientPage: React.FC = () => {
     cancellationDate: '',
     registrationCancellationDate: '',
     inactiveAtHand: false,
+    inactiveFrom: '',
     noticesSyncExcluded: false,
     liberal2BReconciliation: false,
     serviceReturns: true,
@@ -162,6 +164,7 @@ const EditClientPage: React.FC = () => {
         cancellationDate: (data as any).cancellation_date || '',
         registrationCancellationDate: (data as any).registration_cancellation_date || '',
         inactiveAtHand: !!(data as any).inactive_at_hand,
+        inactiveFrom: (data as any).inactive_from || '',
         noticesSyncExcluded: !!(data as any).notices_sync_excluded,
         liberal2BReconciliation: (originalLiberal.current = !!(data as any).liberal_2b_reconciliation),
         serviceReturns: data.returns_filing !== false,
@@ -268,6 +271,11 @@ const EditClientPage: React.FC = () => {
       }
     }
 
+    if (formData.inactiveAtHand && formData.inactiveFrom && formData.registrationDate
+      && formData.inactiveFrom < formData.registrationDate) {
+      newErrors.inactiveFrom = 'Inactive from cannot be before the registration date';
+    }
+
     if (formData.registrationType === 'Regular' && !formData.regularSubType) {
       newErrors.regularSubType = 'Please select Builder, Contractor or Normal';
     }
@@ -367,6 +375,8 @@ const EditClientPage: React.FC = () => {
           cancellation_date: formData.cancellationDate || null,
           registration_cancellation_date: formData.registrationCancellationDate || null,
           inactive_at_hand: formData.inactiveAtHand,
+          // The date goes with the tick: unticking makes the client active again.
+          inactive_from: formData.inactiveAtHand ? (formData.inactiveFrom || null) : null,
           notices_sync_excluded: formData.noticesSyncExcluded,
           // Service categories: each module lists only its own clients
           // (20261121100000). Notices & Litigation is notices_handled, the
@@ -1076,6 +1086,22 @@ const EditClientPage: React.FC = () => {
                   </p>
                 </div>
               </label>
+              {formData.inactiveAtHand && (
+                <div className="space-y-1.5 pt-1">
+                  <Label htmlFor="inactiveFrom">Inactive from</Label>
+                  <Input
+                    id="inactiveFrom"
+                    type="date"
+                    value={formData.inactiveFrom}
+                    onChange={(e) => setFormData(prev => ({ ...prev, inactiveFrom: e.target.value }))}
+                    className={errors.inactiveFrom ? 'border-destructive' : ''}
+                  />
+                  {errors.inactiveFrom && <p className="text-sm text-destructive">{errors.inactiveFrom}</p>}
+                  <p className="text-xs text-muted-foreground">
+                    The first day the client is inactive. GSTR-9 / 9C of that year can still be prepared, covering only the months before it.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">

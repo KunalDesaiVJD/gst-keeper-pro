@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { AlertCircle, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText, Users } from 'lucide-react';
+import { AlertCircle, CalendarRange, Check, ChevronLeft, ChevronRight, CloudUpload, History, Loader2, Lock, ScrollText, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/gstr9/badge';
@@ -73,7 +73,7 @@ const AnnualReturnPage: React.FC = () => {
   useEffect(() => {
     let query = supabase
       .from('clients')
-      .select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type, registration_date, cancellation_date, registration_cancellation_date')
+      .select('id, name, gstin, regular_sub_type, builder_itc_type, registration_type, registration_date, cancellation_date, registration_cancellation_date, inactive_from')
       .order('name');
     if (user && !isStaff) query = query.eq('id', user.id);
     // Staff pick from the clients ticked for GSTR-9 / 9C (Edit Client → Services).
@@ -224,7 +224,7 @@ const HistoryButton: React.FC = () => (
 );
 
 const Workspace: React.FC = () => {
-  const { workings, client, financialYear, period } = useWorkspace();
+  const { workings, client, financialYear, period, activeSpan, periodChange } = useWorkspace();
   const [params, setParams] = useSearchParams();
   // A folded step (?step=expense) opens where it now lives, in place of the old link.
   const alias = STEP_ALIASES[params.get('step') ?? ''];
@@ -293,6 +293,17 @@ const Workspace: React.FC = () => {
       {period?.status === 'locked' && step.key !== 'review' && step.key !== 'payables' && (
         <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Lock className="h-3 w-3" /> Locked{period.locked_by ? ` by ${period.locked_by}` : ''} — {client.name} FY {financialYear} is read-only until it is unlocked.
+        </p>
+      )}
+
+      {activeSpan.partial && activeSpan.months.length > 0 && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <CalendarRange className="h-3 w-3" /> Part-year working: {activeSpan.label}. Months after it are not active and are not asked for.
+        </p>
+      )}
+      {periodChange && (
+        <p className="flex items-center gap-1.5 text-xs text-warning-strong">
+          <CalendarRange className="h-3 w-3" /> The client&apos;s dates changed the period covered from {periodChange.was} to {periodChange.now}. Unlock the working to bring it up to date, then review it again.
         </p>
       )}
 

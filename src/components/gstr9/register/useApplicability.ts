@@ -10,6 +10,7 @@ export interface ApplicabilityClient {
   registration_date?: string | null;
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
+  inactive_from?: string | null;
 }
 
 const KEY = 'annual-return-applicability';
@@ -41,9 +42,13 @@ export function useApplicability(client: ApplicabilityClient | null, financialYe
       schemeHistory: h.data,
       registrationDate: client.registration_date,
       cancellationDate: client.cancellation_date || client.registration_cancellation_date,
+      registrationCancellationDate: client.registration_cancellation_date,
+      inactiveFrom: client.inactive_from,
       turnover: entry?.aggregate_turnover ?? null,
       gstr9OptIn: !!entry?.gstr9_opt_in,
       gstr9cOptIn: !!entry?.gstr9c_opt_in,
+      gstr9Override: entry?.gstr9_override ?? null,
+      gstr9cOverride: entry?.gstr9c_override ?? null,
     })
     : null;
   return { entry, result, loading: q.isLoading || h.isLoading };

@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { Download, Loader2, RefreshCw, Search, ShieldAlert, X } from 'lucide-react';
 import { toast } from 'sonner';
-import * as XLSX from 'xlsx';
 import { Badge } from '@/components/gstr9/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs } from '@/components/ui/tabs';
 import { useAuth } from '@/contexts/AuthContext';
-import { applicability, croreText, panOf, thresholdsFor, type Applicability, type SchemeChange } from '@/lib/gstr9/applicability';
+import { applicability, croreText, panOf, thresholdsFor, type Applicability, type ApplicabilityInput, type Override, type SchemeChange } from '@/lib/gstr9/applicability';
+import { dmyOf } from '@/lib/gstr9/activePeriod';
+import { renderReportToExcel, type ReportTable } from '@/utils/allClientsReports';
 import { useStaffList } from '@/hooks/useStaffList';
 import { loadRegister, saveTurnover, signoffStateOf, type RegisterClient, type TurnoverPatch } from '@/lib/gstr9/register';
 import {
@@ -27,6 +28,7 @@ import { RegisterSignoffContext, type PersonFilter, type RegisterSignoffValue, t
 import { SignoffCell, signoffLabel, signoffTitle } from './SignoffCell';
 import { SignoffHeader, stageFilterLabel } from './SignoffHeader';
 import { useInvalidateApplicability } from './useApplicability';
+import { OverrideDialog, type OverrideTarget } from './OverrideDialog';
 
 /** What staff decide per client and year (client_annual_turnover). */
 interface Entry {
@@ -34,6 +36,12 @@ interface Entry {
   opt9: boolean;
   opt9c: boolean;
   note: string;
+  /** The superadmin's override over the turnover rule (null = auto), and who set it when. */
+  ovr9: Override | null;
+  ovr9c: Override | null;
+  ovrReason: string;
+  ovrBy: string | null;
+  ovrAt: string | null;
 }
 
 interface Row extends Entry, SignoffRowInfo {
@@ -42,7 +50,11 @@ interface Row extends Entry, SignoffRowInfo {
   /** Other clients with the same PAN — aggregate turnover is the PAN's. */
   siblings: string[];
   a: Applicability;
+  /** What the engine was given (without changes), for the override dialog. */
+  input: ApplicabilityInput;
   inactive: boolean;
+  /** Deactivated during this FY: the working covers the months before the date. */
+  inactivePart: boolean;
 }
 
 type Filter = 'all' | 'file' | 'needed' | 'exempt' | 'na';
@@ -51,7 +63,7 @@ type View = 'all' | 'mine' | 'turn';
 
 const NOT_STARTED = toSignoffState(null);
 
-const EMPTY: Entry = { turnover: null, opt9: false, opt9c: false, note: '' };
+const EMPTY: Entry = { turnover: null, opt9: false, opt9c: false, note: '', ovr9: null, ovr9c: null, ovrReason: '', ovrBy: null, ovrAt: null };
 
 const typeLabel = (c: RegisterClient): string => {
   if (c.registration_type === 'Regular' || !c.registration_type) return c.regular_sub_type === 'Builder' ? 'Regular · Builder' : 'Regular';
@@ -61,15 +73,29 @@ const typeLabel = (c: RegisterClient): string => {
 
 const crore = (n: number | null): string => (n === null ? '' : `₹${(n / 1_00_00_000).toLocaleString('en-IN', { maximumFractionDigits: 2 })} crore`);
 
+const OVR_TEXT: Record<Override, string> = { required: 'Required (superadmin)', not_required: 'Not required (superadmin)' };
+
+const overrideText = (r: Row): string =>
+  !r.ovr9 && !r.ovr9c ? 'Auto'
+    : [r.ovr9 ? `9: ${r.ovr9 === 'required' ? 'Required' : 'Not required'}` : '', r.ovr9c ? `9C: ${r.ovr9c === 'required' ? 'Required' : 'Not required'}` : ''].filter(Boolean).join(' · ');
+
+const overrideTitle = (r: Row): string | undefined =>
+  !r.ovr9 && !r.ovr9c ? undefined
+    : [`Overridden by ${r.ovrBy ?? 'the superadmin'}${r.ovrAt ? ` on ${dayText(r.ovrAt)}` : ''}`, r.ovrReason ? `Reason: ${r.ovrReason}` : '',
+      r.a.gstr9 === 'not_applicable' ? `Not applied: ${r.a.notApplicable}` : ''].filter(Boolean).join(' · ');
+
 const g9Label = (r: Row): string => {
   if (r.a.gstr9 === 'not_applicable') return 'Not applicable';
+  if (r.a.overridden9) return OVR_TEXT[r.a.overridden9];
   if (r.a.gstr9 === 'unknown') return 'Turnover needed';
   if (r.a.gstr9 === 'required') return 'Required';
   return r.a.file9 ? 'Exempt — filing (client wishes)' : 'Exempt — not filing';
 };
 
 const g9cLabel = (r: Row): string => {
-  if (r.a.gstr9c === 'not_applicable' || r.a.gstr9c === 'unknown') return '—';
+  if (r.a.gstr9c === 'not_applicable') return '—';
+  if (r.a.overridden9c) return OVR_TEXT[r.a.overridden9c];
+  if (r.a.gstr9c === 'unknown') return '—';
   if (r.a.gstr9c === 'required') return 'Required';
   if (!r.a.file9) return 'Not required';
   return r.a.file9c ? 'Preparing (client wishes)' : 'Not required';
@@ -97,6 +123,13 @@ const inStageFilter = (r: SignoffRowInfo, f: StageFilter): boolean => {
 const holds = (r: SignoffRowInfo, id: string) => [r.s.preparer, r.s.verifier, r.s.reviewer].some((p) => p?.id === id);
 
 const dayText = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+
+/** A return decided by the superadmin's override, not the turnover. */
+const OverrideBadge: React.FC<{ o: Override }> = ({ o }) => (
+  <Badge variant={o === 'required' ? 'default' : 'secondary'} className="gap-1 text-[10px]">
+    <ShieldAlert className="h-3 w-3" aria-hidden />{o === 'required' ? 'Required' : 'Not required'} · override
+  </Badge>
+);
 
 const VIEW_KEY = (userId: string) => `ar-register-view:${userId}`;
 
@@ -136,6 +169,12 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   const [openFor, setOpenFor] = useState<string | null>(null);
   const restoreFocusRef = useRef<(() => void) | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const isSuper = !readOnly && me.isSuperadmin;
+  const [overrideFor, setOverrideFor] = useState<OverrideTarget | null>(null);
+  const openOverride = useCallback((r: Row) => setOverrideFor({
+    clientId: r.id, name: r.c.name, gstin: r.c.gstin, input: r.input,
+    current9: r.ovr9, current9c: r.ovr9c, reason: r.ovrReason, by: r.ovrBy, at: r.ovrAt,
+  }), []);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
@@ -158,6 +197,11 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         opt9: t.gstr9_opt_in,
         opt9c: t.gstr9c_opt_in,
         note: t.applicability_note ?? '',
+        ovr9: t.gstr9_override ?? null,
+        ovr9c: t.gstr9c_override ?? null,
+        ovrReason: t.override_reason ?? '',
+        ovrBy: t.override_by_name ?? null,
+        ovrAt: t.override_at ?? null,
       }])));
     } catch (e) {
       if (mine === seq.current) toast.error('Could not load the clients: ' + (e instanceof Error ? e.message : String(e)));
@@ -180,16 +224,21 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
   const allRows = useMemo<Row[]>(() => clients.map((c) => {
     const e = entries.get(c.id) ?? EMPTY;
     const pan = panOf(c.gstin);
-    const a = applicability({
+    const input: ApplicabilityInput = {
       financialYear,
       registrationType: c.registration_type,
       schemeHistory: schemes.get(c.id),
       registrationDate: c.registration_date,
       cancellationDate: c.cancellation_date || c.registration_cancellation_date,
+      registrationCancellationDate: c.registration_cancellation_date,
+      inactiveFrom: c.inactive_from,
       turnover: e.turnover,
       gstr9OptIn: e.opt9,
       gstr9cOptIn: e.opt9c,
-    });
+      gstr9Override: e.ovr9,
+      gstr9cOverride: e.ovr9c,
+    };
+    const a = applicability(input);
     const st = working.get(c.id) ?? NOT_STARTED;
     return {
       ...e,
@@ -201,10 +250,14 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       pan,
       siblings: pan ? (byPan.get(pan) ?? []).filter((id) => id !== c.id) : [],
       a,
+      input,
       s: st,
       returns: returnsText(a),
       inScope: a.file9 || a.gstr9 === 'unknown' || st.sheets > 0 || (st.stage !== 'not_started' && st.stage !== 'preparing'),
-      inactive: !!c.inactive_at_hand,
+      // Inactive with a date: only the years after it count as inactive; the year it falls in is a
+      // part-year working (activePeriod.ts), and earlier years are full years.
+      inactive: !!c.inactive_at_hand && (!c.inactive_from || a.period.months.length === 0),
+      inactivePart: !!c.inactive_at_hand && !!c.inactive_from && a.period.months.length > 0 && !!a.period.endReason,
     };
   }), [clients, entries, working, schemes, byPan, financialYear]);
 
@@ -332,7 +385,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       const prev = prevById.get(r.id);
       if (!prev || prev === r) return;
       const p: TurnoverPatch = { clientId: r.id };
-      const e: Entry = { turnover: r.turnover, opt9: r.opt9, opt9c: r.opt9c, note: r.note };
+      const e: Entry = { ...(entries.get(r.id) ?? EMPTY), turnover: r.turnover, opt9: r.opt9, opt9c: r.opt9c, note: r.note };
       if (r.turnover !== prev.turnover) p.aggregate_turnover = r.turnover;
       if (r.opt9 !== prev.opt9) {
         p.gstr9_opt_in = r.opt9;
@@ -435,6 +488,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         <span className="inline-flex items-center gap-1.5">
           <span>{r.type}</span>
           {r.inactive && <span className="text-[10px] text-muted-foreground">· inactive</span>}
+          {r.inactivePart && <span className="text-[10px] text-muted-foreground">· inactive from {dmyOf(r.c.inactive_from)}</span>}
         </span>
       ),
     },
@@ -469,16 +523,18 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         { value: 'no', label: 'Exempt — not filing', aliases: ['no', 'n', 'not filing', 'exempt'] },
         { value: 'yes', label: 'Exempt — filing (client wishes)', aliases: ['yes', 'y', 'file', 'filing'] },
       ],
-      value: (r) => (r.a.gstr9 === 'exempt' ? (r.opt9 ? 'yes' : 'no') : g9Label(r)),
-      editable: (r) => r.a.gstr9 === 'exempt',
+      value: (r) => (r.a.gstr9 === 'exempt' && !r.a.overridden9 ? (r.opt9 ? 'yes' : 'no') : g9Label(r)),
+      editable: (r) => r.a.gstr9 === 'exempt' && !r.a.overridden9,
       onEdit: (r, e) => (e.text ? { ...r, opt9: e.text === 'yes' } : r),
       title: (r) =>
         r.a.gstr9 === 'not_applicable' ? r.a.notApplicable
+          : r.a.overridden9 ? overrideTitle(r)
           : r.a.gstr9 === 'unknown' ? 'Type the turnover to decide'
             : r.a.gstr9 === 'required' ? `Aggregate turnover above ${croreText(th.gstr9)}`
               : `Up to ${croreText(th.gstr9)}: exempt (${th.gstr9Basis}). Choose “filing” if the client wishes it filed.`,
       render: (r) => {
         const l = g9Label(r);
+        if (r.a.gstr9 !== 'not_applicable' && r.a.overridden9) return <OverrideBadge o={r.a.overridden9} />;
         if (r.a.gstr9 === 'required') return <Badge className="text-[10px]">Required</Badge>;
         if (r.a.gstr9 === 'unknown') return <Badge variant="warning" className="text-[10px] font-normal">Turnover needed</Badge>;
         if (r.a.gstr9 === 'not_applicable') return <span className="text-[11px] text-muted-foreground">Not applicable</span>;
@@ -497,17 +553,48 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         { value: 'no', label: 'Not required', aliases: ['no', 'n'] },
         { value: 'yes', label: 'Preparing (client wishes)', aliases: ['yes', 'y', 'prepare', 'preparing'] },
       ],
-      value: (r) => (r.a.gstr9c === 'exempt' && r.a.file9 ? (r.opt9c ? 'yes' : 'no') : g9cLabel(r)),
-      editable: (r) => r.a.gstr9c === 'exempt' && r.a.file9,
+      value: (r) => (r.a.gstr9c === 'exempt' && r.a.file9 && !r.a.overridden9c ? (r.opt9c ? 'yes' : 'no') : g9cLabel(r)),
+      editable: (r) => r.a.gstr9c === 'exempt' && r.a.file9 && !r.a.overridden9c,
       onEdit: (r, e) => (e.text ? { ...r, opt9c: e.text === 'yes' } : r),
       title: (r) =>
-        r.a.gstr9c === 'required' ? `Aggregate turnover above ${croreText(th.gstr9c)} — ${th.gstr9cBasis}`
+        r.a.gstr9c !== 'not_applicable' && r.a.overridden9c ? overrideTitle(r)
+        : r.a.gstr9c === 'required' ? `Aggregate turnover above ${croreText(th.gstr9c)} — ${th.gstr9cBasis}`
           : r.a.gstr9c === 'exempt' ? (r.a.file9 ? `Up to ${croreText(th.gstr9c)}: not required. Choose “preparing” if the client wishes it.` : 'GSTR-9 is not being filed, so there is no 9C')
             : undefined,
       render: (r) => {
+        if (r.a.gstr9c !== 'not_applicable' && r.a.overridden9c) return <OverrideBadge o={r.a.overridden9c} />;
         if (r.a.gstr9c === 'required') return <Badge className="text-[10px]">Required</Badge>;
         if (r.a.file9c) return <Badge variant="info" className="text-[10px] font-normal">{g9cLabel(r)}</Badge>;
         return <span className="text-[11px] text-muted-foreground">{g9cLabel(r)}</span>;
+      },
+    },
+    {
+      key: 'override',
+      header: 'Override',
+      type: 'display',
+      align: 'left',
+      width: 168,
+      value: (r) => overrideText(r),
+      title: (r) => overrideTitle(r) ?? (isSuper ? 'Decided by the turnover. Open to set Required / Not required (superadmin)' : 'Decided by the turnover; only the superadmin can override'),
+      activate: (r) => { if (isSuper) openOverride(r); },
+      render: (r) => {
+        const on = !!(r.ovr9 || r.ovr9c);
+        const body = on
+          ? <span className="inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-foreground"><ShieldAlert className="h-3 w-3 text-warning" aria-hidden />{overrideText(r)}</span>
+          : <span className="text-[11px] text-muted-foreground">{isSuper ? 'Auto · override…' : 'Auto'}</span>;
+        if (!isSuper) return body;
+        return (
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={() => openOverride(r)}
+            className="rounded-full text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Override GSTR-9 / 9C applicability of ${r.c.name}`}
+          >
+            {body}
+          </button>
+        );
       },
     },
     {
@@ -521,7 +608,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       title: (r) => r.note || 'e.g. why the client wishes the return filed',
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [th, onOpen, entries, clients, openSignoff]);
+  ], [th, onOpen, entries, clients, openSignoff, isSuper, openOverride]);
 
   /** The sign-off as spreadsheet columns (no notes — they stay in the working). */
   const signoffExport = (r: Row): Record<string, string | number> => {
@@ -554,19 +641,39 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
       GSTIN: r.c.gstin ?? '',
       PAN: r.pan ?? '',
       Registration: r.type + (r.inactive ? ' (inactive)' : ''),
+      Period: r.a.period.partial ? r.a.period.label : '',
       'Aggregate turnover (₹)': r.turnover ?? '',
       'GSTR-9': g9Label(r),
       'GSTR-9C': g9cLabel(r),
+      Override: overrideText(r),
+      'Override reason': r.ovr9 || r.ovr9c ? r.ovrReason : '',
+      'Override by': r.ovr9 || r.ovr9c ? r.ovrBy ?? '' : '',
+      'Override on': r.ovr9 || r.ovr9c ? dayText(r.ovrAt) : '',
       Note: r.note,
       ...signoffExport(r),
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    ws['!cols'] = [{ wch: 40 }, { wch: 17 }, { wch: 12 }, { wch: 22 }, { wch: 20 }, { wch: 30 }, { wch: 26 }, { wch: 30 },
-      { wch: 12 }, { wch: 18 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 36 }, { wch: 18 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `FY ${financialYear}`);
-    XLSX.writeFile(wb, `GSTR-9 9C applicability FY ${financialYear}.xlsx`);
+    const headers = data.length ? Object.keys(data[0]) : [];
+    const table: ReportTable = {
+      title: 'GSTR-9 / 9C applicability',
+      subtitle: `Financial year: ${financialYear} | Clients: ${rows.length} | GSTR-9 above: ${croreText(th.gstr9)} | GSTR-9C above: ${croreText(th.gstr9c)}`,
+      headers,
+      rows: data.map((d) => Object.values(d) as (string | number)[]),
+      fileNameBase: `GSTR-9 9C applicability FY ${financialYear}`,
+      columnWidths: [40, 17, 12, 22, 20, 30, 26, 22, 36, 16, 12, 30,
+        12, 18, 8, 14, 14, 12, 14, 14, 12, 14, 14, 12, 10, 36, 18],
+    };
+    void renderReportToExcel(table).catch((e) => toast.error('Excel not written: ' + (e instanceof Error ? e.message : String(e))));
   };
+
+  const onOverrideSaved = (clientId: string, p: { gstr9_override: Override | null; gstr9c_override: Override | null; override_reason: string | null; override_by_name: string | null; override_at: string | null }) => {
+    setEntries((m) => {
+      const n = new Map(m);
+      n.set(clientId, { ...(m.get(clientId) ?? EMPTY), ovr9: p.gstr9_override, ovr9c: p.gstr9c_override, ovrReason: p.override_reason ?? '', ovrBy: p.override_by_name, ovrAt: p.override_at });
+      return n;
+    });
+    invalidate();
+  };
+  const overriddenN = visible.filter((r) => r.ovr9 || r.ovr9c).length;
 
   const fmtCount = (a: number, b?: number) => (b === undefined ? a : `${a} / ${b}`);
 
@@ -589,7 +696,7 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
           hint={applicable.length - entered ? `${applicable.length - entered} still to type` : 'Every client that files has a turnover'}
           tone={applicable.length - entered ? 'warn' : 'ok'}
         />
-        <KpiTile label="GSTR-9 to file" value={file9.length} hint={`${file9.filter((r) => r.a.gstr9 === 'required').length} required · ${file9.filter((r) => r.a.gstr9 === 'exempt').length} at the client's wish`} />
+        <KpiTile label="GSTR-9 to file" value={file9.length} hint={`${file9.filter((r) => r.a.gstr9 === 'required').length} required · ${file9.filter((r) => r.a.gstr9 === 'exempt').length} at the client's wish${overriddenN ? ` · ${overriddenN} overridden` : ''}`} />
         <KpiTile label="GSTR-9C to prepare" value={file9c.length} hint={`${file9c.filter((r) => r.a.gstr9c === 'required').length} required · ${file9c.filter((r) => r.a.gstr9c === 'exempt').length} at the client's wish`} />
         <KpiTile
           label="Allotted"
@@ -682,12 +789,16 @@ export const ApplicabilityRegister: React.FC<{ financialYear: string; onOpen: (c
         />
       </Tabs>
       <BulkAllotDialog open={bulkOpen} onOpenChange={setBulkOpen} rows={allotScope} />
+      {isSuper && (
+        <OverrideDialog target={overrideFor} financialYear={financialYear} actorId={me.id} onClose={() => setOverrideFor(null)} onSaved={onOverrideSaved} />
+      )}
 
       <Note tone="position">
         FY {financialYear}: GSTR-9 is required above {croreText(th.gstr9)} of aggregate turnover — up to that the year is exempt ({th.gstr9Basis}).
         GSTR-9C is required above {croreText(th.gstr9c)} ({th.gstr9cBasis}). Aggregate turnover is the PAN&apos;s (all its GSTINs together: taxable,
         exempt, exports and inter-state supplies, without the taxes and reverse-charge inward supplies), so GSTINs of one PAN carry the same figure.
-        Composition taxpayers (GSTR-4), tax deductors (GSTR-7) and ISDs do not file GSTR-9. The turnover is the same figure as on the client&apos;s page
+        Composition taxpayers (GSTR-4), tax deductors (GSTR-7) and ISDs do not file GSTR-9. The superadmin may override a client&apos;s year to
+        Required or Not required whatever the turnover (Override column, with a reason; Auto goes back to the rule). The turnover is the same figure as on the client&apos;s page
         (late-fee slab), typed once.
       </Note>
     </div>

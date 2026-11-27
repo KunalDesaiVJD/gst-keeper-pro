@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/contexts/AuthContext';
 import { computeWorkings, Workings } from '@/lib/gstr9/engine';
 import { useApplicability } from './register/useApplicability';
+import { activePeriod, type ActivePeriod } from '@/lib/gstr9/activePeriod';
 import { buildGstr9cPortalJson } from '@/lib/gstr9/gstr9cJson';
 import { selfCheckStatus } from '@/lib/gstr9/selfCheck';
 import { AnnualReturnDocs, DocKey, DOC_KEYS, Justification, ValTax } from '@/lib/gstr9/types';
@@ -59,12 +60,18 @@ export interface WorkspaceClient {
   registration_date?: string | null;
   cancellation_date?: string | null;
   registration_cancellation_date?: string | null;
+  /** clients.inactive_from: the working covers only the months before it (activePeriod.ts). */
+  inactive_from?: string | null;
 }
 
 export type SaveState = 'idle' | 'pending' | 'saving' | 'saved' | 'error';
 
 export interface WorkspaceValue {
   client: WorkspaceClient;
+  /** The part of the FY the client was active (activePeriod.ts); `partial` for a client deactivated or cancelled in the year. */
+  activeSpan: ActivePeriod;
+  /** The client's active period differs from the one the working records (a locked working is not rewritten). */
+  periodChange: { was: string; now: string } | null;
   financialYear: string;
   loading: boolean;
   docs: AnnualReturnDocs;
@@ -195,9 +202,17 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
   const no9c = !!applicable && applicable.gstr9 !== 'unknown' && !applicable.file9c;
   const quarterly = client.registration_type === 'IFF';
   const liveSetOffs = useMemo(() => setOffs.filter((o) => !o.deletedAt).map((o) => ({ side: o.side, method: o.method, tax: o.tax })), [setOffs]);
+  // The part of the year the client was active (deactivated or cancelled during it: a part-year working).
+  const activeSpan = useMemo(() => activePeriod({
+    financialYear,
+    registrationDate: client.registration_date,
+    registrationCancellationDate: client.registration_cancellation_date,
+    inactiveFrom: client.inactive_from,
+  }), [financialYear, client.registration_date, client.registration_cancellation_date, client.inactive_from]);
+  const activeMonths = activeSpan.months;
   const compute = useCallback(
-    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, no9c, setOffs: liveSetOffs, capitalGoods, builderReversals }),
-    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, no9c, liveSetOffs, capitalGoods, builderReversals],
+    (d: AnnualReturnDocs) => computeWorkings(d, { clientName: client.name, gstin: client.gstin, financialYear, noItcBuilder, quarterly, no9c, setOffs: liveSetOffs, capitalGoods, builderReversals, activeMonths }),
+    [client.name, client.gstin, financialYear, noItcBuilder, quarterly, no9c, liveSetOffs, capitalGoods, builderReversals, activeMonths],
   );
   const isBuilder = client.regular_sub_type === 'Builder';
   /** Builder clients: the approved carpet-area reversals (Builder › ITC Reversal). A failure never blocks the working. */
@@ -595,6 +610,23 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     [period, sheets, lastSavedAt, loadedSavedAt, changes],
   );
 
+  // Part-year working: the period it covers is recorded in the working (settings.coveredPeriod), so a
+  // later change of the client's dates shows in the revision log and as a change since sign-off. A
+  // locked working is not written; the page says the period changed instead (periodChange).
+  const wantedPeriod = activeSpan.partial ? activeSpan.label : undefined;
+  const recordedPeriod = docs?.settings?.coveredPeriod;
+  const started = sheets > 0;
+  useEffect(() => {
+    if (loading || !docs || readOnly || !started || wantedPeriod === recordedPeriod) return;
+    update('settings', (s) => ({ ...s, coveredPeriod: wantedPeriod }), {
+      action: wantedPeriod ? `Period covered: ${wantedPeriod}` : 'Period covered: the whole year',
+    });
+  }, [loading, docs, readOnly, started, wantedPeriod, recordedPeriod, update]);
+  const periodChange = locked && isStaff && !loading && docs && started && wantedPeriod !== recordedPeriod
+    ? { was: recordedPeriod ?? 'the whole year', now: wantedPeriod ?? 'the whole year' }
+    : null;
+
+
   if (!docs || !workings) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-24 text-sm text-muted-foreground">
@@ -619,6 +651,8 @@ export const WorkspaceProvider: React.FC<{ client: WorkspaceClient; financialYea
     saveState,
     lastSavedAt,
     period,
+    activeSpan,
+    periodChange,
     locked,
     readOnly,
     isStaff,

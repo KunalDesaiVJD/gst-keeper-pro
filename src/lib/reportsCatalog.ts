@@ -47,7 +47,8 @@ import {
   buildGstr2aPyInCyReport,
 } from '@/utils/gstr2aReports';
 import { buildGstr2aVs2bRecoReport, planGstr2a2bPull } from '@/utils/gstr2aVs2bReports';
-import { SRC, fyMonthsUpTo, panSiblings, planAllClientsGstr3b, planLedgerMonths, planOncePerFy, planReturns } from '@/lib/reportPullPlans';
+import { SRC, fyMonthsUpTo, panSiblings, planAllClientsGstr3b, planGstr1JsonYear, planLedgerMonths, planOncePerFy, planReturns } from '@/lib/reportPullPlans';
+import { buildGstr1YearDocumentsReport } from '@/utils/gstr1YearDocuments';
 import { buildGstr2aVs8aReport, buildGstr2bVs8aReport, buildGstr8aThreeWayReport, planGstr8aPull, uploadGstr8a } from '@/utils/gstr8aReports';
 import {
   buildPanOutputLiabilityReport,
@@ -249,6 +250,19 @@ export const REPORTS_CATALOG: ReportDefinition[] = [
     viewKind: 'filed-return-summary',
     pull: { mode: 'gstr1_pull', needsMonth: true },
     build: ({ clientId, month }) => buildFiledGstr1Report(clientId!, month),
+  },
+  {
+    key: 'gstr1-documents-full-year',
+    title: 'GSTR-1 Documents — Full Year',
+    description: 'Every document of every section of the filed GSTR-1 for the whole financial year, in one list with a Month column: B2B, B2CL, B2CS, exports, credit and debit notes, every amendment table, advances, e-commerce, plus HSN, documents issued and nil supplies. Pull opens each missing month\'s filed GSTR-1 on the portal.',
+    icon: FileStack,
+    category: 'gstr1',
+    status: 'extends-login',
+    needs: 'client+month',
+    viewKind: 'gstr1-year-documents',
+    periodScope: 'fy',
+    pull: { mode: 'gstr1_json_pull', needsMonth: true, plan: ({ clientId, periods }) => planGstr1JsonYear({ clientId, periods }) },
+    build: ({ clientId, month }) => buildGstr1YearDocumentsReport(clientId!, month),
   },
   {
     key: 'gstr3b-liability',

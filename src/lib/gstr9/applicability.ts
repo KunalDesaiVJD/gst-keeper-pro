@@ -6,6 +6,8 @@
 // inward supplies under reverse charge. The figure is typed in the register
 // (client_annual_turnover.aggregate_turnover) — the app has no other source.
 
+import { activePeriod, dmyOf, type ActivePeriod } from './activePeriod';
+
 /** ₹1 crore. */
 export const CRORE = 1_00_00_000;
 
@@ -69,10 +71,20 @@ export interface ApplicabilityInput {
   registrationDate?: string | null;
   /** Effective cancellation of the registration, if any. */
   cancellationDate?: string | null;
+  /** clients.registration_cancellation_date: ends the active period (activePeriod.ts). */
+  registrationCancellationDate?: string | null;
+  /** clients.inactive_from: the client is inactive from this date; the year's working covers only the months before it. */
+  inactiveFrom?: string | null;
   turnover: number | null;
   gstr9OptIn: boolean;
   gstr9cOptIn: boolean;
+  /** The superadmin's decision over the turnover rule (client_annual_turnover.gstr9_override); null = auto. */
+  gstr9Override?: Override | null;
+  gstr9cOverride?: Override | null;
 }
+
+/** The superadmin's override of the turnover rule for a return. */
+export type Override = 'required' | 'not_required';
 
 export interface Applicability {
   gstr9: Need;
@@ -84,6 +96,11 @@ export interface Applicability {
   notApplicable?: string;
   /** The year is only partly under a scheme that files GSTR-9, e.g. "Regular from 01/10/2024 (Composition before)". */
   partYear?: string;
+  /** The part of the year the client was active (registration, cancellation, inactive-from). */
+  period: ActivePeriod;
+  /** Set where the superadmin's override, not the turnover, decided the return. */
+  overridden9?: Override;
+  overridden9c?: Override;
   thresholds: Thresholds;
 }
 
@@ -102,7 +119,13 @@ const day = (s: string | null | undefined): number | null => {
 
 export function applicability(i: ApplicabilityInput): Applicability {
   const thresholds = thresholdsFor(i.financialYear);
-  const none = (why: string): Applicability => ({ gstr9: 'not_applicable', gstr9c: 'not_applicable', file9: false, file9c: false, notApplicable: why, thresholds });
+  const period = activePeriod({
+    financialYear: i.financialYear,
+    registrationDate: i.registrationDate,
+    registrationCancellationDate: i.registrationCancellationDate,
+    inactiveFrom: i.inactiveFrom,
+  });
+  const none = (why: string): Applicability => ({ gstr9: 'not_applicable', gstr9c: 'not_applicable', file9: false, file9c: false, notApplicable: why, period, thresholds });
 
   const y = fyStart(i.financialYear);
   const from = Date.UTC(y, 3, 1);
@@ -127,16 +150,34 @@ export function applicability(i: ApplicabilityInput): Applicability {
   const cancel = day(i.cancellationDate);
   if (reg !== null && reg > to) return none(`Registered after FY ${i.financialYear}`);
   if (cancel !== null && cancel < from) return none(`Registration cancelled before FY ${i.financialYear}`);
-
-  if (i.turnover === null || i.turnover === undefined || Number.isNaN(i.turnover)) {
-    return { gstr9: 'unknown', gstr9c: 'unknown', file9: false, file9c: false, thresholds, partYear };
+  if (!period.months.length) {
+    return none(period.endReason?.startsWith('inactive') ? `Inactive before FY ${i.financialYear}` : `Not active in FY ${i.financialYear}`);
   }
-  const gstr9: Need = i.turnover > thresholds.gstr9 ? 'required' : 'exempt';
-  const gstr9c: Need = i.turnover > thresholds.gstr9c ? 'required' : 'exempt';
-  const file9 = gstr9 === 'required' || i.gstr9OptIn;
-  // 9C reconciles the GSTR-9 it accompanies: only when GSTR-9 is filed.
-  const file9c = gstr9c === 'required' || (file9 && i.gstr9cOptIn);
-  return { gstr9, gstr9c, file9, file9c, thresholds, partYear };
+  // POSITION (§13): a client deactivated or cancelled during the year files GSTR-9 / 9C for the months it was
+  // active; the limits still read the year's aggregate turnover, never pro-rated.
+  if (period.endReason) {
+    const end = `Active until ${dmyOf(period.to)} (${period.endReason})`;
+    partYear = partYear ? `${partYear}; ${end}` : end;
+  }
+
+  const known = !(i.turnover === null || i.turnover === undefined || Number.isNaN(i.turnover));
+  const o9 = i.gstr9Override ?? undefined;
+  // 9C reconciles the GSTR-9 it accompanies: no GSTR-9, no 9C (the database refuses 9C Required with GSTR-9 Not required).
+  const o9c = o9 === 'not_required' && i.gstr9cOverride === 'required' ? undefined : i.gstr9cOverride ?? undefined;
+  if (!known && !o9 && !o9c) {
+    return { gstr9: 'unknown', gstr9c: 'unknown', file9: false, file9c: false, thresholds, partYear, period };
+  }
+  // POSITION: the superadmin's override decides over the turnover rule; "Not required" is shown as exempt and not filed.
+  const byTurnover = (limit: number): Need => (!known ? 'unknown' : (i.turnover as number) > limit ? 'required' : 'exempt');
+  const gstr9: Need = o9 === 'required' ? 'required' : o9 === 'not_required' ? 'exempt' : byTurnover(thresholds.gstr9);
+  const gstr9c: Need = o9c === 'required' ? 'required' : o9c === 'not_required' || o9 === 'not_required' ? 'exempt' : byTurnover(thresholds.gstr9c);
+  const file9 = gstr9 === 'required' || (o9 !== 'not_required' && gstr9 === 'exempt' && i.gstr9OptIn);
+  const file9c = file9 && (gstr9c === 'required' || (o9c !== 'not_required' && gstr9c === 'exempt' && i.gstr9cOptIn));
+  return {
+    gstr9, gstr9c, file9, file9c, thresholds, partYear, period,
+    ...(o9 ? { overridden9: o9 } : {}),
+    ...(o9c || o9 === 'not_required' ? { overridden9c: o9c ?? 'not_required' } : {}),
+  };
 }
 
 const DAY = 86_400_000;
