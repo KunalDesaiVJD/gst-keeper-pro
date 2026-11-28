@@ -260,6 +260,14 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   d4.gstr9c.t5Q = 7_77_83_451;
   ok('5Q a paisa off the filed GSTR-9: open and refused', !!E.computeWorkings(d4, ctx).diffs.find((x) => x.key === 'gstr9c.5Q' && x.open)
     && rules(J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: E.computeWorkings(d4, ctx), doc: d4.gstr9c })).includes('G9TIE'));
+  // Large amounts with paise pass the two-decimal check (the float product × 100 is off by > 1e-6).
+  ok('large amounts with paise pass the schema check', !J.validateGstr9cPortalJson(b5.payload).some((m) => m.includes('decimals')), J.validateGstr9cPortalJson(b5.payload).join('; '));
+  {
+    const big = structuredClone(b5.payload);
+    big.gstr9cdata.audited_data.table7.tax_turn_annul = 270168546.6; // × 100 is 27016854659.999996
+    big.gstr9cdata.audited_data.table7.unrec_tax_turn = Math.round((270168546.6 - big.gstr9cdata.audited_data.table7.tax_turn_adj) * 100) / 100;
+    ok('270168546.6 is two decimals (the case that stopped a client\'s JSON)', !J.validateGstr9cPortalJson(big).some((m) => m.includes('decimals')), J.validateGstr9cPortalJson(big).join('; '));
+  }
   // A client with no 9C has no such lines.
   ok('no 9C: no tie lines', !E.computeWorkings(D.emptyDocs(), { ...ctx, no9c: true }).diffs.some((x) => x.key.startsWith('gstr9c.5Q') || x.key.startsWith('gstr9c.9Q') || x.key.startsWith('gstr9c.g9filed')));
 }

@@ -576,7 +576,9 @@ export function validateGstr9cPortalJson(json: unknown): string[] {
   };
   const num = (path: string, v: unknown): number => {
     if (typeof v !== 'number' || !Number.isFinite(v)) { out.push(`${path}: not a number`); return 0; }
-    if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) out.push(`${path}: more than 2 decimals`);
+    // Judge the figure as the file writes it (JSON.stringify), not v × 100: on large amounts the float
+    // product is off by more than 1e-6 although the figure has two decimals (77,783,451.34 × 100).
+    if (/\.\d{3,}/.test(String(v))) out.push(`${path}: more than 2 decimals`);
     if (Math.trunc(Math.abs(v)).toString().length > 13) out.push(`${path}: more than 13 digits`);
     return v;
   };

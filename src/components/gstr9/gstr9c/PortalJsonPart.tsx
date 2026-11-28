@@ -17,6 +17,7 @@ import type { Gstr9cDoc } from '@/lib/gstr9/types';
 import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
+import { G9TieGuideView } from './G9TieGuide';
 
 const REASON_FIELDS = ['t6Reasons', 't8Reasons', 't10Reasons', 't13Reasons', 't15Reasons'] as const;
 
@@ -183,6 +184,12 @@ const PortalJsonPart: React.FC<{ onOpenTable?: (tab: string) => void }> = ({ onO
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {errors.some((c: Gstr9cCheck) => c.rule === 'G9FILED' || c.rule === 'G9TIE') && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
+          <G9TieGuideView lineKey={errors.some((c: Gstr9cCheck) => c.rule === 'G9FILED') ? 'gstr9c.g9filed' : errors.some((c: Gstr9cCheck) => c.rule === 'G9TIE' && c.table === '5') ? 'gstr9c.5Q' : 'gstr9c.9Q'} />
         </div>
       )}
 

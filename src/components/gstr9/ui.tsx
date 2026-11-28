@@ -18,6 +18,8 @@ import type { DiffLine, DiffStatusKind } from '@/lib/gstr9/engine';
 import type { PortalMeta, Tax, ValTax } from '@/lib/gstr9/types';
 import { fmtMoney } from './grid/money';
 import { useWorkspace } from './WorkspaceContext';
+import { G9TieGuideView } from './gstr9c/G9TieGuide';
+import { isG9TieKey } from '@/lib/gstr9/g9TieGuide';
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -209,7 +211,7 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
   // A line the portal checks for equality: no reason closes it, so it shows what to fix instead.
   if (d.mustTie) {
     return (
-      <Popover>
+      <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button type="button" className={cn('inline-flex items-center', className)} aria-label={`${d.label}: ${status.label}`} title={compact ? status.label : undefined}>
             <Badge variant={status.variant} className={cn('gap-1 whitespace-nowrap text-[10px] font-medium', compact && 'px-1.5')}>
@@ -218,12 +220,20 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
             </Badge>
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-96 space-y-2" align="end">
+        <PopoverContent className="max-h-[80vh] w-[28rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto" align="end">
           <div className="text-sm font-semibold">{d.label}</div>
-          <div className="text-xs text-muted-foreground">
-            {d.direction}: <span className="font-medium text-foreground">{diffSummary(d)}</span>
-          </div>
-          {d.open ? <Note tone="warn">{d.mustTie} A reason cannot close this line; review and lock stay blocked until it matches.</Note> : <Note>Matches the GSTR-9, as the portal checks.</Note>}
+          {d.key !== 'gstr9c.g9filed' && (
+            <div className="text-xs text-muted-foreground">
+              {d.aLabel} against {d.bLabel}: <span className="font-medium text-foreground">{diffSummary(d)}</span>
+            </div>
+          )}
+          {!d.open ? (
+            <Note>Matches the filed GSTR-9, as the portal checks.</Note>
+          ) : isG9TieKey(d.key) ? (
+            <G9TieGuideView lineKey={d.key} compact onGo={() => setOpen(false)} />
+          ) : (
+            <Note tone="warn">{d.mustTie}</Note>
+          )}
         </PopoverContent>
       </Popover>
     );

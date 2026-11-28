@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import type { Gstr9cDoc, Gstr9FiledFigures, Tax } from '@/lib/gstr9/types';
 import { Note } from '../ui';
+import { G9TieGuideView } from './G9TieGuide';
 import { useWorkspace } from '../WorkspaceContext';
 import { FormGrid } from './FormGrid';
 import { amount, figs, FormLine, n0, TAX_HEADS, toTax } from './formLines';
@@ -57,10 +58,12 @@ export const FiledPaidGrid: React.FC = () => {
   );
 };
 
-const FiledNote: React.FC<{ missing: boolean; what: string }> = ({ missing, what }) => (
-  <Note tone={missing ? 'warn' : 'info'}>
-    {missing
-      ? `GSTR-9 as filed: type ${what} from the filed GSTR-9 summary. The portal checks this table against the filed GSTR-9 to the paisa, and the GSTR-9 working (computed from the books) can differ from it. Mark prepared, Verify, Review & lock and the Portal JSON wait for these figures.`
-      : `GSTR-9 as filed: the figures below are the filed GSTR-9's, and this table must equal them.`}
-  </Note>
-);
+const FiledNote: React.FC<{ missing: boolean; what: string }> = ({ missing, what }) =>
+  missing ? (
+    <div className="rounded-md border border-warning/40 bg-warning/5 p-3">
+      <div className="mb-1.5 text-sm font-semibold">Type {what} from the filed GSTR-9</div>
+      <G9TieGuideView lineKey="gstr9c.g9filed" compact />
+    </div>
+  ) : (
+    <Note>GSTR-9 as filed: the figures below are the filed GSTR-9's. 5Q and 9Q follow them, and the portal checks the 9C against them to the paisa.</Note>
+  );
