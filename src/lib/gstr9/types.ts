@@ -656,6 +656,19 @@ export const GSTR9C_T16_KEYS = ['A', 'B', 'C', 'D', 'E', 'F'] as const; // Centr
 export type Gstr9cT16Key = (typeof GSTR9C_T16_KEYS)[number];
 
 
+/** GSTR-9 as filed (see Gstr9cDoc.filedG9). */
+export interface Gstr9FiledFigures {
+  /** Table 5N total turnover (including advances). */
+  t5N: number | null;
+  /** Table 10 and Table 11 taxable value. */
+  t10: number | null;
+  t11: number | null;
+  /** Table 9 tax paid (cash + ITC) per head. */
+  paid9: Tax | null;
+  /** Table 14 differential tax paid per head. */
+  paid14: Tax | null;
+}
+
 export interface Gstr9cDoc {
   /** 5A override — null = audit report total from the Sales step (PL-OUTPUT D54), else books Part A+B. */
   t5A: number | null;
@@ -663,8 +676,15 @@ export interface Gstr9cDoc {
   t5: Record<Gstr9cT5Key, number>;
   /** The capital goods part of 5O (sale value outside the P&L revenue) — null/absent = from the register (Annexure-5). */
   t5OCg?: number | null;
-  /** 5Q override — null = GSTR-9 total turnover (5N + 10 − 11). */
+  /** 5Q override — null = the GSTR-9 as filed (filedG9), else the working's GSTR-9 total turnover (5N + 10 − 11). */
   t5Q: number | null;
+  /**
+   * The GSTR-9 as filed on the portal, typed from its filed summary: what the portal checks 5Q and
+   * 9Q against (28 Nov 2026). The working's GSTR-9 is computed from the books and can differ from
+   * what was filed (even by paise), so the 9C needs these before it is verified, locked or exported.
+   * Absent / null fields = not entered.
+   */
+  filedG9?: Gstr9FiledFigures | null;
   /**
    * Builder clients: the customer-advance roll-forward (null = not used). While set it fills
    * 5B, 5C, 5H, 5I, 5J and 5O and the typed values of those rows are not used
@@ -681,7 +701,7 @@ export interface Gstr9cDoc {
   t9: Record<Gstr9cT9RateKey, RateWiseRow | null>;
   /** Table 9 L–O (interest, late fee, penalty, others) — typed. */
   t9Other: Record<Gstr9cT9OtherKey, Tax>;
-  /** 9Q override — null = GSTR-9 Table 9 tax payable per head. */
+  /** 9Q override — null = the GSTR-9 as filed (Table 9 + 14 paid), else the working's. */
   t9Q: Tax | null;
   t10Reasons: string;
   t11: Record<Gstr9cT11Key, RateWiseRow>;

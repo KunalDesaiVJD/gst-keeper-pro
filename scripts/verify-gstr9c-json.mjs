@@ -32,7 +32,19 @@ const ok = (label, cond, detail = '') => {
   console.log(`${cond ? 'ok  ' : 'FAIL'} ${label}${cond || !detail ? '' : ` — ${detail}`}`);
 };
 const eq = (label, got, want) => ok(`${label}: ${got}`, Math.abs(got - want) < 0.005, `want ${want}`);
-const build = (d, opts = {}) => J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: E.computeWorkings(d, ctx), doc: d.gstr9c, today: new Date(2026, 10, 23), ...opts });
+// The GSTR-9 as filed, typed the same as the working's (what staff type when nothing changed after filing).
+// A doc whose filedG9 is null on purpose is left without it.
+const fileAsWorking = (d, c = ctx) => {
+  if (d.gstr9c.filedG9 !== undefined) return d;
+  const g = E.computeWorkings(d, c).g9;
+  d.gstr9c.filedG9 = {
+    t5N: g.t5.N.t, t10: g.t10.t, t11: g.t11.t,
+    paid9: { i: g.t9.igst.paid, c: g.t9.cgst.paid, s: g.t9.sgst.paid, x: g.t9.cess.paid },
+    paid14: { i: g.t14.igst.paid, c: g.t14.cgst.paid, s: g.t14.sgst.paid, x: g.t14.cess.paid },
+  };
+  return d;
+};
+const build = (d, opts = {}) => (fileAsWorking(d), J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: E.computeWorkings(d, ctx), doc: d.gstr9c, today: new Date(2026, 10, 23), ...opts }));
 const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c.rule);
 
 // 1. An empty working gives the utility's skeleton, with no errors.
@@ -74,6 +86,7 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   C.partV.I = { t: 0, i: 0, c: 3, s: 3, x: 0 }; // interest with no value: EM13 warning, not an error
   C.t6Reasons = 'Unbilled revenue at year end\n\nCredit notes after March';
   C.actName = 'Companies Act, 2013';
+  fileAsWorking(d);
   const w = E.computeWorkings(d, ctx);
   const b = J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: w, doc: C, today: new Date(2026, 10, 23) });
   ok('filled working: no errors', b.errors === 0, JSON.stringify(b.checks.filter((c) => c.severity === 'error')));
@@ -103,6 +116,7 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
 {
   const d = D.emptyDocs();
   d.purchases.rows.push({ id: 'g', section: 'purchase', ledger: 'Import', supplyType: 'inter', rate: 18, taxable: 1000, igst: 180, cgst: 0, sgst: null, cess: 0, head: 'imported_goods' });
+  fileAsWorking(d);
   const w = E.computeWorkings(d, ctx);
   const S = w.gstr9c.t14.S;
   const R = w.gstr9c.t14.R;
@@ -228,8 +242,26 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   const w3 = E.computeWorkings(d3, ctx);
   ok('5Q typed off the GSTR-9: open', !!w3.diffs.find((x) => x.key === 'gstr9c.5Q' && x.open));
   ok('5Q typed off the GSTR-9: JSON refused (G9TIE)', rules(build(d3)).includes('G9TIE'));
+  // 28 Nov 2026 (Elenza Arista again): the working's 5N is whole rupees, the filed GSTR-9's 5N is 7,77,83,451.34.
+  const d4 = D.emptyDocs();
+  d4.gstr9c.filedG9 = null;
+  const w4 = E.computeWorkings(d4, ctx);
+  ok('filed GSTR-9 not entered: an open line that no reason closes', !!w4.diffs.find((x) => x.key === 'gstr9c.g9filed' && x.open && x.mustTie));
+  ok('filed GSTR-9 not entered: JSON refused (G9FILED)', rules(J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: w4, doc: d4.gstr9c })).includes('G9FILED'));
+  d4.gstr9c.filedG9 = { t5N: 7_77_83_451.34, t10: 0, t11: 0, paid9: { i: 0, c: 4_94_918.33, s: 4_94_918.33, x: 0 }, paid14: null };
+  const w5 = E.computeWorkings(d4, ctx);
+  eq('5Q follows the filed GSTR-9, paise included', w5.gstr9c.t5.Q, 7_77_83_451.34);
+  eq('9Q follows the filed GSTR-9 (CGST)', w5.gstr9c.t9.Q.c, 4_94_918.33);
+  ok('filed entered: no g9filed line, 5Q and 9Q tie', !w5.diffs.some((x) => (x.key === 'gstr9c.g9filed' || x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q') && x.open));
+  ok('working vs filed shown for information', !!w5.diffs.find((x) => x.key === 'gstr9c.g9filed.turnover' && x.informational));
+  const b5 = J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: w5, doc: d4.gstr9c, today: new Date(2026, 10, 28) });
+  ok('filed entered: JSON written with 5Q as filed', b5.errors === 0 && b5.payload.gstr9cdata.audited_data.table5.annul_turn_decl === 77783451.34, JSON.stringify(b5.checks.filter((c) => c.severity === 'error')));
+  // 5Q typed back to the working's whole-rupee figure: refused, as the portal would.
+  d4.gstr9c.t5Q = 7_77_83_451;
+  ok('5Q a paisa off the filed GSTR-9: open and refused', !!E.computeWorkings(d4, ctx).diffs.find((x) => x.key === 'gstr9c.5Q' && x.open)
+    && rules(J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: E.computeWorkings(d4, ctx), doc: d4.gstr9c })).includes('G9TIE'));
   // A client with no 9C has no such lines.
-  ok('no 9C: no tie lines', !E.computeWorkings(D.emptyDocs(), { ...ctx, no9c: true }).diffs.some((x) => x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q'));
+  ok('no 9C: no tie lines', !E.computeWorkings(D.emptyDocs(), { ...ctx, no9c: true }).diffs.some((x) => x.key.startsWith('gstr9c.5Q') || x.key.startsWith('gstr9c.9Q') || x.key.startsWith('gstr9c.g9filed')));
 }
 
 if (failed) {
