@@ -133,8 +133,39 @@ export interface PullJob {
   /** The GSTINs to look up (mode gstin_search, extension 0.19.0: the Vendor GSTIN Risk report). */
   gstins?: string[];
 }
+/** A run the app recorded for a Pull (the Vendor GSTIN Risk report's vendor_lookup_runs row). */
+export interface PullRun {
+  id: string;
+  /** The extension could not start the job: the run records why (status refused). */
+  failed: (why: string) => Promise<void>;
+}
 /** What a report's Pull fetches: jobs[0] starts now; the rest on the next click (the extension runs one job at a time). */
-export interface PullPlan { jobs: PullJob[]; note?: string }
+export interface PullPlan {
+  jobs: PullJob[];
+  note?: string;
+  /**
+   * A part of the Pull that cannot start (e.g. the extension is too old for it):
+   * shown on the page until the next Pull of the report, never only as a toast.
+   */
+  blocked?: string;
+  /**
+   * Records the run before `job` is sent (its id rides on the job as `run_id`),
+   * or, with `job` null, that the Pull was refused (no extension, too old).
+   * Returns null when the job needs no record.
+   */
+  recordRun?: (args: { job: PullJob | null; actorId: string | null; extVersion: string | null; refused?: string }) => Promise<PullRun | null>;
+}
+
+/** One upload a report's preview offers (see ReportDefinition.upload / uploads). */
+export interface ReportUpload {
+  /** The button's words, e.g. "Upload 8A". */
+  label: string;
+  /** The file input's accept list. */
+  accept: string;
+  /** One line under the button: what file to pick and where it comes from. */
+  hint: string;
+  run: (args: { clientId: string; periods: string[]; file: File; uploadedBy: string | null }) => Promise<string>;
+}
 
 /**
  * One entry per report. `needs` mirrors the filter shapes the app has
@@ -184,9 +215,16 @@ export interface ReportDefinition {
   pull?: {
     mode: string;
     needsMonth?: boolean;
-    plan?: (args: { clientId: string; periods: string[]; extVersion: string | null }) => Promise<PullPlan>;
+    plan?: (args: { clientId: string; periods: string[]; extVersion: string | null; action?: string }) => Promise<PullPlan>;
     /** An all-clients report: Pull needs no client picked (its plan names the clients). */
     allClients?: boolean;
+    /**
+     * Further Pull buttons on the preview (e.g. "Re-pull missing"): each calls
+     * `plan` with its `key` as `action`.
+     */
+    actions?: { key: string; label: string; hint: string }[];
+    /** The plan records its runs (recordRun), even when the extension is missing. */
+    recordsRuns?: boolean;
   };
   /**
    * A file the report reads that the portal gives only as a download (the
@@ -194,13 +232,7 @@ export interface ReportDefinition {
    * an upload button; `run` saves the file for the client and the periods
    * picked and says what it saved, and the preview is built again.
    */
-  upload?: {
-    /** The button's words, e.g. "Upload 8A". */
-    label: string;
-    /** The file input's accept list. */
-    accept: string;
-    /** One line under the button: what file to pick and where it comes from. */
-    hint: string;
-    run: (args: { clientId: string; periods: string[]; file: File; uploadedBy: string | null }) => Promise<string>;
-  };
+  upload?: ReportUpload;
+  /** More uploads beside `upload` (one button each), for a report that reads several files (the Vendor GSTIN Risk report). */
+  uploads?: ReportUpload[];
 }

@@ -48,6 +48,36 @@ export interface LookupLite {
   atoSlab: string | null;
   einvoiceStatus: string | null;
   filings: FilingLite[] | null;
+  /** The uploaded vendor lookup sheet's file name (source 'manual_upload'). */
+  uploadFile?: string | null;
+  /** An uploaded sheet's "Last GSTR-1 filed" / "Last GSTR-3B filed" (ISO dates); never read as a filing table. */
+  lastGstr1Filed?: string | null;
+  lastGstr3bFiled?: string | null;
+}
+
+/** The latest failed lookup of a GSTIN (a vendor_gstin_lookups row with status error). */
+export interface LookupErrorLite { gstin: string; at: string; error: string | null; runId: string | null }
+
+/** One vendor_lookup_runs row (migration 20261128120000). */
+export interface LookupRunLite {
+  id: string;
+  /** planned, refused, started, running, done, stopped, failed. */
+  status: string;
+  stage: string | null;
+  requestedAt: string;
+  /** The person who pressed Pull, by name where known. */
+  requestedBy: string | null;
+  planned: number;
+  gstins: string[];
+  found: number;
+  notFound: number;
+  failed: number;
+  stopReason: string | null;
+  heartbeatAt: string | null;
+  finishedAt: string | null;
+  extensionVersion: string | null;
+  pageUrl: string | null;
+  hasSnapshot: boolean;
 }
 
 export interface StatementInfo {
@@ -90,7 +120,17 @@ export interface VendorRiskInput {
   masterFile: { fileName: string | null; uploadedAt: string | null } | null;
   /** null: the lookups view is not there (migration not applied); [] : no lookups yet. */
   lookups: LookupLite[] | null;
+  /** The latest failed lookup per GSTIN (any age); absent: not read. */
+  lookupErrors?: LookupErrorLite[];
+  /** The client's lookup runs of the FY, newest first; absent or [] : none recorded (or the table is not there). */
+  runs?: LookupRunLite[];
+  /** ISO timestamp, now (a run is stalled when it has said nothing for RUN_STALL_MS); defaults to the end of `today`. */
+  now?: string;
 }
+
+/** A run not finished whose last word (heartbeat, else its request) is older than this is stalled. */
+export const RUN_STALL_MS = 3 * 60 * 1000;
+const RUN_OPEN = ['planned', 'started', 'running'];
 
 // ── Output ──────────────────────────────────────────────────────────────────
 
@@ -132,10 +172,49 @@ export interface VendorRow {
   /** ITC at stake for the year: the vendor's ITC in 2B (available), else in the books. */
   itc: number;
   lookedUp: boolean;
+  /** 'portal' | 'upload' | null (no usable lookup). */
+  lookupSource: 'portal' | 'upload' | null;
+  /** The last lookup failed and no answer came after it. */
+  lookupFailed: boolean;
+  cover: RowCover;
   cells: Record<(typeof COLUMNS)[number], string>;
 }
 
 export interface SummaryLine { label: string; count: number; itc: number | null; note: string }
+
+/** What a row's data covers (Data coverage). */
+export interface RowCover { regStatus: boolean; regDate: boolean; taxpayerType: boolean; filingPortal: boolean; filing2A: boolean; einvoice: boolean }
+
+/** The latest lookup run, read for the report header. */
+export interface RunSummary {
+  run: LookupRunLite;
+  /** The status as shown: the stored one, or 'stalled'. */
+  shown: string;
+  stalled: boolean;
+  /** One sentence: when, by whom, the outcome, the counts, the reason. */
+  words: string;
+}
+
+export interface VendorCoverage {
+  vendors: number;
+  regStatus: number;
+  regDate: number;
+  taxpayerType: number;
+  filing: number;
+  filingPortal: number;
+  filing2A: number;
+  einvoice: number;
+  lookedUpPortal: number;
+  lookedUpUpload: number;
+  lookupFailed: number;
+  notLookedUp: number;
+  /** FY months whose statement is due (2A: the 12th, 2B: the 14th of the next month), pulled and missing. */
+  months2A: { due: string[]; pulled: string[]; missing: string[] };
+  months2B: { due: string[]; pulled: string[]; missing: string[] };
+  run: RunSummary | null;
+  /** Runs of the FY recorded, newest first (at most 5). */
+  recentRuns: RunSummary[];
+}
 
 export interface VendorRiskResult {
   rows: VendorRow[];
@@ -143,6 +222,7 @@ export interface VendorRiskResult {
   bands: Record<RiskBand, number>;
   sources: string[];
   notes: string[];
+  coverage: VendorCoverage;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -289,6 +369,40 @@ export function parseSlab(slab: string | null | undefined): { lo: number; hi: nu
   return { lo: nums[0], hi: nums[1] ?? null };
 }
 
+// ── Runs and gaps ───────────────────────────────────────────────────────────
+
+/** Every cell that could not be filled starts so, then names its reason. */
+export const NOT_RETRIEVED = 'Not retrieved — ';
+const nr = (reason: string) => `${NOT_RETRIEVED}${reason}`;
+/** ISO timestamp → "27-Nov-2026 14:05 IST". */
+export const dmyTime = (iso: string | null | undefined): string => {
+  const ms = Date.parse(iso ?? '');
+  if (!Number.isFinite(ms)) return '';
+  const t = new Date(ms + 330 * 60_000).toISOString();
+  return `${dmy(t.slice(0, 10))} ${t.slice(11, 16)} IST`;
+};
+
+/** The run as the report shows it: stalled when open and silent for RUN_STALL_MS. */
+export function summariseRun(run: LookupRunLite, nowMs: number): RunSummary {
+  const last = run.heartbeatAt ?? run.requestedAt;
+  const silentMs = nowMs - (Date.parse(last) || nowMs);
+  const stalled = RUN_OPEN.includes(run.status) && silentMs > RUN_STALL_MS;
+  const shown = stalled ? 'stalled' : run.status;
+  const who = run.requestedBy ? ` by ${run.requestedBy}` : '';
+  const head = `Pull of ${dmyTime(run.requestedAt) || 'unknown time'}${who}, ${plural(run.planned, 'GSTIN')} asked${run.extensionVersion ? `, extension v${run.extensionVersion}` : ''}`;
+  const counts = `${run.found} found, ${run.notFound} not found, ${run.failed} failed`;
+  const mins = Math.round(silentMs / 60000);
+  let tail: string;
+  if (run.status === 'refused') tail = `did not start: ${run.stopReason || 'no reason recorded'}`;
+  else if (stalled && run.status === 'planned') tail = `stalled: the extension never picked it up (no word for ${mins} min). Check the extension is v0.19.3 or later and that the portal tab opened, then Pull again`;
+  else if (stalled) tail = `stalled at ${run.stage || 'an unknown stage'} (no word from the extension since ${dmyTime(last)}, ${mins} min): ${counts}. Pull again: it asks what is still missing`;
+  else if (RUN_OPEN.includes(run.status)) tail = `in progress (${run.stage || run.status}): ${counts} so far`;
+  else if (run.status === 'done') tail = `done: ${counts}`;
+  else tail = `${run.status}: ${counts}${run.stopReason ? `; ${run.stopReason}` : ''}`;
+  const extra = run.hasSnapshot ? ` A snapshot of the portal page${run.pageUrl ? ` (${run.pageUrl})` : ''} is kept on the run for fixing the reader.` : '';
+  return { run, shown, stalled, words: `${head}: ${tail}.${extra}` };
+}
+
 // ── The engine ──────────────────────────────────────────────────────────────
 
 interface Bag {
@@ -347,6 +461,37 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
 
   const lookups = new Map((input.lookups ?? []).map((l) => [normGstin(l.gstin), l]));
   const viewMissing = input.lookups === null;
+  const nowMs = Date.parse(input.now ?? '') || Date.parse(`${today}T18:29:59Z`);
+  const lastErrors = new Map<string, LookupErrorLite>();
+  for (const e of input.lookupErrors ?? []) {
+    const g = normGstin(e.gstin);
+    const cur = lastErrors.get(g);
+    if (!cur || e.at > cur.at) lastErrors.set(g, e);
+  }
+  const runs = (input.runs ?? []).map((r) => summariseRun(r, nowMs));
+  const runFor = (g: string) => runs.find((r) => r.run.gstins.includes(g)) ?? null;
+  /** Why a GSTIN has no usable lookup, in words (after "Not retrieved — "). */
+  const lookupGap = (g: string, check: GstinCheck): string => {
+    if (viewMissing) return 'portal lookups are not set up yet (migration 20261127140000 not applied)';
+    if (!check.valid) return 'not looked up: the GSTIN fails its check character';
+    const err = lastErrors.get(g);
+    const run = runFor(g);
+    const failedWords = err ? `the portal lookup failed on ${dmy(err.at)}: ${(err.error || 'no reason recorded').slice(0, 200)}. Use Re-pull missing, or upload a vendor lookup sheet` : null;
+    if (run && (!err || run.run.requestedAt > err.at)) {
+      const when = dmy(run.run.requestedAt);
+      if (run.run.status === 'refused') return `the Pull of ${when} did not start (${run.run.stopReason || 'refused'})${failedWords ? `; earlier, ${failedWords}` : ''}`;
+      if (run.stalled) return `the lookup run of ${when} stalled before this GSTIN (${run.run.status === 'planned' ? 'the extension never picked it up' : `last word ${dmyTime(run.run.heartbeatAt ?? run.run.requestedAt)}`}). Click Pull again`;
+      if (RUN_OPEN.includes(run.run.status)) return `the lookup run of ${when} is still running (${run.run.stage || run.run.status})`;
+      return `the lookup run of ${when} ${run.run.status === 'done' ? 'ended' : run.run.status} before this GSTIN${run.run.stopReason ? ` (${run.run.stopReason})` : ''}. Click Pull again`;
+    }
+    if (failedWords) return failedWords;
+    if (runs[0]?.run.status === 'refused') return `the last Pull (${dmy(runs[0].run.requestedAt)}) did not start: ${runs[0].run.stopReason || 'refused'}`;
+    return 'no portal lookup run yet. Click Pull (Search Taxpayer), or upload a vendor lookup sheet';
+  };
+  /** A field the lookup did not give. */
+  const fieldGap = (lk: LookupLite) => (lk.source === 'manual_upload'
+    ? `not in the uploaded sheet${lk.uploadFile ? ` (${lk.uploadFile})` : ''}`
+    : `the portal page did not show this field (lookup of ${dmy(lk.lookedUpAt)})`);
 
   // Statement coverage, for sources and "not pulled" sentences.
   const ready = (s: '2A' | '2B') => input.statements.filter((x) => x.source === s && x.state === 'ready' && fyMonths.has(x.period));
@@ -354,6 +499,12 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
   const src2A = ready('2A').length ? `GSTR-2A (portal pull, ${ready('2A').length} of 12 months, last pulled ${dmy(pulledOn('2A')) || 'date not recorded'})` : null;
   const src2B = ready('2B').length ? `GSTR-2B (portal pull, ${ready('2B').length} of 12 months, last pulled ${dmy(pulledOn('2B')) || 'date not recorded'})` : null;
   const twoBMissing = fyPeriods(fy).filter((p) => dueOn(p, 1, 14) <= today && !ready('2B').some((x) => x.period === p));
+  const twoADue = fyPeriods(fy).filter((p) => dueOn(p, 1, 12) <= today);
+  const twoAMissing = twoADue.filter((p) => !ready('2A').some((x) => x.period === p));
+  /** Why 2A / 2B could not give a vendor's filing, in words. */
+  const twoAGap = (inAny: boolean): string => (twoAMissing.length
+    ? `GSTR-2A not pulled for ${listPeriods(twoAMissing)}. Pull fetches it`
+    : inAny ? 'the vendor\'s 2A / 2B documents carry no filing flag' : 'the vendor is in none of the GSTR-2A / 2B pulled');
   const srcLedger = input.ledgerAsOf ? `Bills not in 2B / not in books ledger (as of ${periodLabel(input.ledgerAsOf)})` : null;
   const srcMaster = input.masterFile ? `Vendor master (upload${input.masterFile.fileName ? ` ${input.masterFile.fileName}` : ''}, ${dmy(input.masterFile.uploadedAt) || 'date not recorded'})` : null;
   const srcReco = input.recoPeriods.length ? `GSTR-2A vs 2B reconciliation (${plural(input.recoPeriods.length, 'month')})` : null;
@@ -366,7 +517,11 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
   for (const b of bags.values()) {
     const check = checkGstin(b.gstin);
     const lk = lookups.get(b.gstin) ?? null;
-    const lkSrc = lk ? `GST portal Search Taxpayer (${dmy(lk.lookedUpAt)})` : '';
+    const fromUpload = lk?.source === 'manual_upload';
+    const lkSrc = !lk ? '' : fromUpload ? `Uploaded sheet (${lk.uploadFile || 'file name not recorded'}, ${dmy(lk.lookedUpAt)})` : `GST portal Search Taxpayer (${dmy(lk.lookedUpAt)})`;
+    const gap = lk ? '' : lookupGap(b.gstin, check);
+    const errLast = lastErrors.get(b.gstin);
+    const lookupFailed = !!errLast && (!lk || errLast.at > lk.lookedUpAt);
     const findings: Finding[] = [];
     const add = (code: FindingCode, detail: string, source: string, extra: Partial<Finding> = {}) => findings.push({ code, detail, source, ...extra });
     const remarks: string[] = [];
@@ -445,12 +600,12 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
         add('CANCELLED_2A', `GSTR-2A of ${periodLabel(cancelled2AFrom ?? '')} gives the cancellation date ${dmy(cancelled2A)}${after.length ? `; ${plural(after.length, 'document')} dated on or after it` : ''}`, src2A ?? 'GSTR-2A');
         regState = 'cancelled';
       }
-      add('NO_LOOKUP', viewMissing ? 'Portal lookups are not available yet (the lookups table is not set up)' : 'No portal lookup of this GSTIN yet', '-');
+      add('NO_LOOKUP', `Not retrieved: ${gap}`, '-');
     }
 
     // 3. Composition (portal lookup only: the GSTIN does not show it).
     let composition: YesNo = 'Verification required';
-    if (lk?.status === 'ok') {
+    if (lk?.status === 'ok' && lk.taxpayerType) {
       composition = /composition/i.test(lk.taxpayerType ?? '') ? 'Yes' : 'No';
       if (composition === 'Yes') {
         const taxed = docs.filter((d) => docTax(d) > 0);
@@ -582,18 +737,20 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
       : atTop.some((f) => natureOf(f) === 'Confirmed') ? 'Confirmed' : atTop.some((f) => natureOf(f) === 'Potential risk') ? 'Potential risk' : 'Verification required';
 
     // Cells.
-    const VR = 'Verification required — run Pull (Search Taxpayer)';
     const has = (c: FindingCode) => findings.some((f) => f.code === c);
+    // Not looked up: the reason; looked up, a field the lookup did not give: the page or the sheet did not show it.
+    const lkGap = lk ? (lk.status === 'not_found' ? null : nr(fieldGap(lk))) : nr(gap);
+    const NA_NF = 'Not applicable: the GSTIN was not found on the portal';
     const regStatusCell = !check.valid ? `Invalid GSTIN (${check.problem})`
-      : lk?.status === 'not_found' ? 'Not found on the GST portal'
-        : lk ? lk.regStatus || 'Not shown'
-          : cancelled2A ? `Cancelled per GSTR-2A (${VR.toLowerCase()})` : VR;
+      : lk?.status === 'not_found' ? `Not found on the ${fromUpload ? 'uploaded sheet' : 'GST portal'}`
+        : lk ? lk.regStatus || lkGap!
+          : cancelled2A ? `Cancelled per GSTR-2A (status ${lkGap!.toLowerCase()})` : lkGap!;
     const cancelCell = lk?.status === 'ok'
-      ? (regState === 'cancelled' || regState === 'suspended' ? dmy(lk.cancelDate) || 'Not shown by the portal search' : '—')
-      : cancelled2A ? `${dmy(cancelled2A)} (per GSTR-2A)` : 'Verification required';
+      ? (regState === 'cancelled' || regState === 'suspended' ? dmy(lk.cancelDate) || lkGap! : '—')
+      : lk ? NA_NF : cancelled2A ? `${dmy(cancelled2A)} (per GSTR-2A)` : lkGap!;
     const reasonCell = lk?.status === 'ok'
-      ? (regState === 'cancelled' || regState === 'suspended' ? lk.cancelReason || 'Not shown by the portal search' : '—')
-      : 'Verification required';
+      ? (regState === 'cancelled' || regState === 'suspended' ? lk.cancelReason || lkGap! : '—')
+      : lk ? NA_NF : lkGap!;
     const tdsTcs = check.kind === 'tds' ? 'TDS deductor registration (s.51)'
       : check.kind === 'tcs' ? 'Appears to be a TCS registration (s.52)'
         : /deductor/i.test(lk?.taxpayerType ?? '') ? 'TDS deductor registration (s.51)'
@@ -605,16 +762,29 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
     const enablement = lk?.einvoiceStatus ? `${lk.einvoiceStatus} [${lkSrc}]`
       : withIrn ? `IRN seen on ${withIrn} of ${totalB2b} B2B documents (enabled)`
         : totalB2b ? `No IRN on ${plural(totalB2b, 'B2B document')}; not verified on the IRP (CAPTCHA)` : 'No B2B documents; not verified on the IRP (CAPTCHA)';
-    const g1Cell = filingText(f1, 'GSTR-1')
+    // A filing cell neither the portal's table nor 2A / 2B could fill: both reasons.
+    const portalFilingGap = !lk ? gap
+      : lk.status === 'not_found' ? 'the GSTIN was not found'
+        : lk.filings == null ? fieldGap(lk).replace('this field', 'the filing table')
+          : `the filing table holds no return of FY ${fy}`;
+    const lkName = fromUpload ? 'uploaded sheet' : 'portal';
+    const filingGap = (twoA: boolean) => {
+      const a = twoAGap(twoA);
+      if (lk?.status === 'ok' && lk.filings != null && !twoAMissing.length && !twoA) return nr(`not in any source for this vendor (${lkName}: ${portalFilingGap}; ${a})`);
+      return nr(`${lkName}: ${portalFilingGap}; ${a}`);
+    };
+    const sheetLast = (iso: string | null | undefined, name: string) => (iso && fromUpload ? `Last ${name} filed ${dmy(iso)} [${lkSrc}]` : null);
+    const g1Cell = filingText(f1, 'GSTR-1') ?? sheetLast(lk?.lastGstr1Filed, 'GSTR-1')
       ?? (filedPeriods.size || notFiled.length
         ? `${filedPeriods.size ? `Filed for ${plural(filedPeriods.size, 'period')} with documents` : ''}${filedPeriods.size && notFiled.length ? '; ' : ''}${notFiled.length ? `saved but not filed: ${plural(notFiled.length, 'document')}` : ''} [GSTR-2A / 2B]`
-        : 'Verification required');
-    const g3Cell = filingText(f3, 'GSTR-3B')
+        : filingGap(docs.length > 0));
+    const g3Cell = filingText(f3, 'GSTR-3B') ?? sheetLast(lk?.lastGstr3bFiled, 'GSTR-3B')
       ?? (threeBFiled.length || threeBPending.length
         ? `${threeBFiled.length ? `Filed per 2A for ${listPeriods(threeBFiled)}` : ''}${threeBFiled.length && threeBPending.length ? '; ' : ''}${threeBPending.length ? `not filed as of the 2A pull: ${listPeriods(threeBPending)}` : ''} [GSTR-2A]`
-        : 'Verification required');
-    const lastDof = [f1?.lastFiled, f3?.lastFiled].filter((d): d is string => !!d).sort().pop() ?? null;
-    const lastCell = lastDof ? dmy(lastDof) : lastFiled2AB ? `${dmy(lastFiled2AB)} (GSTR-1 / IFF, per 2A / 2B)` : 'Verification required';
+        : filingGap(b.in2A.length > 0));
+    const lastDof = [f1?.lastFiled, f3?.lastFiled, fromUpload ? isoDate(lk?.lastGstr1Filed ?? '') : null, fromUpload ? isoDate(lk?.lastGstr3bFiled ?? '') : null]
+      .filter((d): d is string => !!d).sort().pop() ?? null;
+    const lastCell = lastDof ? dmy(lastDof) : lastFiled2AB ? `${dmy(lastFiled2AB)} (GSTR-1 / IFF, per 2A / 2B)` : filingGap(docs.length > 0);
     const twoBParts: string[] = [];
     if (!ready('2B').length) twoBParts.push('No GSTR-2B pulled for the year');
     else twoBParts.push(b.in2B.length ? `In 2B: ${plural(b.in2B.filter((d) => d.bucket !== 'reversal').length, 'document')} (ITC available ${rupees(itc2B)})` : 'Not in any GSTR-2B pulled');
@@ -635,7 +805,7 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
       if (has('NON_FILING_PERSISTENT') || has('RULE_37A_REVERSAL')) return "Conditionally eligible: subject to the vendor's tax payment (s.16(2)(c), rule 37A)";
       if (has('MISMATCH_MATERIAL') || has('MISMATCH_MINOR') || has('BOOKS_NOT_IN_2B')) return `Eligible only as reflected in GSTR-2B (s.16(2)(aa))${openTax ? `; ${rupees(openTax)} not yet in 2B` : ''}`;
       if (has('COMPOSITION')) return 'No ITC arises (bill of supply, s.10(4))';
-      if (band === 'No Data') return 'Verification required';
+      if (band === 'No Data') return `Verification required (${!lk ? `registration ${nr(gap).toLowerCase()}` : 'not enough data: see the registration and filing columns'})`;
       return 'Eligible, subject to the conditions of s.16(2)';
     })();
 
@@ -654,16 +824,18 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
       GSTIN: b.gstin,
       State: check.state ? `${check.stateCode} ${check.state}` : check.stateCode || '—',
       'GST Registration Status': regStatusCell,
-      'Registration Date': lk?.status === 'ok' ? dmy(lk.regDate) || 'Not shown' : 'Verification required',
+      'Registration Date': lk?.status === 'ok' ? dmy(lk.regDate) || lkGap! : lk ? NA_NF : lkGap!,
       'Cancellation/Suspension Date': cancelCell,
       'Cancellation Reason': reasonCell,
-      'Taxpayer Type': lk?.taxpayerType || (check.kind !== 'normal' ? GSTIN_KIND_LABEL[check.kind] : 'Verification required'),
-      'Composition Scheme (Yes/No)': composition,
+      'Taxpayer Type': lk?.taxpayerType || (check.kind !== 'normal' ? GSTIN_KIND_LABEL[check.kind] : lk?.status === 'not_found' ? NA_NF : lkGap!),
+      'Composition Scheme (Yes/No)': composition !== 'Verification required' ? composition
+        : lk?.status === 'ok' ? `${nr(fieldGap(lk).replace('this field', 'the taxpayer type'))}` : lk ? NA_NF : lkGap!,
       'RCM Applicability Indicator': rcmCell,
       'GST TDS/TCS Status': tdsTcs,
-      'E-Invoice Applicable (Yes/No)': einvApplicable,
+      'E-Invoice Applicable (Yes/No)': einvApplicable !== 'Verification required' ? einvApplicable
+        : `Verification required (${!lk ? `turnover slab ${lkGap!.toLowerCase()}` : lk.status === 'not_found' ? 'the GSTIN was not found on the portal' : `turnover slab ${nr(fieldGap(lk)).toLowerCase().replace('this field', 'the slab')}`}; no IRN seen on its documents)`,
       'E-Invoice Enablement Status': enablement,
-      'E-Invoice Risk (Yes/No)': einvRisk,
+      'E-Invoice Risk (Yes/No)': einvRisk === 'Verification required' ? `Verification required (${plural(totalB2b, 'B2B document')}; applicability not known)` : einvRisk,
       'GSTR-1 Filing Status': g1Cell,
       'GSTR-3B Filing Status': g3Cell,
       'Last Return Filing Date': lastCell,
@@ -673,11 +845,22 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
       'Reason for ITC Risk': reasonText,
       'Relevant GST Section/Rule/Notification': provisions,
       'Recommended Corrective Action': actions.length ? actions.map((a, i) => (actions.length > 1 ? `${i + 1}. ${a}` : a)).join(' ') : 'None: keep the routine checks.',
-      'Date of Verification': lk ? dmy(lk.lookedUpAt) : 'Not verified on the portal',
+      'Date of Verification': lk ? `${dmy(lk.lookedUpAt)}${fromUpload ? ' (uploaded sheet)' : ''}` : `Not verified — ${gap}`,
       'Data Source': [...sources].join('; '),
       Remarks: remarks.join(' ') || '—',
     };
-    rows.push({ gstin: b.gstin, name, band, nature, findings, check, regState, composition, einvApplicable, einvRisk, einvNotEnabled, itc, lookedUp: !!lk, cells });
+    const cover: RowCover = {
+      regStatus: lk?.status === 'not_found' || (lk?.status === 'ok' && !!lk.regStatus),
+      regDate: lk?.status === 'ok' && !!lk.regDate,
+      taxpayerType: lk?.status === 'ok' && !!lk.taxpayerType,
+      filingPortal: lk?.status === 'ok' && (lk.filings != null || (fromUpload && !!(lk.lastGstr1Filed || lk.lastGstr3bFiled))),
+      filing2A: filedPeriods.size > 0 || threeBFiled.length > 0 || threeBPending.length > 0 || notFiled.length > 0,
+      einvoice: !!lk?.einvoiceStatus || !!slab || withIrn > 0,
+    };
+    rows.push({
+      gstin: b.gstin, name, band, nature, findings, check, regState, composition, einvApplicable, einvRisk, einvNotEnabled, itc, lookedUp: !!lk,
+      lookupSource: lk ? (fromUpload ? 'upload' : 'portal') : null, lookupFailed, cover, cells,
+    });
   }
 
   rows.sort((a, b) => BAND_RANK[b.band] - BAND_RANK[a.band] || (a.band === 'No Data' ? 0 : b.itc - a.itc) || a.name.localeCompare(b.name));
@@ -704,13 +887,38 @@ export function assessVendors(input: VendorRiskInput): VendorRiskResult {
     line('2B mismatches', withAny(['MISMATCH_MATERIAL', 'MISMATCH_MINOR', 'BOOKS_NOT_IN_2B', 'VALUE_DIFFERENCE']), 'Open Not in 2B, books not in 2B, value differences'),
   ];
 
+  const coverage: VendorCoverage = {
+    vendors: rows.length,
+    regStatus: rows.filter((r) => r.cover.regStatus).length,
+    regDate: rows.filter((r) => r.cover.regDate).length,
+    taxpayerType: rows.filter((r) => r.cover.taxpayerType).length,
+    filing: rows.filter((r) => r.cover.filingPortal || r.cover.filing2A).length,
+    filingPortal: rows.filter((r) => r.cover.filingPortal).length,
+    filing2A: rows.filter((r) => r.cover.filing2A).length,
+    einvoice: rows.filter((r) => r.cover.einvoice).length,
+    lookedUpPortal: rows.filter((r) => r.lookupSource === 'portal').length,
+    lookedUpUpload: rows.filter((r) => r.lookupSource === 'upload').length,
+    lookupFailed: rows.filter((r) => !r.lookedUp && r.lookupFailed).length,
+    notLookedUp: rows.filter((r) => !r.lookedUp).length,
+    months2A: { due: twoADue, pulled: twoADue.filter((p) => !twoAMissing.includes(p)), missing: twoAMissing },
+    months2B: {
+      due: fyPeriods(fy).filter((p) => dueOn(p, 1, 14) <= today),
+      pulled: fyPeriods(fy).filter((p) => dueOn(p, 1, 14) <= today && !twoBMissing.includes(p)),
+      missing: twoBMissing,
+    },
+    run: runs[0] ?? null,
+    recentRuns: runs.slice(0, 5),
+  };
+
   const notes: string[] = [];
-  if (viewMissing) notes.push('Portal lookups are not set up yet (vendor_gstin_latest is missing): every registration field reads "Verification required".');
-  else if (!rows.some((r) => r.lookedUp)) notes.push('No vendor GSTIN has been looked up on the portal yet: use Pull (Search Taxpayer).');
-  if (!ready('2A').length) notes.push(`No GSTR-2A of FY ${fy} is pulled.`);
-  if (twoBMissing.length) notes.push(`GSTR-2B not pulled for ${listPeriods(twoBMissing, 12)}.`);
+  if (viewMissing) notes.push('Portal lookups are not set up yet (vendor_gstin_latest is missing): every registration field reads "Not retrieved".');
+  else if (!rows.some((r) => r.lookedUp)) notes.push(`No vendor GSTIN has a lookup yet${runs[0] ? ` (latest Pull: ${runs[0].words})` : ': use Pull (Search Taxpayer), or upload a vendor lookup sheet'}.`);
+  else if (coverage.notLookedUp) notes.push(`${plural(coverage.notLookedUp, 'vendor GSTIN')} without a lookup${coverage.lookupFailed ? ` (${coverage.lookupFailed} whose last lookup failed)` : ''}: each says why in its cells; Re-pull missing asks only those.`);
+  if (twoAMissing.length) notes.push(`GSTR-2A not pulled for ${listPeriods(twoAMissing, 12)} of FY ${fy}: the supplier filing flags (cfs, cfs3b) and cancellation dates come from it. Pull fetches it.`);
+  if (twoBMissing.length) notes.push(`GSTR-2B not pulled for ${listPeriods(twoBMissing, 12)}. Pull fetches it.`);
   if (!input.masterFile) notes.push('No vendor master uploaded: names are compared with the books only.');
   const allSources = [src2A, src2B, srcLedger, srcReco, srcMaster, input.importDocs.length ? 'Import 2B' : null, input.books.length ? 'Books register' : null,
-    (input.lookups ?? []).length ? 'GST portal Search Taxpayer' : null, srcCheck].filter((s): s is string => !!s);
-  return { rows, summary, bands, sources: allSources, notes };
+    (input.lookups ?? []).some((l) => l.source !== 'manual_upload') ? 'GST portal Search Taxpayer' : null,
+    (input.lookups ?? []).some((l) => l.source === 'manual_upload') ? 'Uploaded vendor lookup sheet' : null, srcCheck].filter((s): s is string => !!s);
+  return { rows, summary, bands, sources: allSources, notes, coverage };
 }

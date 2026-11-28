@@ -11531,6 +11531,7 @@ export type Database = {
           einvoice_status: string | null
           filings: Json | null
           payload: Json | null
+          run_id: string | null
         }
         Insert: {
           id?: string
@@ -11558,6 +11559,7 @@ export type Database = {
           einvoice_status?: string | null
           filings?: Json | null
           payload?: Json | null
+          run_id?: string | null
         }
         Update: {
           id?: string
@@ -11585,6 +11587,73 @@ export type Database = {
           einvoice_status?: string | null
           filings?: Json | null
           payload?: Json | null
+          run_id?: string | null
+        }
+        Relationships: []
+      }
+      vendor_lookup_runs: {
+        Row: {
+          id: string
+          client_id: string | null
+          fy: string | null
+          requested_by: string | null
+          requested_at: string
+          planned: number
+          gstins: string[] | null
+          extension_version: string | null
+          status: string
+          stage: string | null
+          found: number
+          not_found: number
+          failed: number
+          stop_reason: string | null
+          page_url: string | null
+          page_snapshot: string | null
+          heartbeat_at: string | null
+          finished_at: string | null
+          detail: Json | null
+        }
+        Insert: {
+          id?: string
+          client_id?: string | null
+          fy?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          planned?: number
+          gstins?: string[] | null
+          extension_version?: string | null
+          status?: string
+          stage?: string | null
+          found?: number
+          not_found?: number
+          failed?: number
+          stop_reason?: string | null
+          page_url?: string | null
+          page_snapshot?: string | null
+          heartbeat_at?: string | null
+          finished_at?: string | null
+          detail?: Json | null
+        }
+        Update: {
+          id?: string
+          client_id?: string | null
+          fy?: string | null
+          requested_by?: string | null
+          requested_at?: string
+          planned?: number
+          gstins?: string[] | null
+          extension_version?: string | null
+          status?: string
+          stage?: string | null
+          found?: number
+          not_found?: number
+          failed?: number
+          stop_reason?: string | null
+          page_url?: string | null
+          page_snapshot?: string | null
+          heartbeat_at?: string | null
+          finished_at?: string | null
+          detail?: Json | null
         }
         Relationships: []
       }

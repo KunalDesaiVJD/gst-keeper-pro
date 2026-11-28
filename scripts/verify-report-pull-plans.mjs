@@ -4,7 +4,8 @@
 // report every month of its FY up to today, a PAN report every GSTIN of the
 // PAN, a ledger the months of the year not pulled (or failed), a year
 // statement once a year, an all-clients report the clients still missing the
-// month's GSTR-3B; only what is missing, else the months picked again; and
+// month's GSTR-3B, the Vendor GSTIN Risk report its FY's 2A / 2B months then
+// the vendor lookups (run recorded); only what is missing, else the months picked again; and
 // every mode a Pull starts is one the extension (0.17.0 and later) runs.
 //
 //   node scripts/verify-report-pull-plans.mjs
@@ -21,19 +22,35 @@ const root = process.env.GSTK_ROOT || path.resolve(here, '..');
 const requireRoot = createRequire(path.join(root, 'package.json'));
 const { build } = requireRoot('esbuild');
 
-// A stand-in that answers select / eq / in / maybeSingle over globalThis.__db.
+// A stand-in that answers select / eq / in / not / range / maybeSingle, and
+// insert / update (the vendor lookup runs), over globalThis.__db.
 const SUPABASE_STUB = `
+  let ids = 0;
   const q = (table) => {
     const filters = [];
     let single = false;
+    let inserted = null;
+    let patch = null;
     const api = {
       select() { return api; },
       eq(c, v) { filters.push((r) => r[c] === v); return api; },
       in(c, vs) { filters.push((r) => vs.includes(r[c])); return api; },
+      not(c, op, v) { filters.push((r) => (op === 'is' && v === null ? r[c] != null : r[c] !== v)); return api; },
       order() { return api; },
+      range() { return api; },
+      limit() { return api; },
       maybeSingle() { single = true; return api; },
+      single() { single = true; return api; },
+      insert(rows) {
+        inserted = [].concat(rows).map((r) => ({ id: 'row-' + (++ids), ...r }));
+        (globalThis.__db[table] = globalThis.__db[table] || []).push(...inserted);
+        return api;
+      },
+      update(p) { patch = p; return api; },
       then(res, rej) {
+        if (inserted) return Promise.resolve({ data: single ? inserted[0] : inserted, error: null }).then(res, rej);
         const rows = (globalThis.__db[table] || []).filter((r) => filters.every((f) => f(r)));
+        if (patch) { for (const r of rows) Object.assign(r, patch); return Promise.resolve({ data: null, error: null }).then(res, rej); }
         return Promise.resolve(single ? { data: rows[0] ?? null, error: null } : { data: rows, error: null }).then(res, rej);
       },
     };
@@ -169,6 +186,50 @@ globalThis.__db = {
   const report = REPORTS_CATALOG.find((r) => r.key === 'gstr1-documents-full-year');
   const c = await report.pull.plan({ clientId: C, periods: ['09/2025'], extVersion: '0.19.1' });
   check('GSTR-1 year: the catalog passes the extension version on', c.jobs[0].mode === 'gstr1_full_pull', JSON.stringify(c.jobs));
+}
+
+// 6c. The Vendor GSTIN Risk report: the FY's 2A / 2B months not pulled first, then the lookups,
+//     gated on the extension only for the lookups; missing (errored too) before stale; the run recorded.
+{
+  const V = 'vendor-client';
+  const S1 = '27AAACR5055K1ZK', S2 = '24AAACP5599F1ZB', S3 = '29AAAAA0000A1ZG';
+  const valid = (g) => { const C = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'; let sum = 0; for (let i = 0; i < 14; i++) { const v = C.indexOf(g[i]) * (i % 2 ? 2 : 1); sum += Math.floor(v / 36) + (v % 36); } return g.slice(0, 14) + C[(36 - (sum % 36)) % 36]; };
+  const [A1, A2, A3] = [S1, S2, S3].map(valid);
+  const twoB = (ctins) => ({ docdata: { b2b: ctins.map((ctin) => ({ ctin, trdnm: 'X', inv: [{ inum: 'I-' + ctin.slice(2, 6), dt: '10-05-2026', val: 100, txval: 100, igst: 18, cgst: 0, sgst: 0, cess: 0 }] })) } });
+  const twoA = (ctins) => ({ b2b: ctins.map((ctin) => ({ ctin, cfs: 'Y', inv: [{ inum: 'I-' + ctin.slice(2, 6), idt: '10-05-2026', val: 100, itms: [] }] })), _meta: { sections: ['b2b'] } });
+  globalThis.__db.clients.push({ id: V, name: 'Fictional Bearings', gstin: '24AAHCP5599F1Z2', gst_user_id: 'v', portal_login_issue: null });
+  globalThis.__db.gst_filed_returns.push(
+    ...['04/2026', '05/2026', '06/2026', '07/2026', '08/2026', '09/2026'].map((m) => ({ client_id: V, period_month: m, return_type: 'GSTR2B', status: 'Pulled', summary: twoB([A1, A2, A3]), updated_at: '2026-10-15T00:00:00Z' })),
+    { client_id: V, period_month: '09/2026', return_type: 'GSTR2A', status: 'Pulled', summary: twoA([A1]), updated_at: '2026-10-15T00:00:00Z' },
+  );
+  globalThis.__db.twob_import_docs = []; globalThis.__db.books_register = []; globalThis.__db.vendor_master_entries = [];
+  globalThis.__db.vendor_gstin_latest = [{ gstin: A1, looked_up_at: '2026-10-20T00:00:00Z' }, { gstin: A2, looked_up_at: '2026-08-01T00:00:00Z' }];
+  globalThis.__db.vendor_gstin_lookups = [{ gstin: A1, status: 'error', looked_up_at: '2026-10-24T00:00:00Z' }];
+  globalThis.__db.vendor_lookup_runs = [];
+  const a = await plan('vendor-gstin-risk', { clientId: V, periods: ['09/2026'], extVersion: '0.19.3' });
+  check('vendor risk: the missing 2A months first (one gstr2a2b_pull), then the lookups',
+    same(a.jobs.map((j) => j.mode), ['gstr2a2b_pull', 'gstin_search']) && same(a.jobs[0].periods, ['04/2026', '05/2026', '06/2026', '07/2026', '08/2026'])
+    && same(a.jobs[0].want['04/2026'], ['2A']) && !a.blocked, JSON.stringify(a.jobs));
+  check('vendor risk: missing (never looked up, or errored after its answer) before stale', same(a.jobs[1].gstins, [A3, A1, A2]), JSON.stringify(a.jobs[1].gstins));
+  const m = await plan('vendor-gstin-risk', { clientId: V, periods: ['09/2026'], extVersion: '0.19.3', action: 'missing' });
+  check('vendor risk: Re-pull missing asks the missing only (not the stale one)', same(m.jobs[m.jobs.length - 1].gstins, [A3, A1]), JSON.stringify(m.jobs));
+  const old = await plan('vendor-gstin-risk', { clientId: V, periods: ['09/2026'], extVersion: '0.19.2' });
+  check('vendor risk: an extension older than 0.19.3 still pulls the 2A, the lookups blocked with a message that stays',
+    same(old.jobs.map((j) => j.mode), ['gstr2a2b_pull']) && /0\.19\.3/.test(old.blocked || '') && /this one is v0\.19\.2/.test(old.blocked), JSON.stringify(old));
+  const refusedRun = await old.recordRun({ job: old.jobs[0], actorId: 'u1', extVersion: '0.19.2' });
+  const r0 = globalThis.__db.vendor_lookup_runs[0] || {};
+  check('vendor risk: the blocked lookups are recorded as a refused run (who, what, why)', refusedRun === null && r0.status === 'refused' && r0.requested_by === 'u1' && r0.planned === 3 && /0\.19\.3/.test(r0.stop_reason) && r0.fy === '2026-27' && r0.client_id === V, JSON.stringify(r0));
+  const live = await a.recordRun({ job: a.jobs[1], actorId: 'u1', extVersion: '0.19.3' });
+  const r1 = globalThis.__db.vendor_lookup_runs[1] || {};
+  check('vendor risk: the lookup job gets a planned run, its id for run_id', live && live.id === r1.id && r1.status === 'planned' && r1.planned === 3 && same(r1.gstins, a.jobs[1].gstins), JSON.stringify(r1));
+  await live.failed('This client has no saved GST credentials.');
+  check('vendor risk: the extension refusing to start marks the run refused with its words', r1.status === 'refused' && /no saved GST credentials/.test(r1.stop_reason) && !!r1.finished_at, JSON.stringify(r1));
+  const none = await plan('vendor-gstin-risk', { clientId: V, periods: ['09/2026'], extVersion: null });
+  check('vendor risk: no extension: the lookups blocked, named so', /No GST Keeper browser extension/.test(none.blocked || ''), JSON.stringify(none));
+  const noRun = await a.recordRun({ job: a.jobs[0], actorId: 'u1', extVersion: '0.19.3' });
+  check('vendor risk: a 2A / 2B job needs no run record', noRun === null && globalThis.__db.vendor_lookup_runs.length === 2);
+  const older = await plan('vendor-gstin-risk', { clientId: V, periods: ['09/2026'], extVersion: '0.12.0' });
+  check('vendor risk: an extension before 0.13.0 pulls 2A month by month', older.jobs[0]?.mode === 'gstr2a_pull', JSON.stringify(older.jobs));
 }
 
 // 7. Every mode a Pull names is one the extension runs.

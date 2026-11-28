@@ -34,6 +34,8 @@ const out = await build({
       export * from './src/lib/vendorRisk/engine';
       export * from './src/lib/vendorRisk/rules';
       export { vendorRiskTable } from './src/utils/vendorRiskReports';
+      export { parseVendorLookupSheet } from './src/lib/vendorRisk/load';
+      export { lookupQueue, isMissingLookup, lookupRefusal, GSTIN_SEARCH_VERSION } from './src/lib/vendorRisk/gstinSearchPull';
       export { gstinValid } from './supabase/functions/notice-ai/gstin';
       export { buildReportWorkbook } from './src/lib/reportExport/excel';
       export { buildReportPdf } from './src/lib/reportExport/pdf';
@@ -41,7 +43,8 @@ const out = await build({
     resolveDir: root, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'node', write: false, plugins: [stub], logLevel: 'error',
-  loader: { '.png': 'dataurl' },
+  define: { 'import.meta.env': '{}' },
+  loader: { '.png': 'dataurl', '.svg': 'dataurl', '.css': 'empty' },
   banner: { js: `import { createRequire as __cr } from 'node:module'; const require = __cr(${JSON.stringify(path.join(root, 'package.json'))});` },
 });
 const V = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
@@ -196,9 +199,10 @@ const has = (g, code) => row(g)?.findings.some((f) => f.code === code);
     row(G.retro)?.band === 'Critical' && row(G.retro)?.nature === 'Confirmed' && has(G.retro, 'CANCELLED_RETRO') && /potentially ineligible/i.test(row(G.retro).cells['ITC Eligibility Status']), JSON.stringify(row(G.retro)?.findings));
   check(g, 'composition with tax charged → High, potential', row(G.composition)?.band === 'High' && has(G.composition, 'COMPOSITION_TAX_CHARGED') && row(G.composition).composition === 'Yes', JSON.stringify(row(G.composition)?.findings));
   check(g, 'composition without tax → not ineligible (no ITC arises), Low', row(G.compclean)?.band === 'Low' && /no itc arises/i.test(row(G.compclean).cells['ITC Eligibility Status']), JSON.stringify(row(G.compclean)?.cells['ITC Eligibility Status']));
-  check(g, 'missing lookup → No Data, verification required, never non-compliant',
-    row(G.nolookup)?.band === 'No Data' && /verification required/i.test(row(G.nolookup).cells['GST Registration Status']) && row(G.nolookup).cells['ITC Risk Category'] === 'No Data / Verification Required'
-    && row(G.nolookup).cells['Composition Scheme (Yes/No)'] === 'Verification required', JSON.stringify(row(G.nolookup)?.cells));
+  check(g, 'missing lookup → No Data, verification required, never non-compliant; the data gap names its reason',
+    row(G.nolookup)?.band === 'No Data' && row(G.nolookup)?.nature === 'Verification required'
+    && /^Not retrieved — no portal lookup run yet\. Click Pull/.test(row(G.nolookup).cells['GST Registration Status']) && row(G.nolookup).cells['ITC Risk Category'] === 'No Data / Verification Required'
+    && /^Not retrieved — no portal lookup run yet/.test(row(G.nolookup).cells['Composition Scheme (Yes/No)']), JSON.stringify(row(G.nolookup)?.cells));
   check(g, 'active filer → Low, eligible', row(G.good)?.band === 'Low' && /eligible, subject/i.test(row(G.good).cells['ITC Eligibility Status']) && /Filed 12 of 12/.test(row(G.good).cells['GSTR-3B Filing Status']), JSON.stringify(row(G.good)?.cells));
   check(g, 'e-invoice liable by slab, no IRN → High, risk Yes', row(G.einv)?.band === 'High' && has(G.einv, 'EINVOICE_MISSING_IRN') && row(G.einv).einvRisk === 'Yes' && row(G.einv).einvApplicable === 'Yes' && row(G.einv).einvNotEnabled, JSON.stringify(row(G.einv)?.findings));
   check(g, 'below-threshold slab → e-invoice No, risk No', row(G.good)?.einvApplicable === 'No' && row(G.good)?.einvRisk === 'No');
@@ -224,7 +228,121 @@ const has = (g, code) => row(g)?.findings.some((f) => f.code === code);
   check(g, 'name differing from the portal → Medium', nameMis.rows.find((r) => r.gstin === G.good).band === 'Medium' && nameMis.rows.find((r) => r.gstin === G.good).findings.some((f) => f.code === 'NAME_MISMATCH'));
 }
 
-// ── 4. Layout ───────────────────────────────────────────────────────────────
+// ── 4. Coverage and gaps: every cell not filled says why ───────────────────
+const NOW = '2026-11-27T10:00:00Z';
+const run = (over = {}) => ({
+  id: 'r1', status: 'done', stage: 'looking_up', requestedAt: '2026-11-27T09:00:00Z', requestedBy: 'Gita', planned: 2, gstins: [G.nolookup], found: 0, notFound: 0, failed: 0,
+  stopReason: null, heartbeatAt: '2026-11-27T09:05:00Z', finishedAt: '2026-11-27T09:06:00Z', extensionVersion: '0.19.3', pageUrl: null, hasSnapshot: false, ...over,
+});
+{
+  const g = 'Coverage';
+  const notRetrieved = (r) => Object.entries(r.cells).filter(([, v]) => /^(Verification required|Not shown)$/.test(v));
+  check(g, 'no cell of any row is a bare "Verification required" / "Not shown"', res.rows.every((r) => notRetrieved(r).length === 0), JSON.stringify(res.rows.map((r) => [r.gstin, notRetrieved(r)]).filter((x) => x[1].length)));
+  const c = res.coverage;
+  check(g, 'coverage counts: 11 vendors, 9 with registration, 2 without a lookup', c.vendors === 11 && c.regStatus === 9 && c.regDate === 9 && c.taxpayerType === 9 && c.notLookedUp === 2 && c.lookedUpPortal === 9 && c.lookedUpUpload === 0, JSON.stringify(c));
+  check(g, 'coverage: 2A / 2B months, every due month pulled', c.months2A.due.length === 12 && c.months2A.missing.length === 0 && c.months2B.pulled.length === 12, JSON.stringify(c.months2A));
+  check(g, 'coverage: filing data counted from the portal or 2A', c.filing >= c.filingPortal && c.filingPortal === 9, JSON.stringify(c));
+
+  // A failed lookup names the failure and its date.
+  const err = V.assessVendors({ ...input, now: NOW, lookupErrors: [{ gstin: G.nolookup, at: '2026-11-25T08:00:00Z', error: 'the portal\'s firewall answered "Request Rejected"', runId: 'r0' }] });
+  const e = err.rows.find((r) => r.gstin === G.nolookup);
+  check(g, 'lookup failed → "Not retrieved — the portal lookup failed on <date>: <error>"', /^Not retrieved — the portal lookup failed on 25-Nov-2026: the portal's firewall answered "Request Rejected"/.test(e.cells['GST Registration Status'])
+    && e.lookupFailed && err.coverage.lookupFailed === 1 && /Not verified — the portal lookup failed/.test(e.cells['Date of Verification']), JSON.stringify(e.cells));
+
+  // A run that never started / stalled / stopped before the GSTIN.
+  const stalled = V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'planned', heartbeatAt: null, finishedAt: null, requestedAt: '2026-11-27T09:50:00Z' })] });
+  check(g, 'a planned run silent for 10 min is stalled: "the extension never picked it up"', stalled.coverage.run.shown === 'stalled' && /never picked it up/.test(stalled.coverage.run.words)
+    && /stalled before this GSTIN \(the extension never picked it up\)/.test(stalled.rows.find((r) => r.gstin === G.nolookup).cells['GST Registration Status']), JSON.stringify(stalled.coverage.run));
+  const fresh = V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'running', heartbeatAt: '2026-11-27T09:59:00Z', finishedAt: null })] });
+  check(g, 'a running run with a heartbeat a minute old is not stalled', fresh.coverage.run.shown === 'running' && /still running/.test(fresh.rows.find((r) => r.gstin === G.nolookup).cells['GST Registration Status']));
+  const runningStale = V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'running', heartbeatAt: '2026-11-27T09:40:00Z', finishedAt: null })] });
+  check(g, 'a running run whose heartbeat is 20 min old is stalled', runningStale.coverage.run.stalled && /stalled at looking_up/.test(runningStale.coverage.run.words), runningStale.coverage.run.words);
+  const refused = V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'refused', stopReason: 'needs browser extension v0.19.3 or later and this one is v0.19.2' })] });
+  check(g, 'a refused Pull: the reason on the row and the header', /did not start \(needs browser extension v0\.19\.3/.test(refused.rows.find((r) => r.gstin === G.nolookup).cells['GST Registration Status']) && refused.coverage.run.shown === 'refused');
+  const stopped = V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'stopped', stopReason: 'the first vendor GSTIN could not be looked up on any page', pageUrl: 'https://services.gst.gov.in/services/auth/searchtp', hasSnapshot: true })] });
+  check(g, 'a stopped run: its stop reason on the GSTINs it did not reach; the snapshot named', /stopped before this GSTIN \(the first vendor GSTIN could not be looked up on any page\)/.test(stopped.rows.find((r) => r.gstin === G.nolookup).cells['GST Registration Status'])
+    && /snapshot of the portal page/.test(stopped.coverage.run.words));
+
+  // The portal page did not show a field.
+  const noDate = V.assessVendors({ ...input, lookups: input.lookups.map((l) => (l.gstin === G.good ? { ...l, regDate: null, taxpayerType: null } : l)) });
+  const nd = noDate.rows.find((r) => r.gstin === G.good);
+  check(g, 'a field the portal page did not show: "Not retrieved — the portal page did not show this field (lookup of <date>)"',
+    nd.cells['Registration Date'] === 'Not retrieved — the portal page did not show this field (lookup of 20-Nov-2026)' && /^Not retrieved — the portal page did not show the taxpayer type/.test(nd.cells['Composition Scheme (Yes/No)'])
+    && noDate.coverage.regDate === 8 && noDate.coverage.taxpayerType === 8, JSON.stringify(nd.cells));
+
+  // 2A not pulled: the months named, and Pull named as the way to get them.
+  const one2A = V.assessVendors({ ...input, statements: input.statements.filter((x) => x.source === '2B' || x.period === '10/2025') });
+  const ol = one2A.rows.find((r) => r.gstin === G.nolookup);
+  check(g, 'GSTR-2A of 11 months not pulled: the filing cells say which and that Pull fetches it', /GSTR-2A not pulled for Apr 2025, May 2025, Jun 2025, Jul 2025 and 7 more\. Pull fetches it/.test(ol.cells['GSTR-3B Filing Status'])
+    && one2A.coverage.months2A.pulled.length === 1 && one2A.coverage.months2A.missing.length === 11 && one2A.notes.some((x) => /GSTR-2A not pulled for/.test(x)), ol.cells['GSTR-3B Filing Status']);
+
+  // Not in any source: the portal table holds nothing of the FY, every 2A pulled, the vendor in none.
+  const BOOKSONLY = V.withCheckChar('27AAACB5656B1Z');
+  const none = V.assessVendors({ ...input, books: [...input.books, { id: 'b9', gstin: BOOKSONLY, name: 'Books Only', period: '09/2025', number: 'B-9', docType: 'Invoice', date: '2025-09-01', tax: 900 }],
+    lookups: [...input.lookups, lookup(BOOKSONLY, { filings: [] })] });
+  check(g, 'nothing anywhere: "not in any source for this vendor"', /^Not retrieved — not in any source for this vendor/.test(none.rows.find((r) => r.gstin === BOOKSONLY).cells['GSTR-3B Filing Status']), none.rows.find((r) => r.gstin === BOOKSONLY).cells['GSTR-3B Filing Status']);
+
+  // The uploaded lookup sheet: its own source, a last-filed date never read as missing periods.
+  const up = V.assessVendors({ ...input, lookups: [...input.lookups, lookup(G.nolookup, { source: 'manual_upload', uploadFile: 'pbw_lookup.xlsx', filings: null, lastGstr3bFiled: '2026-11-18', lastGstr1Filed: null, regDate: null })] });
+  const u = up.rows.find((r) => r.gstin === G.nolookup);
+  check(g, 'manual_upload: Data Source "Uploaded sheet (<file>, <date>)", its findings dated so', /Uploaded sheet \(pbw_lookup\.xlsx, 20-Nov-2026\)/.test(u.cells['Data Source']) && u.lookupSource === 'upload' && /uploaded sheet/.test(u.cells['Date of Verification']), JSON.stringify(u.cells));
+  check(g, 'manual_upload: the last GSTR-3B date shown, never a non-filing finding', /^Last GSTR-3B filed 18-Nov-2026/.test(u.cells['GSTR-3B Filing Status']) && !u.findings.some((f) => /NON_FILING/.test(f.code)) && u.cells['Last Return Filing Date'] === '18-Nov-2026', JSON.stringify([u.cells['GSTR-3B Filing Status'], u.findings.map((f) => f.code)]));
+  check(g, 'manual_upload: a column the sheet left empty: "Not retrieved — not in the uploaded sheet (<file>)"', u.cells['Registration Date'] === 'Not retrieved — not in the uploaded sheet (pbw_lookup.xlsx)' && up.coverage.lookedUpUpload === 1, u.cells['Registration Date']);
+  check(g, 'manual_upload: the report\'s sources name the sheet', up.sources.includes('Uploaded vendor lookup sheet'));
+}
+
+// ── 5. The sheet reader and the lookup queue ───────────────────────────────
+{
+  const g = 'Lookup sheet';
+  const XLSX = createRequire(path.join(root, 'package.json'))('xlsx');
+  const V1 = V.withCheckChar('24AAACP5599F1Z');
+  const V2 = V.withCheckChar('27AAACR5055K1Z');
+  const aoa = [
+    ['PBW vendor lookups (typed from the portal)'],
+    [],
+    ['Sr', 'GSTIN / UIN', 'Legal Name of Business', 'Trade name', 'GSTIN Status', 'Date of Registration', 'Cancellation Date', 'Type of Taxpayer', 'Constitution of Business', 'Principal Place of Business', 'Last GSTR-1 filed', 'Last GSTR3B filed', 'E-Invoice'],
+    [1, V1.toLowerCase(), 'FICTIONAL BEARINGS LLP', 'FB', 'Active', '01/07/2017', '', 'Regular', 'LLP', 'Rajkot', '11/11/2026', '20-Nov-2026', 'Y'],
+    [2, V2, 'FICTIONAL STEEL', '', 'Cancelled', '2018-04-01', '31/03/2025', 'Composition', '', '', '', '', 'No'],
+    [3, V2, 'repeat', '', '', '', '', '', '', '', '', '', ''],
+    [4, V2.slice(0, 14) + (V2[14] === 'A' ? 'B' : 'A'), 'typo', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Lookups');
+  const p = V.parseVendorLookupSheet(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }));
+  const a = p.rows[0] || {};
+  check(g, 'header found under a title row; every column mapped by loose words', p.rows.length === 2 && p.columns.status === 'GSTIN Status' && p.columns.lastG3 === 'Last GSTR3B filed' && p.columns.gstin === 'GSTIN / UIN' && p.columns.regDate === 'Date of Registration', JSON.stringify(p.columns));
+  check(g, 'a row: GSTIN upper-cased, dates to ISO (dd/mm/yyyy, dd-Mon-yyyy), e-invoice Y → Yes', a.gstin === V1 && a.legal_name === 'FICTIONAL BEARINGS LLP' && a.reg_status === 'Active' && a.reg_date === '2017-07-01'
+    && a.last_gstr1_filed === '2026-11-11' && a.last_gstr3b_filed === '2026-11-20' && a.einvoice_status === 'Yes' && a.taxpayer_type === 'Regular' && a.address === 'Rajkot' && a.raw['Legal Name of Business'] === 'FICTIONAL BEARINGS LLP', JSON.stringify(a));
+  check(g, 'repeated GSTIN kept once, a bad check character left out', p.duplicates === 1 && p.invalid.length === 1 && p.rows[1].cancel_date === '2025-03-31' && p.rows[1].einvoice_status === 'No', JSON.stringify(p));
+  const csv = new TextEncoder().encode(`gstin,status,taxpayer type\n${V2},Active,Regular\n`);
+  const q = V.parseVendorLookupSheet(csv);
+  check(g, 'a CSV with GSTIN and two columns', q.rows.length === 1 && q.rows[0].reg_status === 'Active' && q.rows[0].taxpayer_type === 'Regular', JSON.stringify(q));
+  let threw = '';
+  try { V.parseVendorLookupSheet(new TextEncoder().encode('name,amount\nx,1\n')); } catch (e) { threw = e.message; }
+  check(g, 'no GSTIN column: the error names the columns wanted', /GSTIN/.test(threw) && /Registration date/.test(threw), threw);
+}
+{
+  const g = 'Lookup queue';
+  const now = Date.parse('2026-11-28T00:00:00Z');
+  const st = new Map([
+    ['A', { answeredAt: '2026-11-20T00:00:00Z', erroredAt: null }],                       // fresh
+    ['B', { answeredAt: '2026-09-01T00:00:00Z', erroredAt: null }],                       // stale
+    ['C', { answeredAt: '2026-11-20T00:00:00Z', erroredAt: '2026-11-27T00:00:00Z' }],     // errored after its answer
+    ['D', { answeredAt: null, erroredAt: '2026-11-27T00:00:00Z' }],                       // only errors
+    ['E', { answeredAt: '2026-11-21T00:00:00Z', erroredAt: '2026-11-01T00:00:00Z' }],     // an old error, answered since
+  ]);
+  const all = ['A', 'B', 'C', 'D', 'E', 'F'];                                              // F never looked up
+  const q = V.lookupQueue(all, st, now);
+  check(g, 'missing (never looked up, errored-only, errored after its answer) first, then stale; fresh left out', JSON.stringify(q.queue) === JSON.stringify(['F', 'D', 'C', 'B']) && q.missing === 3 && q.stale === 1 && !q.refresh, JSON.stringify(q));
+  const m = V.lookupQueue(all, st, now, 'missing');
+  check(g, 'Re-pull missing: only the missing, never the stale', JSON.stringify(m.queue) === JSON.stringify(['F', 'D', 'C']), JSON.stringify(m));
+  check(g, 'an error older than the answer is not missing', !V.isMissingLookup(st.get('E')) && V.isMissingLookup(st.get('C')) && V.isMissingLookup(undefined));
+  const r = V.lookupQueue(['A', 'E'], st, now);
+  check(g, 'nothing missing or stale: a refresh of all', r.refresh && r.queue.length === 2);
+  check(g, 'refusal: none answered, too old, new enough', /No GST Keeper browser extension/.test(V.lookupRefusal(null)) && /this one is v0\.19\.2/.test(V.lookupRefusal('0.19.2')) && V.lookupRefusal(V.GSTIN_SEARCH_VERSION) === null && V.GSTIN_SEARCH_VERSION === '0.19.3');
+}
+
+// ── 6. Layout ───────────────────────────────────────────────────────────────
 {
   const g = 'Layout';
   const t = V.vendorRiskTable(res, { client: input.client, fy: FY, today: TODAY });
@@ -242,6 +360,17 @@ const has = (g, code) => row(g)?.findings.some((f) => f.code === code);
   check(g, 'Excel: Vendors, Summary and the list sheets', ['Vendors', 'Immediate action', 'Obtain clarification', 'Hold before ITC', 'Recommendations'].every((x) => names.includes(x)) && names.some((x) => /summary/i.test(x)), names.join(', '));
   const pdf = await V.buildReportPdf(t);
   check(g, 'PDF builds', pdf.getNumberOfPages() >= 2, pdf.getNumberOfPages());
+  const cov = t.extraSheets.find((x) => x.name === 'Data coverage');
+  check(g, 'a Data coverage sheet: fields, months, runs', cov && cov.rows.some((r) => r[0] === 'With registration status' && r[1] === 9 && r[2] === 11) && cov.rows.some((r) => r[0] === 'GSTR-2A months pulled') && cov.rows.some((r) => /Lookup runs/.test(String(r[0]))), JSON.stringify(cov?.rows));
+  check(g, 'KPIs: registration retrieved, filing data, 2A / 2B months, the latest run', ['Registration retrieved', 'Filing data', 'GSTR-2A months', 'GSTR-2B months', 'Latest lookup run'].every((k) => t.kpis.some((x) => x.label === k)));
+  check(g, 'Excel carries the Data coverage sheet', names.includes('Data coverage'), names.join(', '));
+  const st = V.vendorRiskTable(V.assessVendors({ ...input, now: NOW, runs: [run({ status: 'planned', heartbeatAt: null, finishedAt: null, requestedAt: '2026-11-27T09:00:00Z' })] }), { client: input.client, fy: FY, today: TODAY });
+  check(g, 'a stalled run: a bad alert on the report, the header and the KPI say stalled', st.alerts.some((a) => a.tone === 'bad' && /stalled/.test(a.text)) && st.meta.some((m) => m.label === 'Latest lookup run' && /^stalled/.test(m.value))
+    && st.kpis.find((k) => k.label === 'Latest lookup run').tone === 'bad', JSON.stringify(st.alerts));
+  const stc = st.extraSheets.find((x) => x.name === 'Data coverage');
+  check(g, 'the run is listed on the Data coverage sheet with who and the outcome', stc.rows.some((r) => /: stalled$/.test(String(r[0])) && /by Gita/.test(String(r[3]))), JSON.stringify(stc.rows.slice(-2)));
+  const stPdf = await V.buildReportPdf(st);
+  check(g, 'PDF builds with the coverage sheet', stPdf.getNumberOfPages() >= 2);
   check(g, 'limitations name the IRP CAPTCHA', t.extraSheets.find((x) => x.name === 'Recommendations').rows.some((r) => /CAPTCHA/.test(String(r[1]))));
 }
 

@@ -4,7 +4,7 @@
 // (src/lib/reportExport). Reads only (src/lib/vendorRisk/load.ts); the engine
 // is src/lib/vendorRisk/engine.ts. Positions: docs/VENDOR_GSTIN_RISK.md.
 import { fyOfPeriod } from '@/lib/reply/periods';
-import { assessVendors, COLUMNS, dmy, rupees, type VendorRiskResult, type VendorRow } from '@/lib/vendorRisk/engine';
+import { assessVendors, COLUMNS, dmy, dmyTime, rupees, type VendorCoverage, type VendorRiskResult, type VendorRow } from '@/lib/vendorRisk/engine';
 import { loadVendorRiskInput } from '@/lib/vendorRisk/load';
 import { BAND_LABEL, BAND_ORDER, FINDINGS, LIMITATIONS, PRACTICAL, type RiskBand } from '@/lib/vendorRisk/rules';
 import type { ReportSheet, ReportTable, RowTone } from './allClientsReports';
@@ -50,6 +50,45 @@ const sheet = (name: string, title: string, headers: string[], rows: (string | n
   columnWidths, notes,
 });
 
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const months = (ps: string[]) => (ps.length ? ps.map((p) => `${MON[+p.slice(0, 2) - 1]} ${p.slice(3)}`).join(', ') : '');
+const RUN_BAD = ['stalled', 'refused', 'failed', 'stopped'];
+
+/** The Data coverage sheet: what each column could be filled from, the months pulled, the lookup runs. */
+export function coverageSheet(c: VendorCoverage, fy: string): ReportSheet {
+  const n = c.vendors;
+  const rows: (string | number)[][] = [
+    [`Vendors of FY ${fy}`, '', '', ''],
+    ['With registration status', c.regStatus, n, 'Portal Search Taxpayer or the uploaded lookup sheet (a GSTIN not found counts: the answer is known)'],
+    ['With registration date', c.regDate, n, ''],
+    ['With taxpayer type', c.taxpayerType, n, 'Composition is read from it'],
+    ['With filing data (portal or GSTR-2A)', c.filing, n, `Portal filing table or sheet: ${c.filingPortal}; GSTR-2A / 2B filing flags: ${c.filing2A}`],
+    ['With e-invoice evidence', c.einvoice, n, 'The portal flag or turnover slab, or an IRN on a document'],
+    ['Looked up on the portal', c.lookedUpPortal, n, ''],
+    ['From the uploaded lookup sheet', c.lookedUpUpload, n, ''],
+    ['Last lookup failed, no answer since', c.lookupFailed, n, 'Re-pull missing asks these first; each row names the failure'],
+    ['No lookup at all', c.notLookedUp, n, 'Each row says why in its cells ("Not retrieved — …")'],
+    [`Statements of FY ${fy}`, '', '', ''],
+    ['GSTR-2A months pulled', c.months2A.pulled.length, c.months2A.due.length, c.months2A.missing.length ? `Not pulled: ${months(c.months2A.missing)}. Pull fetches them first.` : 'Every month due is pulled'],
+    ['GSTR-2B months pulled', c.months2B.pulled.length, c.months2B.due.length, c.months2B.missing.length ? `Not pulled: ${months(c.months2B.missing)}. Pull fetches them first.` : 'Every month due is pulled'],
+    ['Lookup runs (newest first)', '', '', ''],
+  ];
+  if (!c.recentRuns.length) rows.push(['No lookup run recorded', '', '', 'Pull records every run (vendor_lookup_runs), even one that did not start']);
+  for (const r of c.recentRuns) rows.push([`${dmyTime(r.run.requestedAt)}: ${r.shown}`, r.run.found + r.run.notFound, r.run.planned, r.words]);
+  const kinds = rows.map((r) => (r[1] === '' && r[2] === '' && r[3] === '' ? 'section' as const : 'data' as const));
+  const tones: (RowTone | null)[] = rows.map((r) => {
+    if (typeof r[1] !== 'number' || typeof r[2] !== 'number') return null;
+    if (/: (stalled|refused|failed|stopped)$/.test(String(r[0]))) return 'bad';
+    if (/failed|No lookup/.test(String(r[0]))) return r[1] > 0 ? 'warn' : 'good';
+    return r[2] > 0 && r[1] < r[2] ? 'warn' : 'good';
+  });
+  return {
+    name: 'Data coverage', title: 'Data coverage', headers: ['Item', 'Covered', 'Of', 'Notes'], rows, columnWidths: [44, 10, 8, 100],
+    rowKinds: kinds, rowTones: tones,
+    notes: ['A cell the report could not fill reads "Not retrieved — <reason>" (the lookup not run, failed, the portal page not showing the field, a statement not pulled); "Verification required" is kept for a legal judgement the data cannot settle.'],
+  };
+}
+
 export function vendorRiskTable(res: VendorRiskResult, info: { client: { name: string; gstin: string | null }; fy: string; today: string }): ReportTable {
   const { rows } = res;
   const table = rows.map((r) => COLUMNS.map((c) => r.cells[c]));
@@ -64,6 +103,7 @@ export function vendorRiskTable(res: VendorRiskResult, info: { client: { name: s
       ['Listed only where a provision supports withholding the ITC: hold pending verification, then release once the point is cleared.',
         'Withholding the tax portion of a payment is a commercial step; the 180-day payment condition (s.16(2), second proviso) still runs.'],
       'Nothing to hold.'),
+    coverageSheet(res.coverage, info.fy),
     sheet('Recommendations', 'Practical recommendations and limitations', ['Kind', 'Point'],
       [...PRACTICAL.map((p) => ['Recommendation', p]), ...LIMITATIONS.map((l) => ['Limitation', l]), ...res.notes.map((n) => ['This report', n])],
       [18, 120], [], 'None.'),
@@ -82,6 +122,16 @@ export function vendorRiskTable(res: VendorRiskResult, info: { client: { name: s
   });
 
   const lookedUp = rows.filter((r) => r.lookedUp).length;
+  const cov = res.coverage;
+  const run = cov.run;
+  const alerts: { tone: RowTone; text: string }[] = [];
+  if (run && RUN_BAD.includes(run.shown)) alerts.push({ tone: 'bad', text: `Latest vendor lookup ${run.shown}. ${run.words}` });
+  else if (run) alerts.push({ tone: run.shown === 'done' ? 'good' : 'info', text: `Latest vendor lookup: ${run.words}` });
+  if (cov.notLookedUp) {
+    alerts.push({ tone: 'warn', text: `${cov.notLookedUp} of ${cov.vendors} vendor GSTINs have no lookup${cov.lookupFailed ? ` (${cov.lookupFailed} whose last lookup failed)` : ''}: their cells say "Not retrieved" and why. Re-pull missing asks only those; when the portal will not answer, upload a vendor lookup sheet.` });
+  }
+  if (cov.months2A.missing.length) alerts.push({ tone: 'warn', text: `GSTR-2A not pulled for ${months(cov.months2A.missing)}: supplier filing flags and cancellation dates come from it. Pull fetches it first.` });
+  if (cov.months2B.missing.length) alerts.push({ tone: 'warn', text: `GSTR-2B not pulled for ${months(cov.months2B.missing)}. Pull fetches it first.` });
   return {
     title: 'Vendor GSTIN Risk Report',
     subtitle: `Client: ${info.client.name} | GSTIN: ${info.client.gstin || '—'} | FY ${info.fy} | As on: ${dmy(info.today)}`,
@@ -90,13 +140,20 @@ export function vendorRiskTable(res: VendorRiskResult, info: { client: { name: s
       { label: 'GSTIN', value: info.client.gstin || '—' },
       { label: 'Financial year', value: `FY ${info.fy}` },
       { label: 'As on', value: dmy(info.today) },
-      { label: 'Verified on portal', value: `${lookedUp} of ${rows.length} GSTINs` },
+      { label: 'Verified on portal', value: `${cov.lookedUpPortal} of ${rows.length} GSTINs${cov.lookedUpUpload ? ` (+${cov.lookedUpUpload} by sheet)` : ''}` },
+      { label: 'Latest lookup run', value: run ? `${run.shown}, ${dmyTime(run.run.requestedAt)}` : 'none recorded' },
     ],
     kpis: [
       { label: 'Vendor GSTINs', value: rows.length },
       ...BAND_ORDER.map((b) => ({ label: BAND_LABEL[b], value: res.bands[b], tone: TONE[b] })),
       { label: 'ITC at Critical / High', value: rupees(rows.filter((r) => r.band === 'Critical' || r.band === 'High').reduce((s, r) => s + r.itc, 0)), tone: 'bad' as RowTone },
+      { label: 'Registration retrieved', value: `${cov.regStatus} of ${cov.vendors}`, tone: cov.regStatus < cov.vendors ? 'warn' as RowTone : 'good' as RowTone, note: `${lookedUp} with a lookup` },
+      { label: 'Filing data', value: `${cov.filing} of ${cov.vendors}`, tone: cov.filing < cov.vendors ? 'warn' as RowTone : 'good' as RowTone, note: 'portal or GSTR-2A' },
+      { label: 'GSTR-2A months', value: `${cov.months2A.pulled.length} of ${cov.months2A.due.length}`, tone: cov.months2A.missing.length ? 'warn' as RowTone : 'good' as RowTone },
+      { label: 'GSTR-2B months', value: `${cov.months2B.pulled.length} of ${cov.months2B.due.length}`, tone: cov.months2B.missing.length ? 'warn' as RowTone : 'good' as RowTone },
+      { label: 'Latest lookup run', value: run ? run.shown : 'none', tone: run && RUN_BAD.includes(run.shown) ? 'bad' as RowTone : run?.shown === 'done' ? 'good' as RowTone : 'muted' as RowTone, note: run ? dmyTime(run.run.requestedAt) : 'click Pull' },
     ],
+    alerts,
     headers: [...COLUMNS],
     rows: table,
     rowTones: rows.map((r) => TONE[r.band]),
@@ -139,7 +196,8 @@ export const buildVendorRiskReport = async (clientId: string, month: string): Pr
   const input = await loadVendorRiskInput(clientId, fy);
   const res = assessVendors(input);
   if (!res.rows.length) {
-    throw new Error(`No vendor GSTIN found for ${input.client.name} in FY ${fy}: pull the year's GSTR-2A / 2B, import 2B or upload the vendor master first.`);
+    const last = res.coverage.run ? ` Latest lookup run: ${res.coverage.run.words}` : '';
+    throw new Error(`No vendor GSTIN found for ${input.client.name} in FY ${fy}: pull the year's GSTR-2A / 2B (Pull fetches the months missing), import 2B or upload the vendor master first.${last}`);
   }
   return vendorRiskTable(res, { client: input.client, fy, today: input.today });
 };

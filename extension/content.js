@@ -544,6 +544,9 @@
   // the dashboard for the next period). Only once every period is done does
   // this fall through to the next client (log out first), or finish.
   async function advance(job) {
+    // 0.19.3: a vendor GSTIN lookup reaches here only when its login (or an
+    // error outside its own handler) ended it: its run says so.
+    if (job && job.mode === 'gstin_search' && job.vendorRunId) await gsRunEnd(job, 'stopped', 'the portal login did not complete (' + (bannerWords() || 'no answer from the portal') + ')');
     // 0.8.6: a push reaches here only when its login ended it (a refused
     // password, a CAPTCHA the portal kept rejecting, an unexpected page): the
     // bounce and error paths above report themselves. Its page still waits.
@@ -1026,6 +1029,8 @@
         banner('Logged in: looking up vendor GSTINs on Search Taxpayer…' + progress);
         job.step = 'gstin_search';
         await setJob(job);
+        // 0.19.3: the run ledger (vendor_lookup_runs): past the login.
+        await gsRun(job, { status: 'running', stage: 'search_page' });
         location.href = 'https://services.gst.gov.in/services/auth/fowelcome';
       } else if (job.mode === 'login') {
         // Simple login from the Clients → Credentials "Login" button: log in and
@@ -7853,6 +7858,50 @@
     ];
   }
   function gsWelcome() { return 'https://services.gst.gov.in/services/auth/fowelcome'; }
+  // 0.19.3: the public Search Taxpayer page, the fallback for a GSTIN the
+  // logged-in page did not answer (it asks a CAPTCHA: a person's, or the firm's
+  // own CAPTCHA extension's; GST Keeper never fills it).
+  function gsPublicPage() { return 'https://services.gst.gov.in/services/searchtp'; }
+  function gsIsPublic(href) { return /^https:\/\/services\.gst\.gov\.in\/services\/searchtp\b/i.test(String(href || '')); }
+
+  // ── 0.19.3: the run ledger (vendor_lookup_runs) ──
+  // The app writes the run when Pull is clicked and sends its id (job.vendorRunId);
+  // the extension updates it as it goes: status, stage, counts and a heartbeat at
+  // least once a GSTIN (and every ~30 s of a wait), and at the end the outcome,
+  // the stop reason and, when a page could not be read, the page's address and a
+  // snapshot of it. Best effort: the ledger is a record, never a reason to stop.
+  async function gsRun(job, patch) {
+    if (!job || !job.vendorRunId) return;
+    try { await GSTKdb.updateVendorLookupRun(job.vendorRunId, { ...patch, heartbeat_at: new Date().toISOString() }); } catch (e) { /* a record only */ }
+  }
+  async function gsRunEnd(job, status, reason, extra) {
+    if (!job || !job.vendorRunId || job.gsRunEnded) return;
+    job.gsRunEnded = true;
+    const gs = job.gs || {};
+    await gsRun(job, {
+      status, stop_reason: reason || null, finished_at: new Date().toISOString(),
+      found: gs.ok || 0, not_found: gs.not_found || 0, failed: gs.error || 0, ...(extra || {}),
+    });
+  }
+  // What the page held when it could not be read: its address, its text
+  // (20 000 characters at most) and the HTML of the search form and the result
+  // area (20 000 at most), so a selector can be fixed from the run row alone.
+  function gsSnapshot() {
+    const text = gsBodyText().slice(0, 20000);
+    let html = '';
+    try {
+      const f = gsForm();
+      const areas = [f && f.input && f.input.closest ? f.input.closest('form') : null, $('#result'), $('form'), $('main'), $('.container')].filter(Boolean);
+      const uniq = areas.filter((x, i) => areas.indexOf(x) === i && !areas.slice(0, i).some((y) => y.contains && y.contains(x)));
+      html = uniq.map((e) => String(e.outerHTML || '')).filter(Boolean).join('\n').slice(0, 20000);
+      if (!html && document.body) html = String(document.body.outerHTML || '').slice(0, 20000);
+    } catch (e) { /* the text alone */ }
+    return { url: location.href, text, html };
+  }
+  function gsSnapshotText(snap) {
+    return 'PAGE TEXT\n' + snap.text + (snap.html ? '\n\nHTML (search form / result area)\n' + snap.html : '');
+  }
+  function gsSnapPatch(snap) { return { page_url: snap.url, page_snapshot: gsSnapshotText(snap) }; }
   function gsLoginPage(href) { return /services\/login|services\/error|accessdenied|sessionexpired/i.test(String(href || '')); }
   // Polls test() every step ms for up to ms. Time is counted by the polls,
   // not the clock, so a wait is as long as its sleeps.
@@ -8260,6 +8309,8 @@
       looked_up_by: actor, via_client_id: (cur && cur.clientId) || null,
       filings: filings || null, payload: payload || null,
     };
+    // 0.19.3: the run it belongs to (only when the app recorded one: an older database has no run_id).
+    if (job.vendorRunId) row.run_id = job.vendorRunId;
     if (tp) {
       const nba = Array.isArray(tp.nba) ? tp.nba.map(gsStr).filter(Boolean) : (gsStr(tp.nba) ? [gsStr(tp.nba)] : null);
       const slab = gsStr(tp.aggreTurnOver != null ? tp.aggreTurnOver : tp.aggreTurnover);
@@ -8306,7 +8357,7 @@
   async function gsUiLookup(job, gs, gstin, fys, where) {
     const C = gsConf();
     const form = await gsUntil(() => gsForm(), 10000);
-    if (!form) return { kind: 'retry', reason: 'the Search Taxpayer form did not show' };
+    if (!form) return { kind: 'retry', reason: 'the Search Taxpayer form did not show', page: location.href, snap: gsSnapshot() };
     // A "no records" left on the page by the last GSTIN would read as this
     // one's answer: start from a freshly loaded page instead (once).
     const pre = gsMessages();
@@ -8341,6 +8392,8 @@
         pressedWith = capVal;
       }
       lastCap = capVal;
+      // 0.19.3: a heartbeat every ~30 s of a long wait (a CAPTCHA, a slow page), so the run is not taken for stalled.
+      if (n > 0 && n % 100 === 0) await gsRun(job, { status: 'running', stage: needCaptcha ? 'captcha_wait' : 'looking_up' });
       if (n > 0) {
         const caps = gsFromCaptures(gsCaptured(since), gstin);
         if (caps.refused.length) refusedSeen = true;
@@ -8367,7 +8420,7 @@
             const why = caps.refused.length ? gsRefusedWords(caps.refused) + '; the session was still open'
               : msgs.length ? 'the page said "' + msgs[msgs.length - 1].slice(0, 160) + '"'
                 : 'no result within ' + Math.round(C.lookupMs / 1000) + ' s';
-            return { kind: 'retry', reason: why, caps, msgs, page: location.href, snapshot: gsBodyText().slice(0, 3000) };
+            return { kind: 'retry', reason: why, caps, msgs, page: location.href, snapshot: gsBodyText().slice(0, 3000), snap: gsSnapshot() };
           }
         }
       }
@@ -8485,7 +8538,28 @@
     return 'moving';
   }
 
+  // 0.19.3: every way the handler can end leaves the run row an outcome; an
+  // error thrown anywhere in it marks the run failed with the message, the
+  // stack and a snapshot of the page, and ends the job (never a silent hang).
   async function handleGstinSearch(job, cur, progress) {
+    try {
+      await gsHandle(job, cur, progress);
+    } catch (e) {
+      const msg = (e && e.message) || String(e || 'unknown error');
+      if (msg === 'cancelled') { await gsRunEnd(job, 'stopped', 'cancelled in the portal tab'); throw e; }
+      let snap = null;
+      try { snap = gsSnapshot(); } catch (_) { snap = null; }
+      await gsRunEnd(job, 'failed', 'GST Keeper error in the vendor lookup: ' + msg.slice(0, 300), {
+        stage: 'error', ...(snap ? gsSnapPatch(snap) : {}),
+        detail: { error: msg.slice(0, 1000), stack: String((e && e.stack) || '').slice(0, 4000), gstin_index: job.gs ? job.gs.idx : null, page: location.href },
+      });
+      banner('Vendor GSTIN lookup failed: ' + msg.slice(0, 200) + '. The run is recorded in GST Keeper; Pull again to go on. You can close this tab.', '#dc2626');
+      try { await GSTKdb.logClientSync(cur.clientId, 'gstin_search', 'failed', 'Vendor GSTIN lookup error: ' + msg.slice(0, 300) + ' [ext ' + EXT_VERSION + ']'); } catch (_) { /* diagnostic only */ }
+      await clearJob();
+    }
+  }
+
+  async function gsHandle(job, cur, progress) {
     const C = gsConf();
     const gs = job.gs || (job.gs = { idx: 0, ok: 0, not_found: 0, error: 0, errorsInRow: 0, saveFails: 0, relogins: 0, stopped: null });
     for (const k of ['idx', 'ok', 'not_found', 'error', 'errorsInRow', 'saveFails', 'relogins']) if (typeof gs[k] !== 'number') gs[k] = 0;
@@ -8493,13 +8567,19 @@
       .map((g) => String(g || '').trim().toUpperCase()).filter((g) => C.gstinRe.test(g));
     const gstins = [...new Set(list)].slice(0, C.maxGstins);
     const counts = () => gs.ok + ' found, ' + gs.not_found + ' not found, ' + gs.error + ' failed';
-    const finish = async (why, color) => {
+    const runCounts = () => ({ found: gs.ok, not_found: gs.not_found, failed: gs.error });
+    // `snap`: the page that could not be read, kept on the run row.
+    const finish = async (why, color, snap) => {
       const left = Math.max(0, gstins.length - gs.idx);
       gs.stopped = why || null;
       banner('Vendor GSTIN lookup ' + (why ? 'stopped: ' + why + '. ' : 'done: ') + counts()
         + (left && why ? '; ' + left + ' not looked up (Pull again for them)' : '')
         + '. You can close this tab.', color || (why ? '#d97706' : '#16a34a'));
       try { await GSTKdb.logClientSync(cur.clientId, 'gstin_search', why ? 'failed' : 'success', 'Vendor GSTIN lookup: ' + counts() + (why ? '; stopped: ' + why : '') + ' [ext ' + EXT_VERSION + ']'); } catch (e) { /* diagnostic only */ }
+      await gsRunEnd(job, why ? 'stopped' : 'done', why || null, {
+        stage: why ? 'stopped' : 'done', ...(snap ? gsSnapPatch(snap) : {}),
+        detail: { left, pages: gs.pagesSeen || [], served: gs.served || {}, replay_off: gs.fastOff || null },
+      });
       await clearJob();
     };
     // A session that really ended: the client's usual login again (twice a run
@@ -8513,6 +8593,7 @@
       job.retries = 0;
       delete job.captchaWaitSince;
       await setJob(job);
+      await gsRun(job, { status: 'running', stage: 'login', ...runCounts() });
       banner('The portal session ended (' + why + '). Logging in again (' + gs.relogins + ' of ' + C.maxRelogins + '); the lookups go on from vendor GSTIN '
         + (gs.idx + 1) + ' of ' + gstins.length + '…' + progress, '#f59e0b');
       location.href = 'https://services.gst.gov.in/services/login';
@@ -8535,22 +8616,40 @@
     if (gs.verify) {
       if (!/\/auth\/fowelcome/i.test(location.href)) { await setJob(job); location.href = gsWelcome(); return; }
       banner('Checking that the portal session is still logged in…' + progress);
+      await gsRun(job, { status: 'running', stage: 'session_check', ...runCounts() });
       const st = await gsUntil(() => (gsSessionState() !== 'unknown' ? gsSessionState() : null), C.sessionCheckMs);
       if (st === 'out' || gsLoginPage(location.href)) { await relogin('the portal no longer shows the logged-in user'); return; }
       delete gs.verify;
       await setJob(job);
     }
+    // 0.19.3: this page serves the GSTIN being retried on the public page (the logged-in one failed it).
+    const fallbackHere = !!(gs.cur && gs.cur.publicTried && gsIsPublic(location.href));
     // The Search by GSTIN/UIN page.
     const onSearch = /searchtp/i.test(location.href) || (gs.pageOk && location.href === gs.pageOk) || (gs.pagesTried || []).includes(location.href);
+    await gsRun(job, { status: 'running', stage: 'search_page', ...runCounts() });
     let form = await gsUntil(() => gsForm(), onSearch ? C.pageMs : 1500);
     if (!form) {
       if (gsSessionState() === 'out') { await relogin('the portal shows its login form'); return; }
+      if (fallbackHere) {
+        // The public page showed no form: that GSTIN is failed there; back to the logged-in page for its last try.
+        gs.cur.publicFail = 'the public Search Taxpayer page showed no search form';
+        gs.cur.publicSnap = gsSnapshot();
+        await gsRun(job, { status: 'running', stage: 'search_page', ...runCounts(), ...gsSnapPatch(gs.cur.publicSnap) });
+        await setJob(job);
+        location.href = gs.pageOk || gsWelcome();
+        return;
+      }
       const opened = await gsOpenSearchPage(job, gs);
       if (opened === 'moving') return;
       form = opened === 'here' ? gsForm() : null;
-      if (!form) { await finish('could not open the portal\'s Search Taxpayer page (tried ' + ((gs.pagesTried || []).map(gsShortUrl).join(', ') || 'none') + ')', '#dc2626'); return; }
+      if (!form) {
+        await finish('could not open the portal\'s Search Taxpayer page (tried ' + ((gs.pagesTried || []).map(gsShortUrl).join(', ') || 'none') + ')', '#dc2626', gsSnapshot());
+        return;
+      }
     }
-    gs.pageOk = location.href;
+    if (!fallbackHere) gs.pageOk = location.href;
+    gs.pagesSeen = gs.pagesSeen || [];
+    if (!gs.pagesSeen.includes(gsShortUrl(location.href))) gs.pagesSeen.push(gsShortUrl(location.href));
     gs.pagesTried = [];
     const fys = gsFys(job);
 
@@ -8559,14 +8658,19 @@
       if (!gs.cur || gs.cur.gstin !== gstin) gs.cur = { gstin, tries: 0, loads: 0, cleaned: false, paced: false };
       gs.cur.loads++;
       const where = (gs.idx + 1) + ' of ' + gstins.length;
-      banner('Looking up vendor GSTIN ' + where + ' (' + gstin + ') on Search Taxpayer: ' + counts() + '…' + progress);
+      const onPublic = gsIsPublic(location.href);
+      banner('Looking up vendor GSTIN ' + where + ' (' + gstin + ') on ' + (onPublic ? 'the public' : '') + ' Search Taxpayer: ' + counts() + '…' + progress);
+      await gsRun(job, { status: 'running', stage: 'looking_up', ...runCounts() });
       if (gs.idx > 0 && !gs.cur.paced) { gs.cur.paced = true; await sleep(C.paceMs + Math.floor(Math.random() * C.paceJitterMs)); }
       await setJob(job);
       let res = null;
       let replayOff = null;
       if (gs.cur.loads > C.maxLoadsPerGstin) {
-        res = { kind: 'error', reason: 'the page was loaded ' + (gs.cur.loads - 1) + ' times for this GSTIN without an answer' + (gs.cur.lastReason ? ' (last: ' + gs.cur.lastReason + ')' : '') };
-      } else if (gs.fast && !gs.fastOff) {
+        res = { kind: 'error', reason: 'the page was loaded ' + (gs.cur.loads - 1) + ' times for this GSTIN without an answer' + (gs.cur.lastReason ? ' (last: ' + gs.cur.lastReason + ')' : ''), page: location.href, snap: gsSnapshot() };
+      } else if (gs.cur.publicFail && !onPublic) {
+        // Back from a public page that showed no form: the logged-in page's last try is already spent.
+        res = { kind: 'error', reason: gs.cur.firstTry ? gs.cur.firstTry.reason : (gs.cur.lastReason || 'the lookup failed'), page: location.href, snap: gs.cur.publicSnap || gsSnapshot() };
+      } else if (gs.fast && !gs.fastOff && !onPublic) {
         const f = await gsFastLookup(gs.fast, gstin);
         if (f.ok) res = f.kind === 'ok' ? { kind: 'ok', flow: 'replay', tp: f.tp, filingsJson: f.filings, tried: f.tried, page: location.href } : { kind: 'not_found', flow: 'replay', message: f.message, tried: f.tried };
         else { gs.fastOff = f.reason; replayOff = { reason: f.reason, tried: f.tried }; }
@@ -8585,38 +8689,83 @@
           return;
         }
       }
+      // 0.19.3: the logged-in page failed this GSTIN after its retry: the public
+      // page next, once a GSTIN (never for a CAPTCHA left untyped: the public page asks one too).
+      if ((res.kind === 'retry' || res.kind === 'error') && !onPublic && !gs.cur.publicTried) {
+        const snap = res.snap || gsSnapshot();
+        gs.cur.publicTried = true;
+        gs.cur.firstTry = { page: gsShortUrl(location.href), reason: res.reason || 'the lookup failed', snapshot: (res.snapshot || snap.text).slice(0, 3000) };
+        gs.cur.tries = 0;
+        gs.cur.loads = 0;
+        gs.cur.cleaned = true;
+        await gsRun(job, { status: 'running', stage: 'public_page', ...runCounts(), ...gsSnapPatch(snap) });
+        await setJob(job);
+        banner('Vendor GSTIN ' + where + ' (' + gstin + '): the logged-in Search Taxpayer page did not answer (' + res.reason + '). Trying the public Search Taxpayer page; type its CAPTCHA if it asks (GST Keeper never fills it)…' + progress, '#f59e0b');
+        location.href = gsPublicPage();
+        return;
+      }
       if (replayOff) res.replayOff = replayOff;
+      const servedBy = res.flow === 'replay' ? 'logged_in_replay' : onPublic ? 'public' : 'logged_in';
+      const firstTry = gs.cur.firstTry || undefined;
       let row;
-      if (res.kind === 'ok') row = gsOkRow(job, cur, gstin, res);
-      else if (res.kind === 'not_found') {
+      if (res.kind === 'ok') {
+        row = gsOkRow(job, cur, gstin, res);
+        row.payload.served_by = servedBy;
+        if (firstTry) row.payload.first_try = firstTry;
+      } else if (res.kind === 'not_found') {
         row = gsRow(job, cur, gstin, 'not_found', res.message || 'no such GSTIN', null, null, {
-          flow: res.flow || 'page', page: res.page || location.href, messages: res.msgs, replay: res.tried, replayOff: res.replayOff,
+          flow: res.flow || 'page', page: res.page || location.href, served_by: servedBy, first_try: firstTry, messages: res.msgs, replay: res.tried, replayOff: res.replayOff,
           json: res.caps && res.caps.notFound ? { url: gsShortUrl(res.caps.notFound.cap.url), status: res.caps.notFound.cap.status, body: res.caps.notFound.cap.json } : undefined,
         });
       } else {
-        const reason = res.reason || 'the lookup failed';
+        let reason = res.reason || 'the lookup failed';
+        if (firstTry) reason = 'logged-in page ' + firstTry.page + ': ' + firstTry.reason + '; ' + (gs.cur.publicFail ? gs.cur.publicFail : 'public page ' + gsShortUrl(location.href) + ': ' + reason);
         row = gsRow(job, cur, gstin, 'error', reason, null, null, {
-          flow: 'page', page: res.page || location.href, kind: res.kind, tries: gs.cur.tries + 1, messages: res.msgs,
+          flow: 'page', page: res.page || location.href, served_by: servedBy, first_try: firstTry, kind: res.kind, tries: gs.cur.tries + 1, messages: res.msgs,
           refused: res.caps ? res.caps.refused : undefined, seen: res.caps ? res.caps.seen : undefined, replayOff: res.replayOff,
           snapshot: res.snapshot || gsBodyText().slice(0, 3000),
         });
       }
-      if (res.kind === 'ok' && res.flow === 'page' && !gs.fast && !gs.fastOff) gs.fast = gsFastFrom(res, gstin);
+      if (res.kind === 'ok' && res.flow === 'page' && !onPublic && !gs.fast && !gs.fastOff) gs.fast = gsFastFrom(res, gstin);
       const saved = await save(row);
+      const curWas = gs.cur;
+      const idxWas = gs.idx;
       if (row.status === 'error') { gs.error++; gs.errorsInRow++; gs.lastError = row.error; }
       else { gs[row.status]++; gs.errorsInRow = 0; }
+      gs.served = gs.served || {};
+      if (row.status !== 'error') gs.served[servedBy] = (gs.served[servedBy] || 0) + 1;
       gs.idx++;
       gs.cur = null;
       gs.results = (gs.results || []).concat([{ gstin, status: row.status }]).slice(-C.maxGstins);
       await setJob(job);
+      const snap = row.status === 'error' ? (res.snap || gsSnapshot()) : null;
+      await gsRun(job, { status: 'running', stage: 'looking_up', ...runCounts(), ...(snap ? gsSnapPatch(snap) : {}) });
       if (!saved && gs.saveFails >= 2) { await finish('GST Keeper did not take the lookups (' + gs.lastSaveError + ')', '#dc2626'); return; }
-      if (gs.errorsInRow >= C.maxFailsInRow) { await finish(C.maxFailsInRow + ' lookups failed in a row (last: ' + (row.error || 'error') + ')', '#dc2626'); return; }
+      // 0.19.3: the first GSTIN failed on every page there is (the logged-in
+      // page and the public one): stop now with the pages named and the
+      // snapshot kept, rather than spend 45 s a page on each of the others.
+      const everyPage = row.status === 'error' && res.kind !== 'captcha_timeout' && (onPublic || curWas.publicTried);
+      if (everyPage && idxWas === 0 && gstins.length > 1) {
+        const pages = [firstTry ? firstTry.page : null, curWas.publicFail ? gsShortUrl(gsPublicPage()) + ' (no search form)' : gsShortUrl(location.href)].filter((x, i, a) => x && a.indexOf(x) === i);
+        await finish('the first vendor GSTIN (' + gstin + ') could not be looked up on any page (' + pages.join(', ') + '): ' + row.error
+          + '. Stopped early so the other ' + (gstins.length - 1) + ' are not tried at ' + Math.round(C.lookupMs / 1000) + ' s a page; the page snapshot is on the run', '#dc2626', snap);
+        return;
+      }
+      if (gs.errorsInRow >= C.maxFailsInRow) { await finish(C.maxFailsInRow + ' lookups failed in a row (last: ' + (row.error || 'error') + ')', '#dc2626', snap); return; }
       // A failure (not a CAPTCHA left untyped) with no sign of the session on
       // this page: look at fowelcome before going on; never stop for it.
       if (row.status === 'error' && res.kind !== 'captcha_timeout' && gs.idx < gstins.length) {
         const st = gsSessionState();
         if (st === 'out') { await relogin('the portal shows its login form'); return; }
         if (st === 'unknown') { gs.verify = true; await setJob(job); location.href = gsWelcome(); return; }
+      }
+      // 0.19.3: after a GSTIN the public page served (or failed) in place of the
+      // logged-in page: back to the logged-in page for the next, unless the public
+      // page has served the last two the logged-in page failed (then it stays).
+      if (onPublic && curWas.publicTried && gs.idx < gstins.length) {
+        gs.publicWins = row.status === 'error' ? 0 : (gs.publicWins || 0) + 1;
+        if (gs.publicWins >= 2) { gs.pageOk = location.href; await setJob(job); }
+        else if (gs.pageOk && gs.pageOk !== location.href) { await setJob(job); location.href = gs.pageOk; return; }
       }
       // The page itself may have moved on (a result page): back to the search form.
       if (gs.idx < gstins.length && !(await gsUntil(() => gsForm(), 5000))) {

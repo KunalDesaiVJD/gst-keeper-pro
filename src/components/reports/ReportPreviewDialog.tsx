@@ -13,10 +13,10 @@
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { FileSpreadsheet, FileText, Loader2, AlertCircle, Upload } from 'lucide-react';
+import { FileSpreadsheet, FileText, Loader2, AlertCircle, Upload, CloudDownload } from 'lucide-react';
 import { WS_BTN } from '@/components/workspace/theme';
 import type { ReportTable } from '@/utils/allClientsReports';
-import type { ReportDefinition } from '@/lib/reportRegistry';
+import type { ReportDefinition, ReportUpload } from '@/lib/reportRegistry';
 import { LedgerRegisterView } from './views/LedgerRegisterView';
 import { FiledReturnSummaryView } from './views/FiledReturnSummaryView';
 import { VarianceComparisonView } from './views/VarianceComparisonView';
@@ -42,27 +42,34 @@ export interface ReportPreviewDialogProps {
   table: ReportTable | null;
   onExport: (format: 'xlsx' | 'pdf') => void;
   exportBusy: 'xlsx' | 'pdf' | null;
-  /** A report that reads an uploaded file (report.upload): save the file picked; the page builds the preview again. */
-  onUpload?: (file: File) => void;
+  /** A report that reads an uploaded file (report.upload / uploads): save the file picked; the page builds the preview again. */
+  onUpload?: (file: File, upload: ReportUpload) => void;
   uploadBusy?: boolean;
+  /** A report whose Pull has further actions (report.pull.actions, e.g. "Re-pull missing"): start one. */
+  onPull?: (action: string) => void;
+  pullBusy?: boolean;
+  /** A message about this report's last Pull that stays until the next one (e.g. the extension too old for a part of it). */
+  notice?: string | null;
 }
 
+/** Every upload the report offers: `upload`, then `uploads`. */
+const uploadsOf = (report: ReportDefinition): ReportUpload[] => [...(report.upload ? [report.upload] : []), ...(report.uploads ?? [])];
+
 /** The upload button of a report that reads a file the portal gives only as a download (report.upload). */
-const UploadButton: React.FC<{ report: ReportDefinition; onUpload: (file: File) => void; busy: boolean }> = ({ report, onUpload, busy }) => {
+const UploadButton: React.FC<{ upload: ReportUpload; onUpload: (file: File, upload: ReportUpload) => void; busy: boolean }> = ({ upload, onUpload, busy }) => {
   const input = React.useRef<HTMLInputElement>(null);
-  if (!report.upload) return null;
   return (
     <>
       <input
         ref={input}
         type="file"
-        accept={report.upload.accept}
+        accept={upload.accept}
         className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(f); }}
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(f, upload); }}
       />
-      <Button variant="outline" size="sm" className={WS_BTN} onClick={() => input.current?.click()} disabled={busy} title={report.upload.hint}>
+      <Button variant="outline" size="sm" className={WS_BTN} onClick={() => input.current?.click()} disabled={busy} title={upload.hint}>
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-        {report.upload.label}
+        {upload.label}
       </Button>
     </>
   );
@@ -104,8 +111,9 @@ const renderView = (report: ReportDefinition, table: ReportTable): React.ReactNo
 };
 
 export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
-  open, onOpenChange, report, loading, error, table, onExport, exportBusy, onUpload, uploadBusy = false,
+  open, onOpenChange, report, loading, error, table, onExport, exportBusy, onUpload, uploadBusy = false, onPull, pullBusy = false, notice,
 }) => {
+  const uploads = report ? uploadsOf(report) : [];
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[96vw] w-full h-[90vh] flex flex-col p-0 gap-0 sm:max-w-[96vw]">
@@ -120,6 +128,12 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           </div>
         </DialogHeader>
 
+        {notice && (
+          <div role="alert" className="shrink-0 border-b border-destructive/40 bg-destructive/10 px-4 py-2 text-xs font-medium text-destructive">
+            {notice}
+          </div>
+        )}
+
         {loading && (
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -131,23 +145,29 @@ export const ReportPreviewDialog: React.FC<ReportPreviewDialogProps> = ({
           <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center px-8">
             <AlertCircle className="h-5 w-5 text-destructive" />
             <p className="text-sm text-muted-foreground max-w-xl whitespace-pre-line">{error}</p>
-            {report?.upload && onUpload && (
-              <div className="mt-2 flex flex-col items-center gap-1">
-                <UploadButton report={report} onUpload={onUpload} busy={uploadBusy} />
-                <p className="max-w-md text-[11px] text-muted-foreground">{report.upload.hint}</p>
+            {onUpload && uploads.map((u) => (
+              <div key={u.label} className="mt-2 flex flex-col items-center gap-1">
+                <UploadButton upload={u} onUpload={onUpload} busy={uploadBusy} />
+                <p className="max-w-md text-[11px] text-muted-foreground">{u.hint}</p>
               </div>
-            )}
+            ))}
           </div>
         )}
 
         {!loading && !error && table && report && (
           <>
             <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
-              {report.upload && onUpload && (
-                <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={report.upload.hint}>{report.upload.hint}</span>
+              {uploads.length === 1 && onUpload && (
+                <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={uploads[0].hint}>{uploads[0].hint}</span>
               )}
               <div className="flex-1" />
-              {onUpload && <UploadButton report={report} onUpload={onUpload} busy={uploadBusy} />}
+              {onPull && report.pull?.actions?.map((a) => (
+                <Button key={a.key} variant="outline" size="sm" className={WS_BTN} onClick={() => onPull(a.key)} disabled={pullBusy} title={a.hint}>
+                  {pullBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CloudDownload className="h-3.5 w-3.5" />}
+                  {a.label}
+                </Button>
+              ))}
+              {onUpload && uploads.map((u) => <UploadButton key={u.label} upload={u} onUpload={onUpload} busy={uploadBusy} />)}
               <Button variant="outline" size="sm" className={WS_BTN} onClick={() => onExport('xlsx')} disabled={exportBusy !== null}>
                 {exportBusy === 'xlsx' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileSpreadsheet className="h-3.5 w-3.5" />}
                 Excel

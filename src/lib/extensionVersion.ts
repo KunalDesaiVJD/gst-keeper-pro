@@ -125,6 +125,7 @@ const GAINS: [string, string][] = [
   ['0.19.0', "looks up suppliers' GST registration and return filing on the portal's Search Taxpayer for the Vendor GSTIN Risk report"],
   ['0.19.1', "pulls every section of each month's filed GSTR-1 in one run for the full-year GSTR-1 documents report, without waiting on the portal's file"],
   ['0.19.2', "looks up vendor GSTINs on the portal's own Search Taxpayer page, and a refused request or a CAPTCHA no longer stops the whole lookup"],
+  ['0.19.3', "records each vendor GSTIN lookup run (its progress, outcome and the page it could not read), tries the public Search Taxpayer page when the logged-in one does not answer, and stops early when the first GSTIN fails on every page"],
 ];
 
 export function updateRecommendedMessage(version: string | null | undefined): string {
