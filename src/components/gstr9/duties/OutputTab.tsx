@@ -1,6 +1,8 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { hasRateLines, meaningfulLines, rollUpRateLines } from '@/lib/gstr9/rateWise';
 import { FY_MONTHS, type DtoMonth, type DtRateLine, type Formulas, type MonthKey, type Tax, type TaxIn } from '@/lib/gstr9/types';
+import { loadBuilderProjectRates } from '@/lib/gstr9/builderProjectRates';
+import type { BuilderProjectRate } from '@/lib/gstr9/builderReceipts';
 import { useWorkspace } from '../WorkspaceContext';
 import { JustifyControl, Note, SectionCard } from '../ui';
 import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
@@ -45,7 +47,19 @@ const WHAT_3B = '3.1(a) + 3.1(b) tax';
 const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: string }> = ({ cess, view, gridMaxHeight }) => {
   // "Books vs 3B" hides the typed Sales / Credit note groups; Input's "compact" has no Output counterpart.
   const recon = view === 'recon';
-  const { docs, workings, update, readOnly } = useWorkspace();
+  const { docs, workings, update, readOnly, client } = useWorkspace();
+  // Builder clients enter rate lines from receipts at the project's rate (builderReceipts.ts).
+  const isBuilder = client.regular_sub_type === 'Builder';
+  const [builderProjects, setBuilderProjects] = useState<BuilderProjectRate[] | null>(null);
+  useEffect(() => {
+    if (!isBuilder) { setBuilderProjects(null); return; }
+    let live = true;
+    setBuilderProjects([]);
+    loadBuilderProjectRates(client.id)
+      .then((p) => { if (live) setBuilderProjects(p); })
+      .catch(() => { if (live) setBuilderProjects([]); });
+    return () => { live = false; };
+  }, [client.id, isBuilder]);
   const dto = workings.dto;
   const tol = workings.tolerance;
 
@@ -273,6 +287,7 @@ const OutputTab: React.FC<{ cess: boolean; view: DutiesView; gridMaxHeight: stri
           readOnly={readOnly}
           onClose={() => setRateMonth(null)}
           onApply={onApplyRates}
+          builderProjects={builderProjects}
         />
         {!readOnly && (recon || cess) && (
           <p className="text-[11px] text-muted-foreground">
