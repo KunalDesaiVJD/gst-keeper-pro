@@ -11,7 +11,10 @@ import { findRow, istDateOf, statementFromRow } from '@/lib/itcReco/sources';
 import { istToday } from '@/lib/itcReco/dates';
 import type { RecoDoc, SourceKey, StatementRow } from '@/lib/itcReco/types';
 import { fetchClient } from '@/utils/filedReturnReports';
-import { fyPeriods, type BookLite, type FilingLite, type ImportDocLite, type LedgerLite, type LookupLite, type MasterLite, type RecoFinding, type StatementInfo, type VendorRiskInput } from './engine';
+import {
+  fyPeriods, isoDate, type BookLite, type FilingLite, type ImportDocLite, type LedgerLite, type LookupErrorLite, type LookupLite, type LookupRunLite,
+  type MasterLite, type RecoFinding, type StatementInfo, type VendorRiskInput,
+} from './engine';
 import { checkGstin, normGstin } from './gstin';
 
 const RETURN_TYPE: Record<'2A' | '2B', string> = { '2A': 'GSTR2A', '2B': 'GSTR2B' };
@@ -61,13 +64,23 @@ function runReco(rows: StatementRow[], fy: string, client: { name: string; gstin
   return { periods, reco };
 }
 
+interface LatestRow {
+  gstin: string | null; status: string | null; looked_up_at: string | null; source: string | null; legal_name: string | null; trade_name: string | null;
+  reg_status: string | null; reg_date: string | null; cancel_date: string | null; cancel_reason: string | null; taxpayer_type: string | null;
+  constitution: string | null; nature_of_business: string[] | null; ato_slab: string | null; einvoice_status: string | null; filings: unknown;
+  upload_file: string | null; last_g1: string | null; last_g3: string | null;
+}
+
 async function loadLookups(gstins: string[]): Promise<LookupLite[] | null> {
   const out: LookupLite[] = [];
   for (let i = 0; i < gstins.length; i += 150) {
     const chunk = gstins.slice(i, i + 150);
-    const { data, error } = await supabase
-      .from('vendor_gstin_latest')
-      .select('gstin, status, looked_up_at, source, legal_name, trade_name, reg_status, reg_date, cancel_date, cancel_reason, taxpayer_type, constitution, nature_of_business, ato_slab, einvoice_status, filings')
+    // The typed client cannot type JSON paths (payload->>...): the row's shape is written out here.
+    const view = supabase.from('vendor_gstin_latest') as unknown as {
+      select: (cols: string) => { in: (c: string, v: string[]) => PromiseLike<{ data: LatestRow[] | null; error: { code?: string; message?: string } | null }> };
+    };
+    const { data, error } = await view
+      .select('gstin, status, looked_up_at, source, legal_name, trade_name, reg_status, reg_date, cancel_date, cancel_reason, taxpayer_type, constitution, nature_of_business, ato_slab, einvoice_status, filings, upload_file:payload->>file_name, last_g1:payload->>last_gstr1_filed, last_g3:payload->>last_gstr3b_filed')
       .in('gstin', chunk);
     if (error) {
       if (isMissingRelation(error)) return null;
@@ -92,10 +105,81 @@ async function loadLookups(gstins: string[]): Promise<LookupLite[] | null> {
         atoSlab: r.ato_slab,
         einvoiceStatus: r.einvoice_status,
         filings: Array.isArray(r.filings) ? (r.filings as unknown as FilingLite[]).filter((f) => f && typeof f === 'object' && typeof f.rtntype === 'string') : null,
+        uploadFile: r.upload_file ?? null,
+        lastGstr1Filed: r.last_g1 ?? null,
+        lastGstr3bFiled: r.last_g3 ?? null,
       });
     }
   }
   return out;
+}
+
+/** The latest failed lookup of each GSTIN (the view hides error rows; the report names the failure). */
+async function loadLookupErrors(gstins: string[]): Promise<LookupErrorLite[]> {
+  const latest = new Map<string, LookupErrorLite>();
+  for (let i = 0; i < gstins.length; i += 150) {
+    const { data, error } = await supabase
+      .from('vendor_gstin_lookups')
+      .select('gstin, looked_up_at, error, run_id')
+      .in('gstin', gstins.slice(i, i + 150))
+      .eq('status', 'error')
+      .order('looked_up_at', { ascending: false })
+      .limit(2000);
+    if (error) {
+      // run_id is new (20261128120000): read without it on a database that does not have it.
+      if (/run_id/.test(error.message ?? '')) {
+        const again = await supabase.from('vendor_gstin_lookups').select('gstin, looked_up_at, error').in('gstin', gstins.slice(i, i + 150)).eq('status', 'error').order('looked_up_at', { ascending: false }).limit(2000);
+        if (again.error) { if (isMissingRelation(again.error)) return []; throw again.error; }
+        for (const r of again.data || []) if (!latest.has(r.gstin)) latest.set(r.gstin, { gstin: r.gstin, at: r.looked_up_at, error: r.error, runId: null });
+        continue;
+      }
+      if (isMissingRelation(error)) return [];
+      throw error;
+    }
+    for (const r of data || []) if (!latest.has(r.gstin)) latest.set(r.gstin, { gstin: r.gstin, at: r.looked_up_at, error: r.error, runId: r.run_id });
+  }
+  return [...latest.values()];
+}
+
+/** The client's lookup runs of the FY, newest first (vendor_lookup_runs, 20261128120000), with the requester's name. */
+async function loadRuns(clientId: string, fy: string): Promise<LookupRunLite[]> {
+  const { data, error } = await supabase
+    .from('vendor_lookup_runs')
+    .select('id, status, stage, requested_at, requested_by, planned, gstins, found, not_found, failed, stop_reason, heartbeat_at, finished_at, extension_version, page_url')
+    .eq('client_id', clientId)
+    .eq('fy', fy)
+    .order('requested_at', { ascending: false })
+    .limit(20);
+  if (error) {
+    if (isMissingRelation(error)) return [];
+    throw error;
+  }
+  const rows = data || [];
+  const ids = [...new Set(rows.map((r) => r.requested_by).filter((x): x is string => !!x))];
+  const names = new Map<string, string>();
+  if (ids.length) {
+    const { data: ps } = await supabase.from('profiles').select('user_id, first_name, email').in('user_id', ids);
+    for (const p of ps || []) names.set(p.user_id, p.first_name || p.email || p.user_id);
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status,
+    stage: r.stage,
+    requestedAt: r.requested_at,
+    requestedBy: r.requested_by ? names.get(r.requested_by) ?? null : null,
+    planned: r.planned ?? 0,
+    gstins: r.gstins ?? [],
+    found: r.found ?? 0,
+    notFound: r.not_found ?? 0,
+    failed: r.failed ?? 0,
+    stopReason: r.stop_reason,
+    heartbeatAt: r.heartbeat_at,
+    finishedAt: r.finished_at,
+    extensionVersion: r.extension_version,
+    pageUrl: r.page_url,
+    // The extension stores page_url with the snapshot (never one without the other); the 40k text is not read here.
+    hasSnapshot: !!r.page_url,
+  }));
 }
 
 async function loadMaster(clientId: string): Promise<{ master: MasterLite[]; file: VendorRiskInput['masterFile'] }> {
@@ -173,11 +257,11 @@ export async function loadVendorRiskInput(clientId: string, fy: string): Promise
     ...docs2A.map((d) => d.ctin), ...docs2B.map((d) => d.ctin), ...importDocs.map((d) => d.gstin), ...books.map((d) => d.gstin),
     ...notIn2B.map((d) => d.gstin), ...notInBooks.map((d) => d.gstin), ...master.master.map((m) => m.gstin),
   ].map(normGstin).filter((g) => g.length === 15))];
-  const lookups = await loadLookups(gstins);
+  const [lookups, lookupErrors, runs] = await Promise.all([loadLookups(gstins), loadLookupErrors(gstins), loadRuns(clientId, fy)]);
 
   return {
     client: clientLite, fy, today, statements, docs2A, docs2B, importDocs, books, ledgerAsOf, notIn2B, notInBooks,
-    recoPeriods, reco, master: master.master, masterFile: master.file, lookups,
+    recoPeriods, reco, master: master.master, masterFile: master.file, lookups, lookupErrors, runs, now: new Date().toISOString(),
   };
 }
 
@@ -241,4 +325,172 @@ export async function uploadVendorMaster({ clientId, file }: { clientId: string;
     parsed.duplicates ? `${parsed.duplicates} repeated GSTIN${parsed.duplicates === 1 ? '' : 's'} kept once` : '',
   ].filter(Boolean);
   return `Vendor master saved: ${parsed.rows.length} vendors from sheet "${parsed.sheet}" of ${file.name}, replacing the earlier upload.${notes.length ? ` ${notes.join('; ')}.` : ''}`;
+}
+
+// ── Vendor lookup sheet upload (the firm's fallback when the portal will not answer) ──
+
+/** The sheet's columns, as the report reads them. */
+export const LOOKUP_SHEET_COLUMNS = [
+  'GSTIN', 'Legal name', 'Trade name', 'Status', 'Registration date', 'Cancellation date', 'Taxpayer type', 'Constitution', 'Address',
+  'Last GSTR-1 filed', 'Last GSTR-3B filed', 'e-invoice (Yes/No)',
+] as const;
+
+type SheetField = 'gstin' | 'legal' | 'trade' | 'status' | 'regDate' | 'cancelDate' | 'taxpayerType' | 'constitution' | 'address' | 'lastG1' | 'lastG3' | 'einv';
+
+/** Header words → field, the first rule that matches wins (so "GSTIN / UIN Status" is the status, "GSTR-3B" never GSTR-1). */
+const SHEET_RULES: [SheetField, (h: string) => boolean][] = [
+  ['lastG3', (h) => /gstr\s*[-.]?\s*3\s*b/i.test(h)],
+  ['lastG1', (h) => /gstr\s*[-.]?\s*1(?!\d)/i.test(h)],
+  ['einv', (h) => /e\s*[-.]?\s*invoic|\beinv|\birn\b/i.test(h)],
+  ['cancelDate', (h) => /cancel/i.test(h) && /\b(date|from|on|w\.?e\.?f)\b/i.test(h)],
+  ['regDate', (h) => /(registration|regn?\.?|effective)\s*date|date\s*of\s*(registration|regn?)|registered\s*(on|from)/i.test(h)],
+  ['taxpayerType', (h) => /taxpayer\s*type|type\s*of\s*(tax\s*payer|taxpayer|registration|dealer)|dealer\s*type|registration\s*type/i.test(h)],
+  ['status', (h) => /status/i.test(h)],
+  ['constitution', (h) => /constitution/i.test(h)],
+  ['legal', (h) => /legal|name\s*of\s*(the\s*)?business|^(vendor|supplier|party)?\s*name$/i.test(h)],
+  ['trade', (h) => /trade/i.test(h)],
+  ['address', (h) => /address|place\s*of\s*business/i.test(h)],
+  ['gstin', (h) => GSTIN_HEAD.test(h)],
+];
+const classify = (h: string): SheetField | null => {
+  const t = h.trim();
+  if (!t) return null;
+  for (const [f, test] of SHEET_RULES) if (test(t)) return f;
+  return null;
+};
+
+export interface LookupSheetRow {
+  gstin: string;
+  legal_name: string | null;
+  trade_name: string | null;
+  reg_status: string | null;
+  reg_date: string | null;
+  cancel_date: string | null;
+  taxpayer_type: string | null;
+  constitution: string | null;
+  address: string | null;
+  einvoice_status: string | null;
+  last_gstr1_filed: string | null;
+  last_gstr3b_filed: string | null;
+  /** The sheet's row as it came (header → cell), and its row number. */
+  raw: Record<string, string>;
+  rowNumber: number;
+}
+export interface ParsedLookupSheet { rows: LookupSheetRow[]; invalid: string[]; duplicates: number; sheet: string; columns: Partial<Record<SheetField, string>>; badDates: number }
+
+const cellText = (v: unknown): string => {
+  if (v instanceof Date) {
+    const d = new Date(v.getTime() + 12 * 3600_000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  return v == null ? '' : String(v).trim();
+};
+const yesNo = (s: string): string | null => {
+  if (!s) return null;
+  if (/^(y|yes|true|1|enabled|applicable|active)$/i.test(s)) return 'Yes';
+  if (/^(n|no|false|0|not\s*enabled|not\s*applicable|na|n\/a)$/i.test(s)) return 'No';
+  return s;
+};
+
+/**
+ * The vendor lookup sheet (xlsx / xls / csv) → rows. The header row is any of
+ * the first 25 rows of a sheet holding a GSTIN column and at least one other
+ * column of LOOKUP_SHEET_COLUMNS (header words are matched loosely: case,
+ * spacing, "Date of registration" or "Registration date", "GSTIN / UIN
+ * Status", ...). Dates as dd/mm/yyyy, dd-Mon-yyyy, ISO or Excel dates.
+ */
+export function parseVendorLookupSheet(data: ArrayBuffer | Uint8Array): ParsedLookupSheet {
+  const wb = XLSX.read(data, { type: 'array', cellDates: true });
+  for (const sheet of wb.SheetNames) {
+    const grid = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[sheet], { header: 1, raw: true, defval: null });
+    for (let h = 0; h < Math.min(25, grid.length); h += 1) {
+      const head = (grid[h] || []).map((c) => cellText(c));
+      const at: Partial<Record<SheetField, number>> = {};
+      head.forEach((c, i) => { const f = classify(c); if (f && at[f] === undefined) at[f] = i; });
+      if (at.gstin === undefined || Object.keys(at).length < 2) continue;
+      const seen = new Set<string>();
+      const rows: LookupSheetRow[] = [];
+      const invalid: string[] = [];
+      let duplicates = 0;
+      let badDates = 0;
+      const date = (s: string) => { if (!s) return null; const d = isoDate(s); if (!d) badDates += 1; return d; };
+      grid.slice(h + 1).forEach((r, k) => {
+        const get = (f: SheetField) => (at[f] === undefined ? '' : cellText((r || [])[at[f]!]));
+        const gstin = normGstin(get('gstin'));
+        if (!gstin) return;
+        if (seen.has(gstin)) { duplicates += 1; return; }
+        seen.add(gstin);
+        if (!checkGstin(gstin).valid) { invalid.push(gstin); return; }
+        const raw: Record<string, string> = {};
+        head.forEach((c, i) => { const v = cellText((r || [])[i]); if (c && v) raw[c] = v; });
+        rows.push({
+          gstin,
+          legal_name: get('legal') || null,
+          trade_name: get('trade') || null,
+          reg_status: get('status') || null,
+          reg_date: date(get('regDate')),
+          cancel_date: date(get('cancelDate')),
+          taxpayer_type: get('taxpayerType') || null,
+          constitution: get('constitution') || null,
+          address: get('address') || null,
+          einvoice_status: yesNo(get('einv')),
+          last_gstr1_filed: date(get('lastG1')),
+          last_gstr3b_filed: date(get('lastG3')),
+          raw,
+          rowNumber: h + 2 + k,
+        });
+      });
+      const columns: Partial<Record<SheetField, string>> = {};
+      for (const [f, i] of Object.entries(at)) columns[f as SheetField] = head[i as number];
+      if (rows.length || invalid.length) return { rows, invalid, duplicates, sheet, columns, badDates };
+    }
+  }
+  throw new Error(`No vendor lookup sheet found: the file needs a header row (in the first 25 rows of a sheet) with a "GSTIN" column and at least one of ${LOOKUP_SHEET_COLUMNS.slice(1).join(', ')}.`);
+}
+
+/**
+ * Saves the sheet's vendors as lookups (vendor_gstin_lookups, source
+ * 'manual_upload', status ok, looked up by the person uploading; payload: the
+ * sheet's row and the file name). A later portal lookup of a GSTIN replaces it
+ * in the report (the newest answer is read). Returns what was saved, in words.
+ */
+export async function uploadVendorLookupSheet({ clientId, file }: { clientId: string; periods: string[]; file: File; uploadedBy: string | null }): Promise<string> {
+  const parsed = parseVendorLookupSheet(await file.arrayBuffer());
+  if (!parsed.rows.length) throw new Error(`No valid GSTIN in sheet "${parsed.sheet}" of ${file.name} (${parsed.invalid.length} fail the check character).`);
+  const by = currentActorId();
+  const at = new Date().toISOString();
+  for (let i = 0; i < parsed.rows.length; i += 500) {
+    const { error } = await supabase.from('vendor_gstin_lookups').insert(parsed.rows.slice(i, i + 500).map((r) => ({
+      gstin: r.gstin,
+      status: 'ok',
+      source: 'manual_upload',
+      looked_up_by: by,
+      via_client_id: clientId,
+      legal_name: r.legal_name,
+      trade_name: r.trade_name,
+      reg_status: r.reg_status,
+      reg_date: r.reg_date,
+      cancel_date: r.cancel_date,
+      taxpayer_type: r.taxpayer_type,
+      constitution: r.constitution,
+      address: r.address,
+      einvoice_status: r.einvoice_status,
+      // A last-filed date is not a filing table: the report shows it, and never reads periods missing from it.
+      filings: null,
+      payload: {
+        file_name: file.name, sheet: parsed.sheet, row_number: r.rowNumber, uploaded_at: at, columns: parsed.columns,
+        last_gstr1_filed: r.last_gstr1_filed, last_gstr3b_filed: r.last_gstr3b_filed, row: r.raw,
+      },
+    })));
+    if (error) {
+      if (isMissingRelation(error)) throw new Error('The vendor lookups table is not set up yet (migration 20261127140000_vendor_gstin_risk.sql is not applied).');
+      throw error;
+    }
+  }
+  const notes = [
+    parsed.invalid.length ? `${parsed.invalid.length} GSTIN${parsed.invalid.length === 1 ? '' : 's'} failing the check character left out` : '',
+    parsed.duplicates ? `${parsed.duplicates} repeated GSTIN${parsed.duplicates === 1 ? '' : 's'} kept once` : '',
+    parsed.badDates ? `${parsed.badDates} date${parsed.badDates === 1 ? '' : 's'} not read (use dd/mm/yyyy)` : '',
+  ].filter(Boolean);
+  return `Vendor lookup sheet saved: ${parsed.rows.length} vendors from sheet "${parsed.sheet}" of ${file.name} (columns read: ${Object.values(parsed.columns).join(', ')}).${notes.length ? ` ${notes.join('; ')}.` : ''}`;
 }

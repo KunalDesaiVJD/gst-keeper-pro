@@ -614,12 +614,43 @@ const API = {
     if (!['ok', 'not_found', 'error'].includes(r.status)) throw new Error('unknown lookup status ' + r.status);
     const cols = ['status', 'error', 'extension_version', 'looked_up_by', 'via_client_id', 'legal_name', 'trade_name', 'reg_status',
       'reg_date', 'cancel_date', 'cancel_reason', 'taxpayer_type', 'constitution', 'state_jurisdiction', 'centre_jurisdiction',
-      'address', 'nature_of_business', 'ato_slab', 'einvoice_status', 'filings', 'payload'];
+      'address', 'nature_of_business', 'ato_slab', 'einvoice_status', 'filings', 'payload', 'run_id'];
     const out = { gstin, source: 'gst_portal_search_taxpayer' };
     for (const k of cols) if (r[k] !== undefined) out[k] = r[k];
     if (out.looked_up_by != null && !UUID_RE.test(String(out.looked_up_by))) out.looked_up_by = null;
+    // 0.19.3: the run (vendor_lookup_runs) the lookup belongs to; sent only when the job carries one.
+    if (out.run_id != null && !UUID_RE.test(String(out.run_id))) delete out.run_id;
     if (!out.extension_version) out.extension_version = EXT_VERSION;
     await post('vendor_gstin_lookups', [out]);
+    return true;
+  },
+
+  // 0.19.3: the run ledger of the vendor GSTIN lookup (vendor_lookup_runs,
+  // migration 20261128120000). The app inserts the run when Pull is clicked;
+  // the extension only updates it, through the same /rest/v1 path (with
+  // x-gst-source / x-gst-actor): status, stage, counts, heartbeat, the stop
+  // reason and, when a page could not be read, its address and a snapshot.
+  // `detail` is merged under detail.extension (the app's own detail is kept).
+  updateVendorLookupRun: async (id, p) => {
+    if (!UUID_RE.test(String(id || ''))) throw new Error('not a run id');
+    const r = p || {};
+    const out = {};
+    for (const k of ['status', 'stage', 'found', 'not_found', 'failed', 'stop_reason', 'page_url', 'page_snapshot', 'heartbeat_at', 'finished_at', 'extension_version']) {
+      if (r[k] !== undefined) out[k] = r[k];
+    }
+    if (out.status !== undefined && !['started', 'running', 'done', 'stopped', 'failed'].includes(out.status)) delete out.status;
+    for (const k of ['found', 'not_found', 'failed']) if (out[k] !== undefined) out[k] = Math.max(0, Math.floor(Number(out[k]) || 0));
+    if (typeof out.stop_reason === 'string') out.stop_reason = out.stop_reason.slice(0, 2000);
+    if (typeof out.page_url === 'string') out.page_url = out.page_url.slice(0, 1000);
+    if (typeof out.page_snapshot === 'string') out.page_snapshot = out.page_snapshot.slice(0, 42000);
+    if (typeof out.stage === 'string') out.stage = out.stage.slice(0, 60);
+    if (r.detail && typeof r.detail === 'object') {
+      let prev = {};
+      try { const rows = await sel(`vendor_lookup_runs?id=eq.${id}&select=detail&limit=1`); prev = (rows[0] && rows[0].detail) || {}; } catch (e) { prev = {}; }
+      out.detail = { ...prev, extension: { ...((prev && prev.extension) || {}), ...r.detail } };
+    }
+    if (!Object.keys(out).length) return true;
+    await patch(`vendor_lookup_runs?id=eq.${id}`, out);
     return true;
   },
 
@@ -981,10 +1012,18 @@ const API = {
       want: (info.want && typeof info.want === 'object' && !Array.isArray(info.want)) ? info.want : null,
       // 0.19.0: gstin_search's list of vendor GSTINs to look up (only that mode carries one).
       ...(info.mode === 'gstin_search' ? { gstins: Array.isArray(info.gstins) ? info.gstins.map((g) => String(g || '').trim().toUpperCase()).filter((g) => /^[0-9A-Z]{15}$/.test(g)).slice(0, 500) : [] } : {}),
+      // 0.19.3: the run the app recorded for this Pull (vendor_lookup_runs); not job.runId, which is the ledger sync's.
+      ...(info.mode === 'gstin_search' && UUID_RE.test(String(info.run_id || '')) ? { vendorRunId: String(info.run_id) } : {}),
     };
     const tab = await chrome.tabs.create({ url: 'https://services.gst.gov.in/services/login' });
     job.tabId = tab.id;
     await setActiveJob(job);
+    // 0.19.3: picked up: the run says so, with this extension's version (a record only, never a reason not to start).
+    if (job.vendorRunId) {
+      try {
+        await API.updateVendorLookupRun(job.vendorRunId, { status: 'started', stage: 'login', extension_version: EXT_VERSION, heartbeat_at: new Date().toISOString() });
+      } catch (e) { /* the run row stays planned; the report shows it stalled */ }
+    }
     return { started: true, client: c.name, mode: info.mode, periods: periods.length };
   },
 

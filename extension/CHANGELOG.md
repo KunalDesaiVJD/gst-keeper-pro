@@ -2,6 +2,17 @@
 
 Notable changes to the browser extension (`extension/`). Newest first.
 
+## 2026-11-28 — 0.19.3: vendor lookup run ledger, public page fallback, early stop (v0.19.3)
+
+- **Seen with 0.19.2 (PBW, 27 Nov 2026):** a Pull that found nothing left nothing to say why: no row, no run, the report's cells blank. Now every Pull is a run the app records (`vendor_lookup_runs`, migration `20261128120000`) and the extension keeps it current.
+- **The run ledger:** the app inserts the run (`planned`, or `refused` when the extension is missing or too old) and sends its id as `run_id`; the extension keeps it on the job as `job.vendorRunId` (never `job.runId`, which is the ledger sync's), marks it `started` when it picks the job up (with its version), then `running` with the stage (login, search page, looking up, public page), the counts and `heartbeat_at` once a GSTIN and at least every 30 s while a page is waited for, and ends it `done`, `stopped` (with the reason) or `failed`. Every `vendor_gstin_lookups` row carries `run_id`. A page it could not read is kept on the run: its address and a snapshot (the page text and the search form / result area's HTML, 20 000 characters each). `updateVendorLookupRun` (background.js / db.js) writes only the run's own columns and merges the extension's detail under `detail.extension`, keeping the app's.
+- **A catch-all:** a thrown error inside the lookup marks the run `failed` with the message, the stack, the GSTIN reached and the page, plus a snapshot; the banner says so and the job is cleared (a cancel stays a cancel).
+- **Public page fallback:** a GSTIN the logged-in Search Taxpayer page did not answer after its retry (not a CAPTCHA left untyped) is tried once on the public page `services/searchtp`. The row's `payload.served_by` says which page answered (`logged_in`, `logged_in_replay`, `public`) and `first_try` why the logged-in page did not; an error row names both pages. The next GSTIN goes back to the logged-in page, unless two have already been served by the public page in this run.
+- **Early stop:** when the first GSTIN of a run fails on every page (and there are more), the run stops at once, `stopped` with the pages named and the snapshot kept, instead of failing GSTIN after GSTIN. Pull again once the page is fixed.
+- **Nothing else changes.** `advance()` gains one additive hunk (a vendor lookup whose login fails ends its run `stopped`), `startSectionPull` sets `vendorRunId` for `gstin_search` only, and the rest is the `gstin_search` handler and its helpers.
+- GST Keeper asks for 0.19.3 for this Pull (`GSTIN_SEARCH_VERSION`; an older extension's Pull is refused and recorded as a refused run, the FY's missing GSTR-2A / 2B months are still pulled); the minimum stays 0.16.0.
+- Tests: `test/23-gstin-search.test.mjs` (tests 17 to 21: the ledger, early stop, public fallback, a thrown error, no search page); `test/17-actor-headers.test.mjs` now expects 0.19.3.
+
 ## 2026-11-27 — 0.19.2: vendor lookup reads the portal's own Search Taxpayer page (v0.19.2)
 
 - **Seen live with 0.19.1 (27 Nov 2026):** the first GSTIN's lookup asked guessed addresses from fowelcome; `services/auth/api/search/tp` got the portal firewall's HTML "Request Rejected" page and `.../search/taxpayerDetails` HTTP 403, which 0.19.0 took for a dropped session: the run stopped (0 found, 1 failed, 149 not looked up) with the person still logged in.

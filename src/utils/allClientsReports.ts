@@ -227,6 +227,12 @@ export interface ReportTable {
    * shows it as one compact strip above the table, never a wall of errors.
    */
   coverage?: ReportCoverage;
+  /**
+   * Lines a bespoke preview shows above the table until the data changes (the
+   * Vendor GSTIN Risk report's run that stalled or was refused, data it could
+   * not get); exports carry the same words in their own sheets and notes.
+   */
+  alerts?: { tone: RowTone; text: string }[];
 }
 
 /** One period of a report's coverage: where its figures came from, or why there are none. */

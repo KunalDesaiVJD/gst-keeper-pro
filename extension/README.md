@@ -32,7 +32,12 @@ Your browser (normal IP) ──logs in + reads──▶ GST portal
   the source of each column in `payload`. Paced 2 to 3 s apart. A refused request is
   never taken for a dropped session; a real logout logs in again (twice a run); a
   CAPTCHA on the page is waited for a person (3 minutes), never filled; 45 s a GSTIN
-  with one retry; only 5 failures in a row stop the run. The page's selectors are
+  with one retry; only 5 failures in a row stop the run. v0.19.3: every Pull is a run
+  (`vendor_lookup_runs`, its id on the job as `vendorRunId` and on every row as
+  `run_id`) kept current with its stage, counts and a heartbeat, ended done / stopped /
+  failed with a snapshot of a page it could not read; a GSTIN the logged-in page does
+  not answer is tried on the public `services/searchtp` (`payload.served_by`); the run
+  stops early when its first GSTIN fails on every page. The page's selectors are
   not confirmed live yet (see `docs/VENDOR_GSTIN_RISK.md`).
 - *(GSTR-2B pull is the next addition — it needs file-download handling.)*
 

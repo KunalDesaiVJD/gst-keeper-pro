@@ -16,10 +16,10 @@ judgement, not confirmed in a firm sign-off**; change them in
 | GSTIN structure and check character (pure) | `src/lib/vendorRisk/gstin.ts` |
 | Findings: band, nature, provision, action; thresholds; limitations (pure data) | `src/lib/vendorRisk/rules.ts` |
 | Engine (pure: plain data in, rows and summary out) | `src/lib/vendorRisk/engine.ts` |
-| Reads, and the vendor master upload | `src/lib/vendorRisk/load.ts` |
+| Reads, the vendor master upload and the vendor lookup sheet upload | `src/lib/vendorRisk/load.ts` |
 | ReportTable for the Big4 Excel / PDF | `src/utils/vendorRiskReports.ts` |
 | Preview (tabs: Vendors, Management summary, the lists) | `src/components/reports/views/VendorRiskView.tsx` (`viewKind: 'vendor-risk'`) |
-| Pull (Search Taxpayer) | `src/lib/vendorRisk/gstinSearchPull.ts` (below) |
+| Pull (the FY's missing 2A / 2B, then Search Taxpayer; the run ledger) | `src/lib/vendorRisk/gstinSearchPull.ts` (below) |
 | Checks | `node scripts/verify-vendor-risk.mjs` |
 
 ## 2. Sources
@@ -33,9 +33,10 @@ Taxpayer (20-Nov-2026)]"), and the Data Source column lists every source the row
   uploaded vendor master (`vendor_master_entries`). The client's own GSTIN is left out.
   A vendor only in the master is a row with "No purchases seen in FY".
 - **Names.** Vendor master, else the books (most frequent), else the 2B / 2A trade name.
-- **Portal lookups.** `vendor_gstin_latest` (one row per GSTIN). When the view is not
-  there (migration not applied) or a GSTIN has no row, the registration fields read
-  "Verification required — run Pull (Search Taxpayer)" and the row is No Data unless
+- **Portal lookups.** `vendor_gstin_latest` (one row per GSTIN), from the extension's
+  Pull or from an uploaded vendor lookup sheet (§6). When the view is not there
+  (migration not applied) or a GSTIN has no row, the registration fields read
+  "Not retrieved — <reason>" (§6: never a blank cell) and the row is No Data unless
   other evidence (the GSTIN itself, 2A's `dtcancel`, the ledgers) gives a finding.
 - **Filing.** The lookup's filing table; else 2A / 2B (`cfs`, `cfs3b`, `supfildt`) and
   the GSTR-2A vs 2B reconciliation reasons (`NOT_FILED_BY_SUPPLIER`, filed after the
@@ -107,7 +108,71 @@ cancellation reason only where the portal search shows it; lookups not run are
 "Verification required"; the turnover slab is the latest year the portal shows; the
 filing table as last pulled (`LIMITATIONS` in `rules.ts`, printed on the report).
 
-## Search Taxpayer lookup (extension 0.19.0; the page flow since 0.19.2)
+## 6. No silent gaps (28 Nov 2026)
+
+Seen live on PBW (27 Nov 2026, extension 0.19.2): a Pull that saved nothing left the
+report's registration and filing cells blank, with nothing to say whether the lookup
+had run, failed or was never asked for. Since then:
+
+- **Every cell the report could not fill says why**, as `Not retrieved — <reason>`
+  (`NOT_RETRIEVED`, `lookupGap` / `fieldGap` / `twoAGap` / `filingGap` in `engine.ts`).
+  The reasons, most specific first: the lookups view is not there (migration); the
+  GSTIN is not a valid one; its last lookup failed (with the portal's or the
+  extension's reason and date); the latest run was refused, is stalled (open with no
+  heartbeat for 3 minutes, `RUN_STALL_MS`), is still running, or ended before this
+  GSTIN (with its stop reason); the last Pull was refused; no Pull yet. A field the
+  portal page did not show says so with the lookup's date; a field missing from an
+  uploaded sheet names the file. GSTR-2A columns name the months not pulled ("Pull
+  fetches it"). A GSTIN the portal does not know reads "Not applicable: the GSTIN was
+  not found on the portal". The judgement columns (E-Invoice Applicable / Risk, ITC
+  Eligibility) keep "Verification required (<reason>)": a gap is never non-compliance.
+  Composition is judged only when the taxpayer type was read.
+- **Data coverage.** A sheet `Data coverage` (`coverageSheet()` in
+  `vendorRiskReports.ts`, an `extraSheets` entry, so in the Excel and the PDF too):
+  per field how many vendors have it from the portal, from an uploaded sheet, or not
+  retrieved; the FY's GSTR-2A / 2B months pulled and missing; the client's recent
+  lookup runs (when, by whom, status, counts, stop reason, a snapshot kept). The KPIs
+  add Registration retrieved, Filing data, GSTR-2A months, GSTR-2B months and the
+  latest lookup run, and `meta` carries "Latest lookup run". A run refused, stalled,
+  failed or stopped, vendors never looked up and months missing are shown as alerts
+  above the table (`table.alerts`, `VendorRiskView`).
+- **The run ledger** (`vendor_lookup_runs`, migration `20261128120000`): the app
+  inserts one row per Pull before it sends the job (`recordRun` on the Pull plan):
+  `planned` with the GSTINs asked for and the extension version seen, or `refused`
+  (with the reason) when no extension answered or it is older than 0.19.3; a refused
+  Pull is also a message that stays on the Reports page until dismissed. The run's id
+  goes to the extension as `run_id`; the extension marks it `started`, then `running`
+  with its stage, counts and a heartbeat, and ends it `done`, `stopped` or `failed`
+  with a snapshot of a page it could not read; a Pull the extension rejected at once
+  marks it `failed` from the app. Every lookup row carries `run_id`. RLS open to
+  public, with the client allotment guard; `vendor_gstin_latest` is unchanged (no
+  `run_id`): the engine reads errors and runs from the tables themselves (`loadLookupErrors`,
+  `loadRuns`).
+- **The Pull fetches what the report reads** (`planVendorStatements`): the FY's GSTR-2A
+  and GSTR-2B months not yet pulled (or due again, never a month the portal said is not
+  generated) go first, as one `gstr2a2b_pull` with `want` on 0.13.0+ (else one pull per
+  return); then the lookups. Only the lookups need 0.19.3; an older extension still
+  pulls the statements and its lookup part is refused and recorded.
+- **Re-pull missing** (a Pull action, `REPULL_MISSING`): only the GSTINs with no answer:
+  never looked up first, then those whose last lookup is an error (oldest first), then
+  the stale ones (`lookupQueue`, `isMissingLookup`); a plain Pull takes the stale ones
+  as before.
+- **Upload vendor lookup sheet** (a second upload of the report, `uploads: [...]` on the
+  catalog entry; `parseVendorLookupSheet` / `uploadVendorLookupSheet` in `load.ts`): for
+  when the portal cannot be reached. Columns (`LOOKUP_SHEET_COLUMNS`, headers matched
+  loosely, within the first 25 rows): GSTIN, Legal name, Trade name, Status,
+  Registration date, Cancellation date, Taxpayer type, Constitution, Address, Last
+  GSTR-1 filed, Last GSTR-3B filed, e-invoice (Yes/No); GSTIN and at least one other
+  needed; invalid and repeated GSTINs dropped. Each row is a `vendor_gstin_lookups` row
+  with `source = 'manual_upload'`, `status = 'ok'`, `filings` NULL and the file, sheet,
+  row and the last-filed dates in `payload`. The Data Source column reads "Uploaded
+  sheet (file, date)"; its last-filed dates are shown but never read as a filing table
+  (no filing finding from a sheet). A later Pull's portal row replaces it as the latest.
+
+Checks: `node scripts/verify-vendor-risk.mjs` (Coverage, Lookup sheet, Lookup queue,
+Layout), `node scripts/verify-report-pull-plans.mjs` (section 6c).
+
+## Search Taxpayer lookup (extension 0.19.0; the page flow since 0.19.2; the run ledger and the public page fallback since 0.19.3)
 
 The report's **Pull** looks up the client's suppliers on the GST portal's
 logged-in *Search Taxpayer* and keeps every answer in
@@ -127,17 +192,19 @@ row has no `client_id`; `via_client_id` records only whose portal login made it.
   known shape and a good check character (`checkGstin(...).valid`), never the
   client's own.
 - **Only what is stale.** A GSTIN with an `ok` or `not_found` lookup in the last
-  30 days (`vendor_gstin_latest.looked_up_at`) is left out; never looked up first,
-  then the oldest. With none stale, all of them again (a refresh, said in a note).
+  30 days (`vendor_gstin_latest.looked_up_at`) is left out; missing ones first (never
+  looked up, then an error), then the oldest. With none, all of them again (a refresh,
+  said in a note). Re-pull missing takes only the missing and stale ones (§6).
+- **Statements first.** The FY's missing GSTR-2A / 2B months go before the lookup job (§6).
 - **At most 150 a Pull** (each looked up on the portal's page, about 10 to 15 seconds;
   `ReportsPage` waits about 15 seconds a GSTIN);
   the note says how many are left for the next click.
-- **Extension version.** The plan starts nothing and says "needs browser extension
-  v0.19.2" (`GSTIN_SEARCH_VERSION`) only when the installed extension is older (or did not say its
-  version). `MIN_EXTENSION_VERSION` is unchanged (0.16.0): every other screen
+- **Extension version.** The lookup job is left out and the plan says "needs browser
+  extension v0.19.3" (`GSTIN_SEARCH_VERSION`, `lookupRefusal`) only when the installed extension is
+  older (or did not say its version); the refusal is recorded as a run (`blocked`, §6). `MIN_EXTENSION_VERSION` is unchanged (0.16.0): every other screen
   keeps working with 0.18.7.
 - The job is `{ mode: 'gstin_search', periods: [first month of the FY], gstins, label }`;
-  `ReportsPage` passes `gstins` to the extension with the usual `__gstkPullSection`
+  `ReportsPage` records the run, then passes `gstins` and `run_id` to the extension with the usual `__gstkPullSection`
   message (with the app user's `actorId`), and re-checks an open preview for
   about 5 seconds a GSTIN.
 
@@ -205,6 +272,9 @@ lets the portal's own page do the search instead.
 | A CAPTCHA on the search page | Never filled or solved. The banner reads "Type the CAPTCHA on the portal page to continue"; Search is pressed only once the box holds what a person (or the firm's own CAPTCHA extension) typed, steady for one poll. Not typed within 3 minutes: an `error` row for that GSTIN, and the next one. |
 | No answer | 45 s a GSTIN (a CAPTCHA wait not counted), one retry after reloading the page, then an `error` row and the next GSTIN. |
 | A "No records found" left on the page | The page is reloaded before the next GSTIN, so it is never read as that GSTIN's answer. |
+| The logged-in page does not answer (0.19.3) | After its retry (not a CAPTCHA left untyped) the GSTIN is tried once on the public `services/searchtp`; `payload.served_by` (`logged_in`, `logged_in_replay`, `public`) and `first_try` record it; an error row names both pages. The next GSTIN goes back to the logged-in page unless two were already served by the public one. |
+| The first GSTIN fails on every page (0.19.3) | The run stops at once (`stopped`, the pages named, the snapshot on the run); the rest are not tried. |
+| A thrown error (0.19.3) | The run is marked `failed` with the message, stack, GSTIN reached, page and snapshot; the banner says so; the job is cleared. |
 | Failures in a row | The run stops after 5 failed lookups in a row, with the last reason; 4 then a success goes on. |
 | GST Keeper does not take the rows | Two failed saves stop the run. |
 | Pace and progress | 2 to 3 s between GSTINs; the banner shows "n of N" with found / not found / failed. A reload resumes after the last saved GSTIN; Pull again takes what was not reached (still stale). |
@@ -271,5 +341,8 @@ back to the page; "Request Rejected" and a 403 with the person still logged in
 never stop the run; a real logout logs in again and resumes; a third session loss
 stops; a CAPTCHA waited for (never filled), one never typed giving an error row;
 `not_found` and the clean reload after it; five failures in a row stop, four do
-not; a database refusing the rows; a resumed run; no search page anywhere; and
-`inject.js` copying only on services.gst.gov.in.
+not; a database refusing the rows; a resumed run; no search page anywhere;
+`inject.js` copying only on services.gst.gov.in; and (0.19.3) the run ledger
+(`run_id` on every row, heartbeats, the outcome), the early stop with its snapshot,
+the public page fallback, a thrown error marking the run failed, and no search page
+ending the run stopped.

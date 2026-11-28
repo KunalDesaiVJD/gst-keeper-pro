@@ -47,6 +47,8 @@
     upsertTaxpayerProfile: (clientId, patchObj) => call('upsertTaxpayerProfile', clientId, patchObj),
     // 0.19.0: one vendor GSTIN lookup (Search Taxpayer), one vendor_gstin_lookups row.
     saveVendorGstinLookup: (row) => call('saveVendorGstinLookup', row),
+    // 0.19.3: the vendor lookup's run ledger (vendor_lookup_runs), updated as the run goes.
+    updateVendorLookupRun: (id, patchObj) => call('updateVendorLookupRun', id, patchObj),
     getTaxpayerRegistrationDate: (clientId) => call('getTaxpayerRegistrationDate', clientId),
     replaceChallans: (clientId, rows) => call('replaceChallans', clientId, rows),
     upsertFiledReturn: (clientId, period, returnType, patchObj) => call('upsertFiledReturn', clientId, period, returnType, patchObj),

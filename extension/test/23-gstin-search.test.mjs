@@ -1,3 +1,8 @@
+// 0.19.3: the run ledger (vendor_lookup_runs: started, stage, counts and a
+// heartbeat each GSTIN, the outcome, a snapshot of a page it could not read,
+// run_id on every row, a thrown error marking the run failed), the public
+// Search Taxpayer page as the fallback for a GSTIN the logged-in page did not
+// answer, and an early stop when the first GSTIN fails on every page.
 // 0.19.2: vendor GSTINs on the portal's own Search Taxpayer page (mode
 // gstin_search), the Vendor GSTIN Risk report's Pull. After the client's login
 // it opens Search Taxpayer > Search by GSTIN/UIN from the dashboard's menu,
@@ -20,6 +25,7 @@ const read = (f) => fs.readFileSync(new URL(f, extDir), 'utf8');
 const DB = 'https://db.test';
 const ANON = 'anon-key';
 const GITA = '10000000-0000-0000-0000-000000000002';
+const RUN = '20000000-0000-0000-0000-000000000001';
 const CLIENT_GSTIN = '24ABCDE1234F1Z5';
 const ORIGIN = 'https://services.gst.gov.in';
 const VERSION = JSON.parse(read('manifest.json')).version;
@@ -38,6 +44,8 @@ async function dbFetch(url, init = {}) {
   if (u.startsWith(DB + '/rest/v1/vendor_gstin_lookups') && method === 'POST') {
     return lookupsDown ? new Response('{"message":"down"}', { status: 503 }) : new Response(null, { status: 201 });
   }
+  if (u.startsWith(DB + '/rest/v1/vendor_lookup_runs?id=eq.') && method === 'PATCH') return new Response(null, { status: 204 });
+  if (u.startsWith(DB + '/rest/v1/vendor_lookup_runs?id=eq.') && method === 'GET') return new Response(JSON.stringify([{ detail: { action: 'pull', missing: 3 } }]), { status: 200 });
   throw new Error('fake database has no route for ' + method + ' ' + u);
 }
 
@@ -132,6 +140,11 @@ class El {
     if (this.id === 'gstk-banner') banners.push(String(v));
   }
   get innerText() { return this.textContent; }
+  get outerHTML() {
+    const at = [this.id ? ` id="${this.id}"` : '', this.className ? ` class="${this.className}"` : '', this.name ? ` name="${this.name}"` : ''].join('');
+    return `<${this.tagName.toLowerCase()}${at}>${this.childNodes.map((n) => (n instanceof El ? n.outerHTML : n.textContent)).join('')}</${this.tagName.toLowerCase()}>`;
+  }
+  contains(o) { for (let e = o; e; e = e.parentElement) if (e === this) return true; return false; }
   set innerHTML(v) { this.childNodes = [new TextNode(String(v).replace(/<[^>]*>/g, ' '))]; }
   get connected() { let e = this; while (e.parentElement) e = e.parentElement; return e.tagName === 'HTML'; }
   get offsetParent() { for (let e = this; e; e = e.parentElement) if (e.hidden) return null; return this.connected ? {} : null; }
@@ -207,7 +220,8 @@ const LOGIN = ORIGIN + '/services/login';
 // whether answers are JSON (domOnly: an encrypted body, the page draws from it anyway),
 // whether the page asks a CAPTCHA, and what a replay of the page's request gets.
 let P;
-const resetPortal = (over = {}) => { P = { loggedIn: true, kind: {}, domOnly: false, captcha: false, replay: 'same', noSearchPage: false, pageXhr: [], ...over }; };
+// authHang (0.19.3): the logged-in page's Search never answers; the public page does.
+const resetPortal = (over = {}) => { P = { loggedIn: true, kind: {}, domOnly: false, captcha: false, replay: 'same', noSearchPage: false, authHang: false, pageXhr: [], presses: [], ...over }; };
 const kindOf = (g) => P.kind[g] || (g === V2 ? 'nf' : 'ok');
 // The portal's answer to one request: { status, text } or null (never answers).
 function api(method, url, bodyText, from) {
@@ -316,6 +330,8 @@ function buildPage(href, W, nav) {
   };
   btn.addEventListener('click', () => {
     const g = String(input.value || '').trim().toUpperCase();
+    P.presses.push({ g, path: u.pathname });
+    if (P.authHang && /\/auth\//.test(u.pathname)) return;
     if (cap && !String(cap.value || '').trim()) { err.textContent = 'Enter valid Letters shown.'; err.hidden = false; return; }
     if (cap) cap.value = '';
     err.hidden = true;
@@ -395,6 +411,8 @@ async function runPage(href) {
       pwRefusalClear: async () => null, loginIssueSet: async () => null, clearCaptchaNotice: async () => null,
       saveVendorGstinLookup: (row) => new Promise((resolve, reject) => bgListener({ gstk: true, fn: 'saveVendorGstinLookup', args: [row] }, { tab: { id: 1 } },
         (resp) => (resp && resp.error ? reject(new Error(resp.error)) : resolve(resp && resp.data)))),
+      updateVendorLookupRun: (id, p) => new Promise((resolve, reject) => bgListener({ gstk: true, fn: 'updateVendorLookupRun', args: [id, p] }, { tab: { id: 1 } },
+        (resp) => (resp && resp.error ? reject(new Error(resp.error)) : resolve(resp && resp.data)))),
     },
   };
   sandbox.window = sandbox; sandbox.globalThis = sandbox; sandbox.self = sandbox;
@@ -433,6 +451,14 @@ const reset = (over) => {
   resetPortal(over);
 };
 const rows = () => calls.filter((c) => c.method === 'POST' && c.url.startsWith(DB + '/rest/v1/vendor_gstin_lookups')).map((c) => c.body[0]);
+const runPatches = () => calls.filter((c) => c.method === 'PATCH' && c.url.startsWith(DB + '/rest/v1/vendor_lookup_runs?id=eq.')).map((c) => ({ url: c.url, ...c.body, headers: c.headers }));
+const lastRun = () => runPatches().reduce((acc, p) => ({ ...acc, ...p }), {});
+// A try that never answers presses Search three times (again every 15 s of its 45 s).
+const HANG_PRESSES = 3;
+const presses = (g, path) => P.presses.filter((x) => x.g === g && (!path || x.path === path)).length;
+const AUTH_PATH = '/services/auth/searchtp';
+const PUBLIC_PATH = '/services/searchtp';
+const V7 = '27EEEEE5555E1Z5';
 const now = Date.now();
 const client = { clientId: 'c1', creds: { user: 'u', name: 'FICTIONAL FABRICS', gstin: CLIENT_GSTIN, selectedReturns: [] } };
 const job = (extra) => ({ mode: 'gstin_search', step: 'gstin_search', idx: 0, startedAt: now, lastActivityAt: now, tabId: 1, actorId: GITA,
@@ -447,7 +473,17 @@ ok(started && started.mode === 'gstin_search' && started.step === 'login' && sta
 ok(started && JSON.stringify(started.gstins) === JSON.stringify([V1, V2, V3]), 'startSectionPull: the GSTINs as given, upper-cased, the malformed one left out', started && started.gstins);
 reset();
 await bgCall('startSectionPull', { clientId: 'c1', mode: 'gstr9_8a_pull', period_month: '03/2026', period_months: ['03/2026'], gstins: [V1] });
-ok(storage.gstk_active_job && !('gstins' in storage.gstk_active_job), 'startSectionPull: another mode\'s job is as before (no gstins field)', storage.gstk_active_job);
+ok(storage.gstk_active_job && !('gstins' in storage.gstk_active_job) && !('vendorRunId' in storage.gstk_active_job), 'startSectionPull: another mode\'s job is as before (no gstins / run field)', storage.gstk_active_job);
+ok(runPatches().length === 0 && !('vendorRunId' in started), 'startSectionPull: no run id from the app, no run update', runPatches());
+reset();
+await bgCall('startSectionPull', { clientId: 'c1', mode: 'gstin_search', period_month: '04/2025', period_months: ['04/2025'], gstins: [V1], actorId: GITA, run_id: RUN });
+const pick = runPatches()[0] || {};
+ok(storage.gstk_active_job.vendorRunId === RUN && !storage.gstk_active_job.runId && pick.url.endsWith('id=eq.' + RUN) && pick.status === 'started' && pick.stage === 'login'
+  && pick.extension_version === VERSION && !!pick.heartbeat_at && pick.headers['x-gst-actor'] === GITA,
+  'run ledger: picked up, the run is started (stage login, this version, a heartbeat), naming the app user', { job: storage.gstk_active_job, pick });
+reset();
+await bgCall('startSectionPull', { clientId: 'c1', mode: 'gstin_search', period_month: '04/2025', period_months: ['04/2025'], gstins: [V1], actorId: GITA, run_id: 'not-a-uuid' });
+ok(!('vendorRunId' in storage.gstk_active_job) && runPatches().length === 0, 'run ledger: a run id that is not a UUID is ignored', storage.gstk_active_job);
 
 // 2. Logged in: the job goes to fowelcome for the lookups.
 reset();
@@ -481,6 +517,8 @@ ok(a.payload && a.payload.flow === 'page' && a.payload.page === SEARCH && a.payl
   'ok row: payload names the page, the source of each column, the page\'s own request and the labels read', a.payload);
 ok(a.looked_up_by === GITA && a.via_client_id === 'c1' && a.extension_version === VERSION && a.source === 'gst_portal_search_taxpayer' && !('looked_up_at' in a),
   'ok row: who asked, whose login, the version; the time is the database\'s', a);
+ok(r.every((x) => !('run_id' in x)) && runPatches().length === 0 && a.payload.served_by === 'logged_in' && (r[1] && r[1].payload.served_by) === 'logged_in_replay',
+  'no run from the app: no run_id on the rows, no run updates; each row says which page served it', r.map((x) => [x.run_id, x.payload.served_by]));
 const b = r[1] || {};
 ok(b.status === 'not_found' && /No records found/.test(b.error) && b.legal_name === undefined, 'not found: status not_found, the portal\'s words', b);
 const c3 = r[2] || {};
@@ -519,23 +557,25 @@ ok(d.visits.filter((v) => v === SEARCH).length >= 2 && pageSearches(V3) === 1 &&
 
 // 5. The firewall's "Request Rejected" to the page's own request: an error row
 //    after one retry, the run goes on (never "session ended").
+//    (0.19.3: tried twice on the logged-in page, then twice on the public page.)
 reset({ kind: { [V1]: 'waf' } });
-storage.gstk_active_job = job({ gstins: [V1, V3] });
-d = await drive(WELCOME);
+storage.gstk_active_job = job({ gstins: [V3, V1, V4] });
+d = await drive(WELCOME, 60);
 r = rows();
-ok(d.end === 'done' && r.length === 2 && r[0].status === 'error' && r[1].status === 'ok', 'Request Rejected: an error row, then on to the next GSTIN', r.map((x) => [x.gstin, x.status, x.error]));
-ok(/Request Rejected.*support ID 1234567890123456789/.test(r[0].error) && /still open/.test(r[0].error) && !/session ended/.test(r[0].error)
-  && r[0].payload.refused[0].kind === 'request_rejected' && r[0].payload.tries === 2,
-  'Request Rejected: named as the firewall\'s refusal with its support ID, tried twice, not a session end', r[0]);
-ok(pageSearches(V1) === 2 && d.visits.filter((v) => v === SEARCH).length === 2 && /done: 1 found, 0 not found, 1 failed/.test(d.doc.banner()),
-  'Request Rejected: one retry after reloading the page; the run finishes', { visits: d.visits, b: d.doc.banner() });
+ok(d.end === 'done' && r.length === 3 && r[0].status === 'ok' && r[1].status === 'error' && r[2].status === 'ok', 'Request Rejected: an error row, then on to the next GSTIN', r.map((x) => [x.gstin, x.status, x.error]));
+ok(/Request Rejected.*support ID 1234567890123456789/.test(r[1].error) && /still open/.test(r[1].error) && !/session ended/.test(r[1].error)
+  && /^logged-in page \/services\/auth\/searchtp: .*; public page \/services\/searchtp: /.test(r[1].error)
+  && r[1].payload.refused[0].kind === 'request_rejected' && r[1].payload.tries === 2 && r[1].payload.served_by === 'public' && r[1].payload.first_try.page === AUTH_PATH,
+  'Request Rejected: named as the firewall\'s refusal with its support ID, on both pages, tried twice each, not a session end', r[1]);
+ok(presses(V1, AUTH_PATH) === 2 && presses(V1, PUBLIC_PATH) === 2 && presses(V4, AUTH_PATH) === 1 && /done: 2 found, 0 not found, 1 failed/.test(d.doc.banner()),
+  'Request Rejected: one retry on each page, then back to the logged-in page for the next; the run finishes', { presses: P.presses, b: d.doc.banner() });
 
 // 6. HTTP 403 with the person still logged in: the same, never a session end.
 reset({ kind: { [V1]: '403' } });
-storage.gstk_active_job = job({ gstins: [V1, V3] });
-d = await drive(WELCOME);
+storage.gstk_active_job = job({ gstins: [V3, V1, V4] });
+d = await drive(WELCOME, 60);
 r = rows();
-ok(d.end === 'done' && r.length === 2 && r[0].status === 'error' && /HTTP 403/.test(r[0].error) && /still open/.test(r[0].error) && r[1].status === 'ok'
+ok(d.end === 'done' && r.length === 3 && r[1].status === 'error' && /HTTP 403/.test(r[1].error) && /still open/.test(r[1].error) && r[2].status === 'ok'
   && !d.visits.includes(LOGIN) && !storage.gstk_active_job,
   '403 while logged in: an error row, no re-login, the run goes on and finishes', { rows: r.map((x) => [x.status, x.error]), visits: d.visits });
 
@@ -596,18 +636,19 @@ ok(banners.some((t) => /Type the CAPTCHA on the portal page to continue/.test(t)
 ok(pageSearches(V3) === 0, 'captcha: Search is never pressed with the CAPTCHA box empty (GST Keeper never fills it)', P.pageXhr);
 
 // 12. Five failed lookups in a row stop the run, with the last reason.
+//     (0.19.3: after a first GSTIN found; each failed on both pages.)
 reset({ kind: { [V1]: 'hang', [V2]: 'hang', [V3]: 'hang', [V4]: 'hang', [V5]: 'hang' } });
-storage.gstk_active_job = job({ gstins: [V1, V2, V3, V4, V5, V6] });
-d = await drive(WELCOME, 60);
-r = rows();
-ok(d.end === 'done' && r.length === 5 && r.every((x) => x.status === 'error' && /no result within 45 s/.test(x.error))
-  && /stopped: 5 lookups failed in a row \(last: no result within 45 s\).*1 not looked up/.test(d.doc.banner()),
+storage.gstk_active_job = job({ gstins: [V6, V1, V2, V3, V4, V5, V7] });
+d = await drive(WELCOME, 160);
+r = rows().slice(1);
+ok(d.end === 'done' && rows()[0].status === 'ok' && r.length === 5 && r.every((x) => x.status === 'error' && /no result within 45 s/.test(x.error))
+  && /stopped: 5 lookups failed in a row \(last: logged-in page [^;]*no result within 45 s; public page [^)]*no result within 45 s\).*1 not looked up/.test(d.doc.banner()),
   'five failures in a row: five error rows, then stop with the last reason', { rows: r.map((x) => x.error), b: d.doc.banner() });
 
 // 13. Four failures then a success: the run goes on (only 5 in a row stop it).
 reset({ kind: { [V1]: 'hang', [V2]: 'hang', [V3]: 'hang', [V4]: 'hang' } });
-storage.gstk_active_job = job({ gstins: [V1, V2, V3, V4, V5, V6] });
-d = await drive(WELCOME, 60);
+storage.gstk_active_job = job({ gstins: [V6, V1, V2, V3, V4, V5] });
+d = await drive(WELCOME, 160);
 ok(d.end === 'done' && rows().length === 6 && /done: 2 found, 0 not found, 4 failed/.test(d.doc.banner()), 'four failures then found: the run finishes', d.doc.banner());
 
 // 14. GST Keeper does not take the rows: stop after two failed saves.
@@ -653,6 +694,69 @@ ok(d.end === 'done' && rows().length === 0 && d.visits.join() === [WELCOME, SEAR
     && kept[0].reqHeaders.at === 't' && JSON.parse(kept[0].reqBody).gstin === V1 && !s2.store.has('__gstkGS'),
     'inject.js: the page\'s own search request and answer copied on services.gst.gov.in only', { kept, other: [...s2.store.keys()] });
 }
+
+// ── 0.19.3 ──────────────────────────────────────────────────────────────────
+
+// 17. The run ledger: a heartbeat with the counts at least once a GSTIN, the outcome at the end, run_id on every row.
+reset();
+storage.gstk_active_job = job({ gstins: [V1, V2, V3], vendorRunId: RUN });
+d = await drive(WELCOME);
+r = rows();
+let rp = runPatches();
+let fin = lastRun();
+ok(d.end === 'done' && r.length === 3 && r.every((x) => x.run_id === RUN), 'run ledger: every saved lookup carries run_id', r.map((x) => x.run_id));
+ok(rp.length >= 4 && rp.every((x) => x.url.endsWith('id=eq.' + RUN) && !!x.heartbeat_at && x.headers['x-gst-actor'] === GITA)
+  && rp.filter((x) => x.stage === 'looking_up' && typeof x.found === 'number').length >= 3,
+  'run ledger: a heartbeat with stage and counts at least once a GSTIN', rp.map((x) => [x.status, x.stage, x.found, x.not_found, x.failed]));
+ok(fin.status === 'done' && fin.found === 2 && fin.not_found === 1 && fin.failed === 0 && !!fin.finished_at && fin.stop_reason === null && fin.detail && fin.detail.action === 'pull' && fin.detail.extension.left === 0,
+  'run ledger: done with the counts; the app\'s detail kept, the extension\'s merged under detail.extension', fin);
+
+// 18. The first GSTIN fails on every page: stop early, the pages named, the snapshot on the run.
+reset({ kind: { [V1]: 'hang' } });
+storage.gstk_active_job = job({ gstins: [V1, V2, V3, V4, V5, V6], vendorRunId: RUN });
+d = await drive(WELCOME, 60);
+r = rows();
+fin = lastRun();
+ok(d.end === 'done' && r.length === 1 && r[0].status === 'error' && r[0].run_id === RUN && presses(V1, AUTH_PATH) === 2 * HANG_PRESSES && presses(V1, PUBLIC_PATH) === 2 * HANG_PRESSES && presses(V3) === 0,
+  'early stop: the first GSTIN tried twice on each page, one error row, nothing else tried', { rows: r.map((x) => [x.gstin, x.status]), presses: P.presses });
+ok(fin.status === 'stopped' && /the first vendor GSTIN \(27AAACR5055K1Z7\) could not be looked up on any page \(\/services\/auth\/searchtp, \/services\/searchtp\)/.test(fin.stop_reason)
+  && /other 5 are not tried/.test(fin.stop_reason) && fin.failed === 1 && !!fin.finished_at,
+  'early stop: the run stopped, its reason naming both pages', fin);
+ok(fin.page_url === ORIGIN + PUBLIC_PATH && /^PAGE TEXT\n/.test(fin.page_snapshot) && /HTML \(search form \/ result area\)/.test(fin.page_snapshot) && /id="for_gstin"/.test(fin.page_snapshot)
+  && fin.page_snapshot.length <= 42000 && runPatches().some((x) => x.stage === 'public_page' && x.page_url === ORIGIN + AUTH_PATH && /for_gstin/.test(x.page_snapshot || '')),
+  'early stop: the page address and a snapshot (text and the form\'s HTML) on the run, the logged-in page\'s too when it failed', { page_url: fin.page_url, snap: String(fin.page_snapshot).slice(0, 300) });
+ok(/stopped: the first vendor GSTIN/.test(d.doc.banner()) && /5 not looked up/.test(d.doc.banner()), 'early stop: the banner says so', d.doc.banner());
+
+// 19. The logged-in page never answers, the public page does: each GSTIN served there, recorded so;
+//     after two, the rest go straight to the public page.
+reset({ authHang: true });
+storage.gstk_active_job = job({ gstins: [V1, V3, V4], vendorRunId: RUN });
+d = await drive(WELCOME, 60);
+r = rows();
+ok(d.end === 'done' && r.length === 3 && r.every((x) => x.status === 'ok' && x.payload.served_by === 'public'), 'public fallback: every GSTIN found on the public page', r.map((x) => [x.gstin, x.status, x.payload && x.payload.served_by]));
+ok(r[0].payload.first_try && r[0].payload.first_try.page === AUTH_PATH && /no result within 45 s/.test(r[0].payload.first_try.reason) && r[0].payload.page === ORIGIN + PUBLIC_PATH,
+  'public fallback: the row names the page that served it and why the logged-in page did not', r[0].payload);
+ok(presses(V1, AUTH_PATH) === 2 * HANG_PRESSES && presses(V3, AUTH_PATH) === 2 * HANG_PRESSES && presses(V4, AUTH_PATH) === 0 && presses(V4, PUBLIC_PATH) === 1,
+  'public fallback: back to the logged-in page after the first; after two served by the public page, the rest go there', P.presses);
+ok(lastRun().status === 'done' && lastRun().found === 3 && lastRun().detail.extension.served.public === 3, 'public fallback: the run is done, served counts recorded', lastRun());
+
+// 20. An error thrown inside the handler: the run is failed with the message and the stack; the job ends.
+reset();
+storage.gstk_active_job = job({ gstins: [V1, V2], vendorRunId: RUN, periods: 5 });
+d = await drive(WELCOME);
+fin = lastRun();
+ok(d.end === 'done' && !storage.gstk_active_job && fin.status === 'failed' && /GST Keeper error in the vendor lookup: /.test(fin.stop_reason)
+  && fin.detail.extension.stack.length > 0 && /not iterable/.test(fin.detail.extension.error) && !!fin.page_url && /^PAGE TEXT/.test(fin.page_snapshot) && fin.stage === 'error',
+  'thrown error: the run failed with the message, the stack and a snapshot; the job cleared', fin);
+ok(/Vendor GSTIN lookup failed: .*not iterable.*The run is recorded/.test(d.doc.banner()), 'thrown error: the banner says so', d.doc.banner());
+
+// 21. No search page anywhere: the run stops with the pages tried and the snapshot.
+reset({ noSearchPage: true });
+storage.gstk_active_job = job({ gstins: [V1, V2], vendorRunId: RUN });
+d = await drive(WELCOME);
+fin = lastRun();
+ok(fin.status === 'stopped' && /could not open the portal's Search Taxpayer page/.test(fin.stop_reason) && /under maintenance/.test(fin.page_snapshot) && fin.page_url === ORIGIN + PUBLIC_PATH,
+  'no search page: the run stopped, the page it ended on kept', fin);
 
 console.log(fail ? '\n' + fail + ' FAILED' : '\nall passed');
 process.exit(fail ? 1 : 0);

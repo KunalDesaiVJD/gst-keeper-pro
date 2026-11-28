@@ -1,5 +1,7 @@
-// Vendor GSTIN Risk Report: the identification strip and the count per risk
-// band first, then tabs: the vendor list (the shared document view, the table
+// Vendor GSTIN Risk Report: the identification strip, the alerts (the latest
+// lookup run when it stalled, was refused or stopped; vendors with no lookup;
+// months of 2A / 2B not pulled) and the count per risk band and per data
+// source first, then tabs: the vendor list (the shared document view, the table
 // kit: filters, sort, group, hide columns, filtered export), the management
 // summary, and the three action lists with the recommendations. It reads the
 // report's own tables (rows, summary, extraSheets), the same ones the Excel
@@ -80,6 +82,14 @@ const SheetCard: React.FC<{ sheet: ReportSummary | ReportSheet }> = ({ sheet }) 
   </Card>
 );
 
+const ALERT_TONE: Record<RowTone, string> = {
+  bad: 'border-destructive/40 bg-destructive/10 font-medium text-destructive',
+  warn: 'border-warning/40 bg-warning/15 text-foreground',
+  good: 'border-success/30 bg-success/10 text-foreground',
+  info: 'border-primary/20 bg-primary/[0.05] text-foreground',
+  muted: 'bg-muted text-muted-foreground',
+};
+
 const countOf = (s: ReportSheet) => (s.rows.length === 1 && s.rows[0].slice(1).every((c) => c === '') ? 0 : s.rows.length);
 
 export const VendorRiskView: React.FC<VendorRiskViewProps> = ({ table, report }) => {
@@ -100,6 +110,14 @@ export const VendorRiskView: React.FC<VendorRiskViewProps> = ({ table, report })
         </div>
       )}
 
+      {table.alerts && table.alerts.length > 0 && (
+        <div className="space-y-1.5" role="status">
+          {table.alerts.map((a, i) => (
+            <div key={i} className={cn('rounded-md border px-3 py-2 text-xs leading-snug', ALERT_TONE[a.tone])}>{a.text}</div>
+          ))}
+        </div>
+      )}
+
       {table.kpis && (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
           {table.kpis.map((k) => (
@@ -114,7 +132,7 @@ export const VendorRiskView: React.FC<VendorRiskViewProps> = ({ table, report })
           {table.summary && <TabsTrigger value="summary" className="text-xs">Management summary</TabsTrigger>}
           {sheets.map((s) => (
             <TabsTrigger key={s.name} value={s.name} className="text-xs">
-              {s.name}{s.name !== 'Recommendations' ? ` (${countOf(s)})` : ''}
+              {s.name}{s.name !== 'Recommendations' && s.name !== 'Data coverage' ? ` (${countOf(s)})` : ''}
             </TabsTrigger>
           ))}
         </TabsList>
