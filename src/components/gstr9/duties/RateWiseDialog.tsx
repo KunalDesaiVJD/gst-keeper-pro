@@ -6,8 +6,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { MONTH_LABEL, tin } from '@/lib/gstr9/engine';
 import { newId } from '@/lib/gstr9/defaults';
 import { GST_RATES, hasRateLines, meaningfulLines, rateLinesTotal } from '@/lib/gstr9/rateWise';
+import {
+  BUILDER_RATE_CODES,
+  BUILDER_RATE_SHORT,
+  isBuilderRateCode,
+  projectDefaultCode,
+  receiptBreakup,
+  type BuilderProjectRate,
+} from '@/lib/gstr9/builderReceipts';
 import type { DtRateLine, MonthKey, SupplyType, TaxIn } from '@/lib/gstr9/types';
-import { GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
+import { type CellEdit, GridColumn, GridFooterRow, SheetGrid } from '../grid/SheetGrid';
 import { lockSgst, moneyCol } from '../grid/columns';
 import { fmtMoney, fmtRate } from '../grid/money';
 import { autoTaxFor, setFormula, SUPPLY_OPTIONS, TAX_KEY } from '../sales/salesEntry';
@@ -57,6 +65,25 @@ const syncSupply = (l: DtRateLine): DtRateLine => {
   return supplyType === l.supplyType ? l : { ...l, supplyType };
 };
 
+/**
+ * Builder clients: a line with a receipt and a type takes its rate, taxable value (2/3rd after the land
+ * deduction) and tax from the receipt. Intra-state always (s.12(3)(a) IGST Act: the property's location).
+ */
+const fromReceipt = (l: DtRateLine): DtRateLine => {
+  if (l.receipt === null || l.receipt === undefined || !isBuilderRateCode(l.rateCode)) return l;
+  const b = receiptBreakup(l.receipt, l.rateCode);
+  let out: DtRateLine = { ...l, rate: b.ratePct, supplyType: 'intra', taxable: b.taxable, igst: 0, cgst: 0, sgst: null };
+  out = setFormula(out, 'rate', undefined);
+  out = setFormula(out, 'taxable', undefined);
+  const a = autoTaxFor(out);
+  out = { ...out, igst: 0, cgst: a ? a.cgst : 0 };
+  out = setFormula(out, TAX_KEY.i, undefined);
+  return setFormula(out, TAX_KEY.c, a?.formula);
+};
+
+/** A rate or value typed by hand: the line no longer follows its receipt. */
+const dropReceipt = (l: DtRateLine): DtRateLine => (l.receipt === null || l.receipt === undefined ? l : { ...l, receipt: null });
+
 // ---------------------------------------------------------------------------
 // Dialog
 // ---------------------------------------------------------------------------
@@ -80,6 +107,8 @@ interface Props {
   onClose: () => void;
   /** New lines per side; an empty list means "enter this group's books figure directly" (its figure stays as it is). */
   onApply: (lines: Record<string, DtRateLine[]>) => void;
+  /** Builder clients (output side): the client's projects, to enter lines from receipts at the project's rate. */
+  builderProjects?: BuilderProjectRate[] | null;
 }
 
 const HEADS: Array<['i' | 'c' | 's' | 'x', string]> = [['i', 'IGST'], ['c', 'CGST'], ['s', 'SGST'], ['x', 'Cess']];
@@ -90,7 +119,8 @@ const HEADS: Array<['i' | 'c' | 's' | 'x', string]> = [['i', 'IGST'], ['c', 'CGS
  * lines and their sum into the month's group; a group left with no lines keeps
  * its figure and is typed directly in the month grid again.
  */
-const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly, onClose, onApply }) => {
+const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly, onClose, onApply, builderProjects }) => {
+  const builder = !!builderProjects;
   const [active, setActive] = useState(sides[0]?.key ?? '');
   const [draft, setDraft] = useState<Record<string, DtRateLine[]>>({});
 
@@ -107,9 +137,53 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
   const lines = draft[active] ?? [];
   const setLines = (next: DtRateLine[]) => setDraft((d) => ({ ...d, [active]: next }));
   const addRate = (rate: number) => setLines([...lines, newRateLine(rate)]);
+  const addReceipt = () => {
+    const only = builderProjects?.length === 1 ? builderProjects[0] : undefined;
+    const code = projectDefaultCode(only);
+    setLines([...lines, { ...newRateLine(null), receipt: null, rateCode: code, projectId: only?.id ?? null }]);
+  };
 
   const columns = useMemo<GridColumn<DtRateLine>[]>(() => {
+    const projOptions = (builderProjects ?? []).map((p) => ({ value: p.id, label: p.name }));
+    const builderCols: GridColumn<DtRateLine>[] = builder
+      ? [
+          ...(projOptions.length
+            ? [
+                {
+                  key: 'project',
+                  header: 'Project',
+                  type: 'select',
+                  width: 140,
+                  options: projOptions,
+                  value: (r: DtRateLine) => r.projectId ?? null,
+                  title: () => 'The builder project the receipt belongs to; its type follows the project’s units',
+                  onEdit: (r: DtRateLine, e: CellEdit) => {
+                    const p = builderProjects?.find((x) => x.id === e.text);
+                    if (!p) return r;
+                    return fromReceipt({ ...r, projectId: p.id, rateCode: projectDefaultCode(p) });
+                  },
+                } as GridColumn<DtRateLine>,
+              ]
+            : []),
+          {
+            key: 'rateCode',
+            header: 'Type',
+            type: 'select',
+            width: 190,
+            options: BUILDER_RATE_CODES.map((c) => ({ value: c, label: BUILDER_RATE_SHORT[c] })),
+            value: (r) => (isBuilderRateCode(r.rateCode) ? r.rateCode : null),
+            title: () => 'Notified rate on 2/3rd of the value (1/3rd deemed land, Notification 11/2017 para 2); the effective rate is on the whole amount',
+            onEdit: (r, e) => (isBuilderRateCode(e.text) ? fromReceipt({ ...r, rateCode: e.text }) : r),
+          },
+          moneyCol<DtRateLine>('receipt', 'Receipts (incl. GST)', (r) => r.receipt ?? null, (r, v) => fromReceipt({ ...r, receipt: v }), {
+            width: 140,
+            nullable: true,
+            title: () => 'Amount received, GST included: the taxable value (2/3rd after the land deduction) and tax are backed out at the type’s rate',
+          }),
+        ]
+      : [];
     const cols: GridColumn<DtRateLine>[] = [
+      ...builderCols,
       {
         key: 'rate',
         header: 'Rate %',
@@ -118,7 +192,7 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
         value: (r) => r.rate,
         formula: (r) => r.f?.rate,
         title: () => 'GST rate in percent (18 = 18%). The tax is filled from it until a different figure is typed.',
-        onEdit: (r, e) => setFormula(withAutoTax(r, { ...r, rate: e.num }), 'rate', e.formula),
+        onEdit: (r, e) => setFormula(withAutoTax(r, dropReceipt({ ...r, rate: e.num })), 'rate', e.formula),
       },
       {
         key: 'supply',
@@ -130,7 +204,7 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
         title: () => 'Inter-state → IGST, intra-state → CGST + SGST',
         onEdit: (r, e) => (e.text ? withAutoTax(r, { ...r, supplyType: e.text as SupplyType }) : r),
       },
-      moneyCol<DtRateLine>('taxable', 'Taxable value', (r) => r.taxable, (r, v) => withAutoTax(r, { ...r, taxable: v ?? 0 }), { width: 140 }),
+      moneyCol<DtRateLine>('taxable', 'Taxable value', (r) => r.taxable, (r, v) => withAutoTax(r, dropReceipt({ ...r, taxable: v ?? 0 })), { width: 140 }),
       moneyCol<DtRateLine>(TAX_KEY.i, 'IGST', (r) => r.igst, (r, v) => syncSupply({ ...r, igst: v ?? 0 })),
       moneyCol<DtRateLine>(TAX_KEY.c, 'CGST', (r) => r.cgst, (r, v) => syncSupply({ ...r, cgst: v ?? 0, sgst: null })),
       lockSgst(moneyCol<DtRateLine>(TAX_KEY.s, 'SGST', (r) => r.sgst, (r) => r, { nullable: true, placeholder: (r) => r.cgst })),
@@ -157,7 +231,7 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
       },
     });
     return cols;
-  }, [cess]);
+  }, [cess, builder, builderProjects]);
 
   const total = rateLinesTotal(lines);
   const footer = useMemo<GridFooterRow[]>(
@@ -228,6 +302,12 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
                   {fmtRate(r)}
                 </Button>
               ))}
+              {builder && (
+                <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={addReceipt}>
+                  <Plus className="mr-0.5 h-3 w-3" aria-hidden />
+                  From receipts
+                </Button>
+              )}
             </div>
           )}
 
@@ -269,6 +349,13 @@ const RateWiseDialog: React.FC<Props> = ({ month, ledger, sides, cess, readOnly,
             until a different figure is typed; “Not at rate” flags a line whose tax differs from its rate. You can paste rows copied from Excel
             (Rate, Supply, Taxable value, IGST, CGST …).
           </Note>
+          {builder && (
+            <Note tone="info">
+              Builder: type the month’s receipts (GST included) and the project’s type. The consideration is the receipt less GST at the
+              effective rate (1%, 5% or 12%); a third of it is deemed land and the rest is the taxable value, taxed at the notified rate
+              (1.5%, 7.5% or 18%), as in the Builder module. Typing a rate or value by hand stops the line following its receipt.
+            </Note>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:gap-2">

@@ -232,6 +232,15 @@ export interface DtRateLine {
   cess: number;
   /** Expressions typed into this line ("taxable", "rate", "tax.c" …). */
   f?: Formulas;
+  /**
+   * Builder clients only: the line entered from receipts (GST inclusive). The taxable value (2/3rd after
+   * the land deduction) and tax are backed out of it at the type's rate (builderReceipts.ts).
+   */
+  receipt?: number | null;
+  /** Builder rate code of the receipt (AFFORDABLE, OTHER_RESIDENTIAL, COMMERCIAL_RREP, COMMERCIAL_REP). */
+  rateCode?: string | null;
+  /** Builder project the receipt belongs to (builder_projects.id), for the line's default type. */
+  projectId?: string | null;
 }
 
 /** The rate-wise breakup of a month's typed groups; a group without lines is entered directly. */

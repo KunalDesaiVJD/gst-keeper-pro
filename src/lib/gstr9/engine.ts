@@ -1754,7 +1754,7 @@ const QUARTERS: MonthKey[][] = [['apr', 'may', 'jun'], ['jul', 'aug', 'sep'], ['
 export const ECOM_95_RATE_KEY = 'ecom_9_5';
 
 /** GST rates in force (percent). */
-export const STANDARD_RATES = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 12, 18, 28, 40];
+export const STANDARD_RATES = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40];
 
 /** Snap an implied rate to the nearest standard rate within 0.5 points, else "unknown". */
 function snapRate(implied: number | null): string {

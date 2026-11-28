@@ -7,8 +7,8 @@
 
 import type { DtRateLine, Tax, TaxIn, ValTax } from './types';
 
-/** Quick-add rates for a new line (any other rate, e.g. 0.1% or 1.5%, can be typed in the Rate % cell). */
-export const GST_RATES = [0.25, 3, 5, 12, 18, 28, 40] as const;
+/** Quick-add rates for a new line (any other rate, e.g. 0.1% or 6%, can be typed in the Rate % cell). */
+export const GST_RATES = [0.25, 1.5, 3, 5, 7.5, 12, 18, 28, 40] as const;
 
 const n0 = (v: number | null | undefined): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const r2 = (n: number): number => {
