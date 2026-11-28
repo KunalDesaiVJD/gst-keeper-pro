@@ -20,7 +20,7 @@ const fetchClient = async (clientId: string): Promise<ClientLite> => {
   return (data || { id: clientId, name: 'Unknown', gstin: '' }) as ClientLite;
 };
 
-const GST_SLABS = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28];
+const GST_SLABS = [0, 0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40];
 const deriveRate = (taxable: number, totalTax: number): number => {
   if (taxable <= 0) return 0;
   const raw = (totalTax / taxable) * 100;
