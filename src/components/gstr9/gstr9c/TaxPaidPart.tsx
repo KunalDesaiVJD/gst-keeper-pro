@@ -14,7 +14,6 @@ import { fmtMoney } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox, RefStrip } from './bits';
-import { FiledPaidGrid } from './FiledGstr9';
 import { FormGrid } from './FormGrid';
 import { FigLink } from '../figure/FigLink';
 import { c9Row, g9T9Paid, rcmPartB, salesPartA } from './sourceTargets';
@@ -95,7 +94,7 @@ export const Table9Card: React.FC = () => {
   const W = workings.gstr9c;
   const def = W.defaults;
 
-  const qSourceTitle = 'GSTR-9 tax paid per head: Table 9 (cash + ITC) plus Table 14 differential tax paid. The portal checks 9Q against it.';
+  const qSourceTitle = 'Type 9Q from the filed GSTR-9: Table 9 paid (cash + ITC) + Table 14 paid, per head';
 
   const t9Lines = useMemo<FormLine[]>(() => {
     const lines: FormLine[] = GSTR9C_T9_RATE_KEYS.map((k) => {
@@ -135,19 +134,21 @@ export const Table9Card: React.FC = () => {
         label: T9_LABEL.Q,
         mode: 'override',
         heads: TAX_HEADS,
-        stored: figs(C.t9Q, false),
-        def: figs(def.t9Q, false) ?? {},
-        fKey: 't9Q',
-        write: (d, v) => ({ ...d, t9Q: v ? toTax(v) : null }),
+        // Typed from the filed GSTR-9: the portal checks 9Q against it per head (filedG9, 28 Nov 2026).
+        stored: figs(C.filedG9?.paid ?? null, false),
+        def: figs(W.g9Tie.working.paid, false) ?? {},
+        fKey: 'filedG9.paid',
+        // t9Q (an old typed-over 9Q) is cleared with it: the cell now holds the filed figure.
+        write: (d, v) => ({ ...d, t9Q: null, filedG9: { ...(d.filedG9 ?? {}), paid: v ? toTax(v) : null } }),
         link: g9T9Paid,
-        source: W.g9Tie.filed.paid ? 'GSTR-9 as filed' : 'GSTR-9 Table 9 + 14 paid',
-        tieKey: 'gstr9c.9Q',
+        source: 'GSTR-9 working',
         sourceTitle: qSourceTitle,
+        tieKey: 'gstr9c.g9filed.9Q',
       },
       { id: 'R', code: '9R', label: T9_LABEL.R, hint: '(Q − P)', mode: 'computed', heads: TAX_HEADS, shown: figs(W.t9.R, false) ?? {}, emphasis: 'diff', diffKey: 'gstr9c.9R' },
     );
     return lines;
-  }, [C.t9, C.t9Other, C.t9Q, def.t9, def.t9Q, W.t9, W.g9Tie, qSourceTitle]);
+  }, [C.t9, C.t9Other, C.filedG9, def.t9, W.t9, W.g9Tie, qSourceTitle]);
 
   const k1Src = W.t9.source.K1;
   const k1Derived = (k1Src === 'sales' || k1Src === 'rcm' || k1Src === 'sales+rcm') && Math.abs(n0(W.t9.rows.K1?.t)) >= 0.005;
@@ -167,11 +168,10 @@ export const Table9Card: React.FC = () => {
           </Button>
         </Note>
       )}
-      <FiledPaidGrid />
       <FormGrid label="GSTR-9C Table 9" lines={t9Lines} heads={FORM_HEADS} labelWidth={260} maxHeight={C9_GRID_MAX_H} pinLast />
       <Note tone="position">
-        RC rows add every RCM Part B expense block, taxable value included — the sheet’s Part B taxable total adds only two of the four blocks. 9Q is the
-        tax paid in the GSTR-9 as filed, Table 9 (cash and ITC) plus Table 14, as the form reads and the portal checks; the sheet took the tax payable.
+        RC rows add every RCM Part B expense block, taxable value included — the sheet’s Part B taxable total adds only two of the four blocks. 9Q is typed
+        from the filed GSTR-9: Table 9 paid (cash and ITC) plus Table 14; the sheet took the tax payable.
       </Note>
       <ReasonsBox field="t10Reasons" code="10" title="Reasons for un-reconciled payment of amount" diffKey="gstr9c.9R" />
     </SectionCard>

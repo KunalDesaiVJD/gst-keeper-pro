@@ -658,15 +658,16 @@ export type Gstr9cT16Key = (typeof GSTR9C_T16_KEYS)[number];
 
 /** GSTR-9 as filed (see Gstr9cDoc.filedG9). */
 export interface Gstr9FiledFigures {
-  /** Table 5N total turnover (including advances). */
-  t5N: number | null;
-  /** Table 10 and Table 11 taxable value. */
-  t10: number | null;
-  t11: number | null;
-  /** Table 9 tax paid (cash + ITC) per head. */
-  paid9: Tax | null;
-  /** Table 14 differential tax paid per head. */
-  paid14: Tax | null;
+  /** 5Q as the filed GSTR-9 gives it (5N + 10 − 11), typed in the 5Q cell. */
+  turnover?: number | null;
+  /** 9Q per head as the filed GSTR-9 gives it (Table 9 cash + ITC, plus Table 14), typed in the 9Q cell. */
+  paid?: Tax | null;
+  /** The first layout (28 Nov 2026, a separate box), read when the above are absent. */
+  t5N?: number | null;
+  t10?: number | null;
+  t11?: number | null;
+  paid9?: Tax | null;
+  paid14?: Tax | null;
 }
 
 export interface Gstr9cDoc {

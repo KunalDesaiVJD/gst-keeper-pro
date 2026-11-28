@@ -1247,7 +1247,9 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   const t5P = GSTR9C_T5_KEYS.reduce((s, k) => s + (GSTR9C_T5_SUB.includes(k) ? -t5Rows[k] : t5Rows[k]), t5A);
   // The GSTR-9 as filed (typed from its summary): the portal checks 5Q and 9Q against it, not the working.
   const FG = C.filedG9 ?? null;
-  const filedTurnover = FG && FG.t5N !== null && FG.t5N !== undefined ? num(FG.t5N) + num(FG.t10) - num(FG.t11) : null;
+  // Typed in the 5Q / 9Q cells (the first layout's separate box is still read).
+  const filedTurnover = FG && FG.turnover !== null && FG.turnover !== undefined ? num(FG.turnover)
+    : FG && FG.t5N !== null && FG.t5N !== undefined ? num(FG.t5N) + num(FG.t10) - num(FG.t11) : null;
   const t5QDefault = filedTurnover ?? totalTurnover.t;
   const t5Q = C.t5Q === null || C.t5Q === undefined ? t5QDefault : num(C.t5Q);
   const pick = (v: number | null | undefined, d: number) => (v === null || v === undefined ? d : num(v));
@@ -1308,7 +1310,7 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
   // 27 Nov 2026, after the portal refused a 9C that carried Table 9 alone); the sheet took the payable.
   const t14Paid = tax(G.t14.igst.paid, G.t14.cgst.paid, G.t14.sgst.paid, G.t14.cess.paid);
   const g9TaxPaid = addT(tax(t9.igst.paid, t9.cgst.paid, t9.sgst.paid, t9.cess.paid), t14Paid);
-  const filedPaid = FG && FG.paid9 ? addT(tin(FG.paid9), tin(FG.paid14 ?? tax())) : null;
+  const filedPaid = FG && FG.paid ? tin(FG.paid) : FG && FG.paid9 ? addT(tin(FG.paid9), tin(FG.paid14 ?? tax())) : null;
   const c9QDefault = filedPaid ?? g9TaxPaid;
   const c9Q = C.t9Q === null || C.t9Q === undefined ? c9QDefault : tin(C.t9Q);
   const c9R = subT(c9Q, taxOf(c9P));
@@ -1598,31 +1600,30 @@ export function computeWorkings(docs: AnnualReturnDocs, ctx: WorkspaceContext): 
     const asFiled = filedTurnover !== null ? 'GSTR-9 as filed' : 'GSTR-9 working';
     push('gstr9c.5Q', 'gstr9c', 'GSTR-9C 5Q: annual turnover declared vs GSTR-9 (5N + 10 − 11)', val(t5Q), val(t5QDefault), {
       direction: '9C 5Q − GSTR-9', aLabel: 'GSTR-9C 5Q', bLabel: `${asFiled} 5N + 10 − 11`, hasTaxable: true, hasTax: false,
-      mustTie: 'The portal refuses the GSTR-9C when 5Q (annual turnover declared) differs from the GSTR-9 as filed: 5N + Table 10 − Table 11, to the paisa. Enter the filed GSTR-9 figures on Table 5 and reset 5Q.',
+      mustTie: '5Q was typed over and differs from the filed GSTR-9; the portal refuses it. Reset it.',
     });
     push('gstr9c.9Q', 'gstr9c', 'GSTR-9C 9Q: total amount paid vs GSTR-9 (Table 9 + Table 14 paid)', withT(0, c9Q), withT(0, c9QDefault), {
       direction: '9C 9Q − GSTR-9', aLabel: 'GSTR-9C 9Q', bLabel: `${filedPaid ? 'GSTR-9 as filed' : 'GSTR-9 working'} Table 9 + 14 paid`,
-      mustTie: 'The portal refuses the GSTR-9C when 9Q (total amount paid) differs, head by head, from the tax paid in the GSTR-9: Table 9 (cash + ITC) plus the differential tax paid in Table 14. Enter the filed GSTR-9 tax paid on Table 9 and reset 9Q.',
+      mustTie: '9Q was typed over and differs from the filed GSTR-9; the portal refuses it. Reset it.',
     });
   }
-  if (!ctx.no9c && (filedTurnover === null || !filedPaid)) {
-    // Nothing to compare yet: open until the filed figures are typed. No reason closes it.
-    diffs.push({
-      key: 'gstr9c.g9filed', step: 'gstr9c',
-      label: 'GSTR-9 as filed not entered: the portal checks 5Q and 9Q against it',
-      a: val(), b: val(), diff: val(), direction: 'Filed GSTR-9', aLabel: 'GSTR-9C', bLabel: 'GSTR-9 as filed',
-      hasTaxable: true, hasTax: true, informational: false, requiresReason: true, justification: null, stale: false,
-      mustTie: 'Type the GSTR-9 as filed from its filed summary: 5N, Table 10 and Table 11 on GSTR-9C Table 5, and the tax paid in Tables 9 and 14 on GSTR-9C Table 9. The working\'s GSTR-9 is computed from the books and can differ from what was filed, even by paise, and the portal then refuses the 9C.',
-      open: true,
+  if (!ctx.no9c) {
+    // 5Q / 9Q not yet confirmed from the filed GSTR-9: open until typed in their cell. No reason closes them.
+    const missing = (key: string, label: string, a: ValTax, hasTax: boolean) => diffs.push({
+      key, step: 'gstr9c', label, a, b: val(), diff: val(), direction: 'Filed GSTR-9', aLabel: 'GSTR-9 working', bLabel: 'GSTR-9 as filed',
+      hasTaxable: !hasTax, hasTax, informational: false, requiresReason: true, justification: null, stale: false,
+      mustTie: 'Type it from the filed GSTR-9, paise included.', open: true,
     });
+    if (filedTurnover === null) missing('gstr9c.g9filed.5Q', 'GSTR-9C 5Q: confirm the turnover from the filed GSTR-9', val(totalTurnover.t), false);
+    if (!filedPaid) missing('gstr9c.g9filed.9Q', 'GSTR-9C 9Q: confirm the amount paid from the filed GSTR-9', withT(0, g9TaxPaid), true);
   }
   if (!ctx.no9c && filedTurnover !== null) {
-    push('gstr9c.g9filed.turnover', 'gstr9c', 'GSTR-9 working vs GSTR-9 as filed: total turnover (5N + 10 − 11)', val(totalTurnover.t), val(filedTurnover), {
+    push('gstr9c.g9vsfiled.turnover', 'gstr9c', 'GSTR-9 working vs GSTR-9 as filed: total turnover (5N + 10 − 11)', val(totalTurnover.t), val(filedTurnover), {
       direction: 'Working − filed', aLabel: 'GSTR-9 working', bLabel: 'GSTR-9 as filed', hasTaxable: true, hasTax: false, informational: true,
     });
   }
   if (!ctx.no9c && filedPaid) {
-    push('gstr9c.g9filed.paid', 'gstr9c', 'GSTR-9 working vs GSTR-9 as filed: tax paid (Table 9 + 14)', withT(0, g9TaxPaid), withT(0, filedPaid), {
+    push('gstr9c.g9vsfiled.paid', 'gstr9c', 'GSTR-9 working vs GSTR-9 as filed: tax paid (Table 9 + 14)', withT(0, g9TaxPaid), withT(0, filedPaid), {
       direction: 'Working − filed', aLabel: 'GSTR-9 working', bLabel: 'GSTR-9 as filed', informational: true,
     });
   }
@@ -1771,7 +1772,7 @@ export function diffStatus(d: DiffLine, tolerance: number): { kind: DiffStatusKi
   const text = d.justification?.text?.trim() ?? '';
   const mag = Math.max(d.hasTax ? maxAbs(d.diff) : 0, d.hasTaxable ? Math.abs(d.diff.t) : 0);
   if (d.stale) return { kind: 'recheck', label: 'Re-check' };
-  if (d.open && d.mustTie) return { kind: 'open', label: d.key === 'gstr9c.g9filed' ? 'Filed GSTR-9 needed' : 'Must match GSTR-9' };
+  if (d.open && d.mustTie) return { kind: 'open', label: d.key.startsWith('gstr9c.g9filed.') ? 'Confirm from filed GSTR-9' : 'Must match GSTR-9' };
   if (d.open) return { kind: 'open', label: d.remarkMissing && text ? `${d.remarkMissing} reasons needed` : 'Reason needed' };
   if (text) return { kind: 'justified', label: 'Justified' };
   if (mag < 0.005) return { kind: 'matched', label: 'Matched' };

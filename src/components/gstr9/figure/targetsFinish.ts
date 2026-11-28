@@ -292,8 +292,8 @@ export const diffTarget = (d: Pick<DiffLine, 'key' | 'step'>): FigTarget => {
   if (k === 'g9.8D') return at('GSTR-9 Table 8', '8D');
   if (k.startsWith('g9.t5.')) return at('GSTR-9 Table 5', rest('g9.t5.'));
   if (k.startsWith('g9.t9.')) return at('GSTR-9 Table 9', rest('g9.t9.'));
-  if (k === 'gstr9c.g9filed' || k === 'gstr9c.g9filed.turnover') return { ...c9Row('5', 'Q'), label };
-  if (k === 'gstr9c.g9filed.paid') return { ...c9Row('9', 'Q'), label };
+  if (k === 'gstr9c.g9filed.5Q' || k === 'gstr9c.g9vsfiled.turnover') return { ...c9Row('5', 'Q'), label };
+  if (k === 'gstr9c.g9filed.9Q' || k === 'gstr9c.g9vsfiled.paid') return { ...c9Row('9', 'Q'), label };
   const c9 = /^gstr9c\.(5|7|9|12|14)([A-Z])$/.exec(k);
   if (c9) return { ...c9Row(c9[1] as '5' | '7' | '9' | '12' | '14', c9[2]), label };
   return tabOnly;

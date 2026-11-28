@@ -6,7 +6,6 @@ import { fmtMoney } from '../grid/money';
 import { Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { ReasonsBox } from './bits';
-import { FiledTurnoverGrid } from './FiledGstr9';
 import { FormGrid } from './FormGrid';
 import { amount, C9_GRID_MAX_H, FormLine, n0, useGoToStep } from './formLines';
 import { builderAdvance, c9Row, g9T4N, g9T5, g9TotalTurnover, salesAudit, salesCapitalGoods } from './sourceTargets';
@@ -155,14 +154,15 @@ export const Table5Card: React.FC = () => {
         label: T5_LABEL.Q,
         mode: 'override',
         heads: ['t'],
-        stored: amount(C.t5Q),
-        def: { t: def.t5Q },
-        fKey: 't5Q',
-        write: (d, v) => ({ ...d, t5Q: v ? n0(v.t) : null }),
+        // Typed from the filed GSTR-9: the portal checks 5Q against it to the paisa (filedG9, 28 Nov 2026).
+        stored: amount(C.filedG9?.turnover ?? null),
+        def: { t: W.g9Tie.working.turnover },
+        fKey: 'filedG9.turnover',
+        write: (d, v) => ({ ...d, t5Q: null, filedG9: { ...(d.filedG9 ?? {}), turnover: v ? n0(v.t) : null } }),
         link: g9TotalTurnover,
-        source: def.t5Q === W.g9Tie.working.turnover && W.g9Tie.filed.turnover === null ? 'GSTR-9 5N+10−11' : 'GSTR-9 as filed',
-        sourceTitle: 'GSTR-9 total turnover: 5N + Table 10 − Table 11. The portal checks 5Q against it.',
-        tieKey: 'gstr9c.5Q',
+        source: 'GSTR-9 working',
+        sourceTitle: 'Type 5Q from the filed GSTR-9 (5N + 10 − 11), paise included',
+        tieKey: 'gstr9c.g9filed.5Q',
       },
       {
         id: 'R',
@@ -177,7 +177,7 @@ export const Table5Card: React.FC = () => {
       },
     );
     return lines;
-  }, [C.t5A, C.t5, C.t5Q, C.t5OCg, def.t5A, def.t5Q, def.t5OCg, W.t5.P, W.t5.R, W.g9Tie, BA, auditMissing]);
+  }, [C.t5A, C.t5, C.filedG9, C.t5OCg, def.t5A, def.t5OCg, W.t5.P, W.t5.R, W.g9Tie, BA, auditMissing]);
 
   return (
     <SectionCard
@@ -209,10 +209,9 @@ export const Table5Card: React.FC = () => {
           5O so it does not show up as an un-reconciled difference.
         </Note>
       )}
-      <FiledTurnoverGrid />
       <FormGrid label="GSTR-9C Table 5" lines={t5Lines} heads={['t']} headLabels={{ t: 'Amount (₹)' }} maxHeight={C9_GRID_MAX_H} pinLast />
       <Note tone="position">
-        5Q defaults to the GSTR-9 as filed (5N + 10 − 11, typed above); until it is typed, to the working's GSTR-9, where 5N is computed as 4N + 5M − 4G − 4G1 — the sheet types 5N by hand. The portal refuses a 5Q that differs from the filed GSTR-9 by even a paisa.
+        5Q is typed from the filed GSTR-9 (5N + 10 − 11); until then it shows the working's GSTR-9, where 5N is 4N + 5M − 4G − 4G1.
       </Note>
       <ReasonsBox field="t6Reasons" code="6" title="Reasons for un-reconciled difference in annual gross turnover" diffKey="gstr9c.5R" />
     </SectionCard>

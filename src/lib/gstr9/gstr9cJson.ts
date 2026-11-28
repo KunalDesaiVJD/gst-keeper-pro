@@ -346,11 +346,11 @@ export function buildGstr9cPortalJson(input: Gstr9cJsonInput): Gstr9cJsonBuild {
   // difference, and unrec_turnovr with it.
   // The working's GSTR-9 is computed from the books; only the GSTR-9 as filed is what the portal holds.
   if (W.g9Tie.missing) {
-    err('5', 'G9FILED', 'The GSTR-9 as filed is not entered (Table 5: 5N, 10, 11; Table 9: tax paid in Tables 9 and 14). The portal checks 5Q and 9Q against the filed GSTR-9 to the paisa, and the working\'s GSTR-9 can differ from it. Type them from the filed GSTR-9 summary.', '5Q');
+    err('5', 'G9FILED', '5Q / 9Q are not confirmed from the filed GSTR-9. The portal checks them to the paisa. Type them in their cells from the filed GSTR-9, or click "Same as filed".', '5Q');
   }
   const g9Turnover = r2(W.g9Tie.turnover);
   if (Math.abs(Q5 - g9Turnover) >= 0.005) {
-    err('5', 'G9TIE', `5Q (annual turnover declared, ${Q5.toFixed(2)}) differs from the GSTR-9's 5N + 10 − 11 (${g9Turnover.toFixed(2)}${W.g9Tie.filed.turnover !== null ? ', as filed' : ''}). The portal refuses this: "annual turnover declared (annul_turn_decl) does not match GSTR-9", then "unreconciled turnover (unrec_turnovr) is incorrect". Enter the filed GSTR-9 figures and reset 5Q.`, '5Q');
+    err('5', 'G9TIE', `5Q (annual turnover declared, ${Q5.toFixed(2)}) differs from the GSTR-9's 5N + 10 − 11 (${g9Turnover.toFixed(2)}${W.g9Tie.filed.turnover !== null ? ', as filed' : ''}). The portal refuses this: "annual turnover declared (annul_turn_decl) does not match GSTR-9", then "unreconciled turnover (unrec_turnovr) is incorrect". Confirm 5Q from the filed GSTR-9 in its cell.`, '5Q');
   }
   tie('5', '5P', P5, W.t5.P);
   tie('5', '5R', R5r, W.t5.R);
@@ -404,7 +404,7 @@ export function buildGstr9cPortalJson(input: Gstr9cJsonInput): Gstr9cJsonBuild {
   const HEAD_NAME = { cgst: 'Central tax', sgst: 'State/UT tax', igst: 'Integrated tax', cess: 'Cess' } as const;
   (['cgst', 'sgst', 'igst', 'cess'] as const).forEach((h) => {
     if (Math.abs(Q9[h] - g9Paid[h]) >= 0.005) {
-      err('9', 'G9TIE', `9Q ${HEAD_NAME[h]} (total amount paid, ${Q9[h].toFixed(2)}) differs from the tax paid in the GSTR-9, Table 9 + Table 14 (${g9Paid[h].toFixed(2)}). The portal refuses this: "total amount paid (tot_amt_paid) does not match the declaration in GSTR-9", then "unreconciled payment is incorrect". Enter the filed GSTR-9 tax paid and reset 9Q.`, '9Q');
+      err('9', 'G9TIE', `9Q ${HEAD_NAME[h]} (total amount paid, ${Q9[h].toFixed(2)}) differs from the tax paid in the GSTR-9, Table 9 + Table 14 (${g9Paid[h].toFixed(2)}). The portal refuses this: "total amount paid (tot_amt_paid) does not match the declaration in GSTR-9", then "unreconciled payment is incorrect". Confirm 9Q from the filed GSTR-9 in its cell.`, '9Q');
     }
   });
   tieHeads('9', '9P', P9, W.t9.P);

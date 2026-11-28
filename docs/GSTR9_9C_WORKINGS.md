@@ -449,16 +449,20 @@ screen where it applies.
    differences (`DiffLine.mustTie`): no reason closes them, so they block
    Mark prepared, Verify and Review & lock until the figure is reset or the
    GSTR-9 working is corrected, and the Portal JSON tab refuses the file
-   (rule `G9TIE`). **The GSTR-9 as filed is typed** (28 Nov 2026,
-   `Gstr9cDoc.filedG9`: 5N, 10, 11 on 9C Table 5; Table 9 and 14 paid
-   per head on 9C Table 9, from the filed summary), and 5Q / 9Q default to
-   it: the 27 Nov check compared 5Q with the working's own GSTR-9, which is
-   computed from the books, so it could not fail while the filed GSTR-9
+   (rule `G9TIE`). **5Q and 9Q are confirmed from the GSTR-9 as filed**
+   (28 Nov 2026, `Gstr9cDoc.filedG9.turnover` / `.paid`), typed in the 5Q
+   and 9Q cells themselves (the form keeps the government layout; no extra
+   table). The 27 Nov check compared 5Q with the working's own GSTR-9, which
+   is computed from the books, so it could not fail while the filed GSTR-9
    differed (Elenza Arista again: working 5N 7,77,83,451.00, filed
-   7,77,83,451.34; the portal compares to the paisa). Until the filed
-   figures are typed, the line `gstr9c.g9filed` stays open (blocking every
-   sign-off) and the JSON is refused (`G9FILED`); the working vs filed
-   difference is shown for information (`gstr9c.g9filed.turnover` / `.paid`).
+   7,77,83,451.34; the portal compares to the paisa). Until a cell is
+   confirmed it carries an amber "Confirm from filed GSTR-9" badge whose
+   pop-over gives the why, two steps and a "Same as filed" button (stores
+   the working figure when the filed GSTR-9 shows the same); the lines
+   `gstr9c.g9filed.5Q` / `.9Q` stay open (blocking every sign-off) and the
+   JSON is refused (`G9FILED`). The working vs filed difference is shown for
+   information (`gstr9c.g9vsfiled.turnover` / `.paid`). The first layout
+   (`t5N`, `t10`, `t11`, `paid9`, `paid14`) is still read.
 9. **Table 13 is typed**, with the ITC reco's suggestion (MAX(books − 7J, 0),
    the negated row 28) shown next to it, because the residual is often an
    unexplained monthly difference rather than ITC actually availed in the
