@@ -136,6 +136,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add Year",
    "Edit",
    "Send alert",
+   "Same as filed",
    "Reset app password"
   ],
   "sections": []
@@ -157,6 +158,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add Client",
    "Excel",
    "PDF",
+   "Same as filed",
    "Download Template",
    "Liberal / Strict",
    "Undo",
@@ -186,7 +188,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Cancel",
    "View",
    "Restore",
-   "Download"
+   "Download",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -221,7 +224,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel",
      "View",
      "Restore",
-     "Download"
+     "Download",
+     "Same as filed"
     ]
    },
    {
@@ -286,7 +290,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Upload",
    "Override",
    "History",
-   "Cancel"
+   "Cancel",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -313,7 +318,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Export PDF",
      "Clear Data",
      "Versions",
-     "Use project figures"
+     "Use project figures",
+     "Same as filed"
     ]
    },
    {
@@ -352,6 +358,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Clear Data",
    "Manage Masters",
    "Save changes",
+   "Same as filed",
    "Cancel",
    "Add row",
    "Save Master",
@@ -375,7 +382,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Add Master",
-   "Cancel"
+   "Cancel",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -390,6 +398,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Export PDF",
+   "Same as filed",
    "History",
    "Send to superadmin",
    "Approve",
@@ -437,6 +446,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel",
      "Save for",
      "Save return",
+     "Same as filed",
      "Save standard dates",
      "Write my own for",
      "Use the template",
@@ -492,6 +502,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export PDF",
    "Add row",
    "Save changes",
+   "Same as filed",
    "View",
    "Restore",
    "Download"
@@ -528,7 +539,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Merge Duplicates",
    "Download JSON",
    "Download PDF",
-   "History"
+   "History",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -547,7 +559,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Suspended Reco",
    "GST Receivable Reco",
    "Review",
-   "History"
+   "History",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -577,6 +590,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
+     "Same as filed",
      "Use as reason",
      "Read the remark",
      "Undo",
@@ -584,7 +598,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Dismiss",
      "Already in",
      "Add to",
-     "Accept"
+     "Accept",
+     "Go to"
     ]
    }
   ]
@@ -621,6 +636,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
+     "Same as filed",
      "Use as reason",
      "Read the remark",
      "Undo",
@@ -628,7 +644,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Dismiss",
      "Already in",
      "Add to",
-     "Accept"
+     "Accept",
+     "Go to"
     ]
    },
    {
@@ -727,7 +744,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": "Builder Returns Workpaper",
     "tabs": [],
     "buttons": [
-     "Open GSTR-1"
+     "Open GSTR-1",
+     "Same as filed"
     ]
    }
   ]
@@ -744,7 +762,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Send confirmation",
    "Save",
-   "Mark confirmation received"
+   "Mark confirmation received",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -759,7 +778,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Client setup",
-   "New project"
+   "New project",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -783,7 +803,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add unit",
    "Add",
    "Cancel",
-   "Save"
+   "Save",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -812,6 +833,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Update unit value now",
    "Record receipt",
    "Raise invoice",
+   "Same as filed",
    "Back",
    "TDR / FSI",
    "Adjustments",
@@ -835,8 +857,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Restate",
    "Record payment",
    "Confirm cancellation",
-   "Save schedule",
-   "Close"
+   "Save schedule"
   ],
   "sections": []
  },
@@ -855,7 +876,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Post",
    "Unpost",
    "Cancel",
-   "Prepare event"
+   "Prepare event",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -890,7 +912,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add",
    "Close",
    "Raise note",
-   "Record"
+   "Record",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -913,7 +936,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Approve",
    "Cancel",
    "Save working",
-   "Record"
+   "Record",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -927,7 +951,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": "What the builder",
   "tabs": [],
   "buttons": [
-   "Open GSTR-1"
+   "Open GSTR-1",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -956,7 +981,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   ],
   "buttons": [
    "Excel",
-   "PDF"
+   "PDF",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -991,6 +1017,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Retry",
+   "Same as filed",
    "Connect extension",
    "Check again",
    "Update extension",
@@ -1011,7 +1038,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Export to Excel",
-   "Retry"
+   "Retry",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -1054,7 +1082,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
-     "Export to Excel"
+     "Export to Excel",
+     "Same as filed"
     ]
    }
   ]
@@ -1073,6 +1102,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Edit client",
    "Fetch profile",
    "Sync this client",
+   "Same as filed",
    "Select",
    "Close…",
    "Stage",
@@ -1098,7 +1128,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Export to Excel",
    "Export to PDF",
-   "Retry"
+   "Retry",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -1138,6 +1169,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Export to Excel",
    "Retry",
+   "Same as filed",
    "Select",
    "Close…",
    "Stage",
@@ -1208,7 +1240,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Remove issue",
      "Add issue",
      "Cancel",
-     "Save"
+     "Save",
+     "Same as filed"
     ]
    },
    {
@@ -1351,7 +1384,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "subtitle": null,
   "tabs": [],
   "buttons": [
-   "Today"
+   "Today",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -1387,6 +1421,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "tabs": [],
     "buttons": [
      "Change",
+     "Same as filed",
      "Pause for 1 hour",
      "Pause until 05:00",
      "Resume now",
@@ -1504,6 +1539,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "title": null,
     "tabs": [],
     "buttons": [
+     "Same as filed",
      "Retry"
     ]
    },
@@ -1632,6 +1668,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "tabs": [],
   "buttons": [
    "Refund page",
+   "Same as filed",
    "Retry",
    "Log the portal reply",
    "Open on the portal",
@@ -1673,6 +1710,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "New matter",
    "Export to Excel",
    "Retry",
+   "Same as filed",
    "Cancel",
    "Create matter",
    "Create matter for case"
@@ -1734,7 +1772,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
      "Cancel hearing",
      "Change",
      "Cancel",
-     "Fix a hearing"
+     "Fix a hearing",
+     "Same as filed"
     ]
    },
    {
@@ -1814,7 +1853,9 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "component": "MisBreakdown",
     "title": null,
     "tabs": [],
-    "buttons": []
+    "buttons": [
+     "Same as filed"
+    ]
    },
    {
     "tab": "Clocks & ageing",
@@ -1852,7 +1893,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export to Excel",
    "Retry",
    "Fetch applications ·",
-   "Fetch case folders ·"
+   "Fetch case folders ·",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -1868,6 +1910,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
   "buttons": [
    "Open",
    "Details above",
+   "Same as filed",
    "Link a case",
    "Work on the appeal",
    "Work on it",
@@ -1899,6 +1942,7 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Export to Excel",
    "Retry",
    "Fetch DRC-03 details ·",
+   "Same as filed",
    "Link to"
   ],
   "sections": []
@@ -1931,7 +1975,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
    "Add",
    "Delete",
    "Save",
-   "Cancel"
+   "Cancel",
+   "Same as filed"
   ],
   "sections": []
  },
@@ -1962,7 +2007,8 @@ export const ASSISTANT_SCREENS: AssistantScreen[] = [
     "tabs": [],
     "buttons": [
      "Excel",
-     "PDF"
+     "PDF",
+     "Same as filed"
     ]
    },
    {

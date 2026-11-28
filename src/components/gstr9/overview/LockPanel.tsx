@@ -29,8 +29,6 @@ import { SelfCheckPanel } from '../selfcheck/SelfCheckList';
 import { useSelfCheck } from '../selfcheck/useSelfCheck';
 import { useGoFigure } from '../figure/FigLink';
 import { diffTarget } from '../figure/targetsFinish';
-import { G9TieGuideView } from '../gstr9c/G9TieGuide';
-import { isG9TieKey } from '@/lib/gstr9/g9TieGuide';
 import { fmtWhen, REVIEW_TAB_PARAM, rupees, rupeesShort, stepMeta, sumTax } from './steps';
 
 const SHOW_BLOCKERS = 6;
@@ -311,20 +309,12 @@ export const LockPanel: React.FC = () => {
                 <li key={d.key}>
                   <button type="button" onClick={() => goFig(diffTarget(d))}
                     className="inline-flex items-center gap-1 text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                    <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}{d.mustTie && <span className="text-destructive-strong"> (must match GSTR-9)</span>}
+                    <span className="text-muted-foreground">{stepMeta(d.step).label}:</span> {d.label}
                     <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden />
                   </button>
                 </li>
               ))}
             </ul>
-            {(() => {
-              const tie = blockers.find((d) => isG9TieKey(d.key));
-              return tie && isG9TieKey(tie.key) ? (
-                <div className="mt-2 rounded-md border bg-background p-2.5 text-foreground">
-                  <G9TieGuideView lineKey={tie.key} />
-                </div>
-              ) : null;
-            })()}
             {blockers.length > SHOW_BLOCKERS && (
               <p className="mt-1 text-muted-foreground">
                 …and {blockers.length - SHOW_BLOCKERS} more —{' '}

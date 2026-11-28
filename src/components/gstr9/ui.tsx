@@ -168,6 +168,10 @@ export const useDiffLine = (key: string): DiffLine | undefined => {
   return useMemo(() => workings.diffs.find((d) => d.key === key), [workings.diffs, key]);
 };
 
+/** Tax heads of a figure, e.g. "CGST 5,07,518.00 · SGST 5,07,518.00" (nil heads left out). */
+const diffSummaryOf = (v: ValTax): string =>
+  (['i', 'c', 's', 'x'] as const).filter((h) => Math.abs(v[h]) > 0.004).map((h) => `${{ i: 'IGST', c: 'CGST', s: 'SGST', x: 'Cess' }[h]} ${fmtMoney(v[h])}`).join(' · ') || '0.00';
+
 const diffSummary = (d: DiffLine): string => {
   const parts: string[] = [];
   if (d.hasTaxable && Math.abs(d.diff.t) > 0.004) parts.push(`Value ${fmtMoney(d.diff.t)}`);
@@ -185,7 +189,7 @@ const diffSummary = (d: DiffLine): string => {
  * after it was justified), and opens a small editor for the reason.
  */
 export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; className?: string }> = ({ lineKey, compact, className }) => {
-  const { justify, readOnly, workings } = useWorkspace();
+  const { justify, readOnly, workings, update } = useWorkspace();
   const { read: readRemark } = useRemarkEffects();
   const d = useDiffLine(lineKey);
   const [open, setOpen] = useState(false);
@@ -210,29 +214,43 @@ export const JustifyControl: React.FC<{ lineKey: string; compact?: boolean; clas
 
   // A line the portal checks for equality: no reason closes it, so it shows what to fix instead.
   if (d.mustTie) {
+    const confirmable = d.open && d.key.startsWith('gstr9c.g9filed.');
+    const is5Q = d.key.endsWith('5Q');
+    const sameAs = () => {
+      const t = workings.gstr9c.g9Tie.working;
+      update('gstr9c', (doc) => ({
+        ...doc, ...(is5Q ? { t5Q: null } : { t9Q: null }),
+        filedG9: { ...(doc.filedG9 ?? {}), ...(is5Q ? { turnover: t.turnover } : { paid: { ...t.paid } }) },
+      }));
+      setOpen(false);
+    };
     return (
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button type="button" className={cn('inline-flex items-center', className)} aria-label={`${d.label}: ${status.label}`} title={compact ? status.label : undefined}>
-            <Badge variant={status.variant} className={cn('gap-1 whitespace-nowrap text-[10px] font-medium', compact && 'px-1.5')}>
+            <Badge variant={confirmable ? 'warning' : status.variant} className={cn('gap-1 whitespace-nowrap text-[10px] font-medium', compact && 'px-1.5')}>
               {status.icon}
               {!compact && status.label}
             </Badge>
           </button>
         </PopoverTrigger>
-        <PopoverContent className="max-h-[80vh] w-[28rem] max-w-[calc(100vw-2rem)] space-y-2 overflow-y-auto" align="end">
+        <PopoverContent className="w-80 space-y-2" align="end">
           <div className="text-sm font-semibold">{d.label}</div>
-          {d.key !== 'gstr9c.g9filed' && (
-            <div className="text-xs text-muted-foreground">
-              {d.aLabel} against {d.bLabel}: <span className="font-medium text-foreground">{diffSummary(d)}</span>
-            </div>
-          )}
           {!d.open ? (
-            <Note>Matches the filed GSTR-9, as the portal checks.</Note>
+            <div className="text-xs text-muted-foreground">Matches the filed GSTR-9, as the portal checks.</div>
           ) : isG9TieKey(d.key) ? (
-            <G9TieGuideView lineKey={d.key} compact onGo={() => setOpen(false)} />
+            <G9TieGuideView lineKey={d.key}>
+              {confirmable && !readOnly && (
+                <div className="flex items-center justify-between gap-2 rounded-md bg-muted/60 px-2 py-1.5">
+                  <span className="text-muted-foreground">
+                    Working: <span className="font-medium tabular-nums text-foreground">{is5Q ? fmtMoney(d.a.t) : diffSummaryOf(d.a)}</span>
+                  </span>
+                  <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]" onClick={sameAs}>Same as filed</Button>
+                </div>
+              )}
+            </G9TieGuideView>
           ) : (
-            <Note tone="warn">{d.mustTie}</Note>
+            <div className="text-xs">{d.mustTie}</div>
           )}
         </PopoverContent>
       </Popover>

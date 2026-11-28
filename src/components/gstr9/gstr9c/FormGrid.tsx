@@ -15,9 +15,9 @@ import { PIN_LAST_ROW } from '../gstr9form/helpers';
 import { CellIsland } from '../grid/CellIsland';
 
 /** The portal's equality check for a typed-over line (5Q, 9Q), shown only while it fails. */
-const TieStatus: React.FC<{ tieKey: string }> = ({ tieKey }) => {
+const TieStatus: React.FC<{ tieKey: string; full?: boolean }> = ({ tieKey, full }) => {
   const d = useDiffLine(tieKey);
-  return d?.open ? <JustifyControl lineKey={tieKey} compact /> : null;
+  return d?.open ? <JustifyControl lineKey={tieKey} compact={!full} /> : null;
 };
 
 const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean; onReset: () => void }> = ({ line, readOnly, locked, onReset }) => {
@@ -30,6 +30,14 @@ const StatusCell: React.FC<{ line: FormLine; readOnly: boolean; locked: boolean;
   }
   if (line.mode === 'override') {
     if (!line.stored) {
+      if (line.tieKey) {
+        // A cell to confirm from the filed return: its badge (and pop-over) until typed.
+        return (
+          <CellIsland>
+            <TieStatus tieKey={line.tieKey} full />
+          </CellIsland>
+        );
+      }
       return (
         <Badge variant="outline" title={[line.sourceTitle, locked ? LOCKED_TITLE.filled : ''].filter(Boolean).join(' — ') || undefined} className="gap-1 whitespace-nowrap text-[10px] font-normal text-muted-foreground">
           {locked && <Lock className="h-2.5 w-2.5" aria-label="Locked" />}

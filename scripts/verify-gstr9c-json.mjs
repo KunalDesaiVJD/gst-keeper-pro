@@ -38,9 +38,8 @@ const fileAsWorking = (d, c = ctx) => {
   if (d.gstr9c.filedG9 !== undefined) return d;
   const g = E.computeWorkings(d, c).g9;
   d.gstr9c.filedG9 = {
-    t5N: g.t5.N.t, t10: g.t10.t, t11: g.t11.t,
-    paid9: { i: g.t9.igst.paid, c: g.t9.cgst.paid, s: g.t9.sgst.paid, x: g.t9.cess.paid },
-    paid14: { i: g.t14.igst.paid, c: g.t14.cgst.paid, s: g.t14.sgst.paid, x: g.t14.cess.paid },
+    turnover: g.t5.N.t + g.t10.t - g.t11.t,
+    paid: { i: g.t9.igst.paid + g.t14.igst.paid, c: g.t9.cgst.paid + g.t14.cgst.paid, s: g.t9.sgst.paid + g.t14.sgst.paid, x: g.t9.cess.paid + g.t14.cess.paid },
   };
   return d;
 };
@@ -246,14 +245,34 @@ const rules = (b) => b.checks.filter((c) => c.severity === 'error').map((c) => c
   const d4 = D.emptyDocs();
   d4.gstr9c.filedG9 = null;
   const w4 = E.computeWorkings(d4, ctx);
-  ok('filed GSTR-9 not entered: an open line that no reason closes', !!w4.diffs.find((x) => x.key === 'gstr9c.g9filed' && x.open && x.mustTie));
+  ok('5Q not confirmed: an open line that no reason closes', !!w4.diffs.find((x) => x.key === 'gstr9c.g9filed.5Q' && x.open && x.mustTie));
+  ok('9Q not confirmed: an open line that no reason closes', !!w4.diffs.find((x) => x.key === 'gstr9c.g9filed.9Q' && x.open && x.mustTie));
+  // "Same as filed" stores the working's figure in the cell: the lines close.
+  {
+    const ds = D.emptyDocs();
+    const ws = E.computeWorkings(ds, ctx);
+    ds.gstr9c.filedG9 = { turnover: ws.gstr9c.g9Tie.working.turnover, paid: ws.gstr9c.g9Tie.working.paid };
+    const wt = E.computeWorkings(ds, ctx);
+    ok('Same as filed: no confirm lines left', !wt.diffs.some((x) => x.key.startsWith('gstr9c.g9filed.') && x.open));
+    ok('Same as filed: 5Q and 9Q tie', !wt.diffs.some((x) => (x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q') && x.open));
+    ds.gstr9c.filedG9 = { turnover: ws.gstr9c.g9Tie.working.turnover };
+    ok('only 5Q confirmed: 9Q still open', !!E.computeWorkings(ds, ctx).diffs.find((x) => x.key === 'gstr9c.g9filed.9Q' && x.open)
+      && !E.computeWorkings(ds, ctx).diffs.some((x) => x.key === 'gstr9c.g9filed.5Q'));
+  }
   ok('filed GSTR-9 not entered: JSON refused (G9FILED)', rules(J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: w4, doc: d4.gstr9c })).includes('G9FILED'));
-  d4.gstr9c.filedG9 = { t5N: 7_77_83_451.34, t10: 0, t11: 0, paid9: { i: 0, c: 4_94_918.33, s: 4_94_918.33, x: 0 }, paid14: null };
+  // The first layout (5N, 10, 11, Table 9 / 14 paid) is still read.
+  {
+    const dl = D.emptyDocs();
+    dl.gstr9c.filedG9 = { t5N: 100.5, t10: 10, t11: 0.25, paid9: { i: 0, c: 1, s: 1, x: 0 }, paid14: { i: 0, c: 0.5, s: 0.5, x: 0 } };
+    const wl = E.computeWorkings(dl, ctx);
+    ok('first layout still read', Math.abs(wl.gstr9c.t5.Q - 110.25) < 0.001 && Math.abs(wl.gstr9c.t9.Q.c - 1.5) < 0.001);
+  }
+  d4.gstr9c.filedG9 = { turnover: 7_77_83_451.34, paid: { i: 0, c: 4_94_918.33, s: 4_94_918.33, x: 0 } };
   const w5 = E.computeWorkings(d4, ctx);
   eq('5Q follows the filed GSTR-9, paise included', w5.gstr9c.t5.Q, 7_77_83_451.34);
   eq('9Q follows the filed GSTR-9 (CGST)', w5.gstr9c.t9.Q.c, 4_94_918.33);
-  ok('filed entered: no g9filed line, 5Q and 9Q tie', !w5.diffs.some((x) => (x.key === 'gstr9c.g9filed' || x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q') && x.open));
-  ok('working vs filed shown for information', !!w5.diffs.find((x) => x.key === 'gstr9c.g9filed.turnover' && x.informational));
+  ok('filed entered: no g9filed line, 5Q and 9Q tie', !w5.diffs.some((x) => (x.key.startsWith('gstr9c.g9filed.') || x.key === 'gstr9c.5Q' || x.key === 'gstr9c.9Q') && x.open));
+  ok('working vs filed shown for information', !!w5.diffs.find((x) => x.key === 'gstr9c.g9vsfiled.turnover' && x.informational));
   const b5 = J.buildGstr9cPortalJson({ gstin: GSTIN, financialYear: FY, workings: w5, doc: d4.gstr9c, today: new Date(2026, 10, 28) });
   ok('filed entered: JSON written with 5Q as filed', b5.errors === 0 && b5.payload.gstr9cdata.audited_data.table5.annul_turn_decl === 77783451.34, JSON.stringify(b5.checks.filter((c) => c.severity === 'error')));
   // 5Q typed back to the working's whole-rupee figure: refused, as the portal would.

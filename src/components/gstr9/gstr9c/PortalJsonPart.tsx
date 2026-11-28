@@ -18,6 +18,7 @@ import { fmtMoney } from '../grid/money';
 import { KpiTile, Note, SectionCard } from '../ui';
 import { useWorkspace } from '../WorkspaceContext';
 import { G9TieGuideView } from './G9TieGuide';
+import { isG9TieKey, type G9TieKey } from '@/lib/gstr9/g9TieGuide';
 
 const REASON_FIELDS = ['t6Reasons', 't8Reasons', 't10Reasons', 't13Reasons', 't15Reasons'] as const;
 
@@ -187,11 +188,14 @@ const PortalJsonPart: React.FC<{ onOpenTable?: (tab: string) => void }> = ({ onO
         </div>
       )}
 
-      {errors.some((c: Gstr9cCheck) => c.rule === 'G9FILED' || c.rule === 'G9TIE') && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
-          <G9TieGuideView lineKey={errors.some((c: Gstr9cCheck) => c.rule === 'G9FILED') ? 'gstr9c.g9filed' : errors.some((c: Gstr9cCheck) => c.rule === 'G9TIE' && c.table === '5') ? 'gstr9c.5Q' : 'gstr9c.9Q'} />
-        </div>
-      )}
+      {(() => {
+        const keys = workings.diffs.filter((d) => d.open && isG9TieKey(d.key)).map((d) => d.key as G9TieKey);
+        return keys.length ? (
+          <div className="flex flex-wrap gap-x-6 gap-y-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+            {keys.map((k) => <G9TieGuideView key={k} lineKey={k} go className="min-w-[16rem] flex-1" />)}
+          </div>
+        ) : null;
+      })()}
 
       <Note>
         Built from the utility's macros: the same keys and codes, the same checks (amounts of at most 13 digits and 2 decimals, negatives allowed; reasons of at most 1,000
